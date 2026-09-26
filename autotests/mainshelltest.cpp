@@ -25,13 +25,17 @@
 #include <windows.h>
 #endif
 #include <QDir>
+#include <QFile>
 #include <QGuiApplication>
+#include <QItemSelectionModel>
+#include <QListView>
 #include <QPrintDialog>
 #include <QProcessEnvironment>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QToolButton>
@@ -130,8 +134,12 @@ private Q_SLOTS:
     void testFileLaunchRestoresTabsBeforeOpeningFile();
     void testDisabledOpenDocumentSessionRestore();
     void testOpenDocumentSessionIgnoresNewFileTabPreference();
+    void testOpenDocumentSessionSkipsMissingFile();
     void testOpenAllRecentDocumentsAsTabs();
+    void testSelectRecentDocumentsWithCtrlClick();
+    void testSelectRecentDocumentsWithShiftClick();
     void testTabControlsRemainAvailable();
+    void testOverflowArrowsSelectEveryTab();
 
 private:
 };
@@ -465,6 +473,29 @@ void MainShellTest::testOpenDocumentSessionIgnoresNewFileTabPreference()
     QVERIFY(findShell(shell) == nullptr);
 }
 
+void MainShellTest::testOpenDocumentSessionSkipsMissingFile()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl missingUrl = QUrl::fromLocalFile(directory.filePath(QStringLiteral("missing.pdf")));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup session = config->group(QStringLiteral("Shell Open Documents Session"));
+    session.writePathEntry("Urls", QStringList {firstUrl.url(), missingUrl.url(), secondUrl.url()});
+    session.writeEntry("ActiveTab", 2);
+    config->sync();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
+}
+
 void MainShellTest::testOpenAllRecentDocumentsAsTabs()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -503,6 +534,78 @@ void MainShellTest::testOpenAllRecentDocumentsAsTabs()
     QVERIFY(!openAllButton->isEnabled());
 }
 
+void MainShellTest::testSelectRecentDocumentsWithCtrlClick()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    const QUrl oldestUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl middleUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl newestUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
+    shell->m_recent->clear();
+    shell->m_recent->addUrl(oldestUrl);
+    shell->m_recent->addUrl(middleUrl);
+    shell->m_recent->addUrl(newestUrl);
+    shell->refreshRecentsOnWelcomeScreen();
+
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QToolButton *openSelected = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("openSelectedRecentsButton"));
+    QVERIFY(view);
+    QVERIFY(openSelected);
+    QCOMPARE(view->selectionMode(), QAbstractItemView::ExtendedSelection);
+    QCOMPARE(view->model()->rowCount(), 3);
+    QVERIFY(!openSelected->isEnabled());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(2, 0)).center());
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
+    QVERIFY(openSelected->isEnabled());
+    shell->refreshRecentsOnWelcomeScreen();
+    QVERIFY(view->selectionModel()->selectedRows().isEmpty());
+    QVERIFY(!openSelected->isEnabled());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(2, 0)).center());
+    openSelected->click();
+
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(oldestUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(newestUrl.toLocalFile()));
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
+}
+
+void MainShellTest::testSelectRecentDocumentsWithShiftClick()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl thirdUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
+    shell->m_recent->clear();
+    shell->m_recent->addUrl(firstUrl);
+    shell->m_recent->addUrl(secondUrl);
+    shell->m_recent->addUrl(thirdUrl);
+    shell->refreshRecentsOnWelcomeScreen();
+
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QToolButton *openSelected = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("openSelectedRecentsButton"));
+    QVERIFY(view);
+    QVERIFY(openSelected);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ShiftModifier, view->visualRect(view->model()->index(2, 0)).center());
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 3);
+    openSelected->click();
+
+    QCOMPARE(shell->m_tabs.size(), 3);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(2).part->url().toLocalFile()), QDir::cleanPath(thirdUrl.toLocalFile()));
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 2);
+}
+
 void MainShellTest::testTabControlsRemainAvailable()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -525,6 +628,47 @@ void MainShellTest::testTabControlsRemainAvailable()
     QVERIFY(shell->m_openTabButton->isVisible());
     const QRect buttonRect(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
     QVERIFY(shell->rect().contains(buttonRect));
+}
+
+void MainShellTest::testOverflowArrowsSelectEveryTab()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->resize(500, 520);
+
+    const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
+    for (int i = 0; i < 9; ++i) {
+        const QString path = directory.filePath(QStringLiteral("tab-%1.pdf").arg(i));
+        QVERIFY(QFile::copy(sourcePath, path));
+        shell->openUrl(QUrl::fromLocalFile(path));
+    }
+    QCoreApplication::processEvents();
+    shell->updateOpenTabButtonGeometry();
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 8);
+    QTRY_VERIFY(shell->m_previousTabButton->isVisible());
+    QTRY_VERIFY(shell->m_nextTabButton->isVisible());
+    QCOMPARE(shell->m_tabWidget->tabBar()->childAt(shell->m_previousTabButton->geometry().center()), static_cast<QWidget *>(shell->m_previousTabButton));
+    QCOMPARE(shell->m_tabWidget->tabBar()->childAt(shell->m_nextTabButton->geometry().center()), static_cast<QWidget *>(shell->m_nextTabButton));
+
+    for (int expected = 7; expected >= 0; --expected) {
+        QVERIFY(shell->m_previousTabButton->isEnabled());
+        QTest::mouseClick(shell->m_previousTabButton, Qt::LeftButton);
+        QCOMPARE(shell->m_tabWidget->currentIndex(), expected);
+    }
+    QCoreApplication::processEvents();
+    QVERIFY(!shell->m_previousTabButton->isEnabled());
+    QVERIFY(shell->m_nextTabButton->isEnabled());
+    for (int expected = 1; expected < 9; ++expected) {
+        QVERIFY(shell->m_nextTabButton->isEnabled());
+        QTest::mouseClick(shell->m_nextTabButton, Qt::LeftButton);
+        QCOMPARE(shell->m_tabWidget->currentIndex(), expected);
+    }
+    QVERIFY(!shell->m_nextTabButton->isEnabled());
+    delete shell;
 }
 
 void MainShellTest::testShell_data()

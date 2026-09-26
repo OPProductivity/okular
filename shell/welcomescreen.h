@@ -42,6 +42,7 @@ protected:
 private Q_SLOTS:
     void recentsItemActivated(QModelIndex const &index);
     void recentListChanged();
+    void openSelectedRecentsClicked();
     void openAllRecentsClicked();
 
 private:

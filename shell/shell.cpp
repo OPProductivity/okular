@@ -296,6 +296,30 @@ Shell::Shell(const QString &serializedOptions)
         m_centerActiveTabButton->hide();
         connect(m_centerActiveTabButton, &QToolButton::clicked, this, &Shell::scrollTabBarToCurrentTab);
 
+        m_previousTabButton = new QToolButton(m_tabWidget->tabBar());
+        m_previousTabButton->setObjectName(QStringLiteral("previousTabButton"));
+        m_previousTabButton->setArrowType(Qt::LeftArrow);
+        m_previousTabButton->setToolTip(i18n("Previous Tab"));
+        m_previousTabButton->setAccessibleName(i18n("Previous Tab"));
+        m_previousTabButton->setStyleSheet(tabCornerButtonStyle);
+        m_previousTabButton->hide();
+        connect(m_previousTabButton, &QToolButton::clicked, this, [this]() {
+            setActiveTab(m_tabWidget->currentIndex() - 1);
+            updateOpenTabButtonGeometry();
+        });
+
+        m_nextTabButton = new QToolButton(m_tabWidget->tabBar());
+        m_nextTabButton->setObjectName(QStringLiteral("nextTabButton"));
+        m_nextTabButton->setArrowType(Qt::RightArrow);
+        m_nextTabButton->setToolTip(i18n("Next Tab"));
+        m_nextTabButton->setAccessibleName(i18n("Next Tab"));
+        m_nextTabButton->setStyleSheet(tabCornerButtonStyle);
+        m_nextTabButton->hide();
+        connect(m_nextTabButton, &QToolButton::clicked, this, [this]() {
+            setActiveTab(m_tabWidget->currentIndex() + 1);
+            updateOpenTabButtonGeometry();
+        });
+
         m_openTabButton = new QToolButton(tabCornerWidget);
         m_openTabButton->setText(QStringLiteral("+"));
         m_openTabButton->setToolTip(i18n("Open Document"));
@@ -1689,7 +1713,9 @@ void Shell::scrollTabBarToCurrentTab()
     tabBar->setCurrentIndex(currentIndex);
 
     QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
-    scrollButtons.erase(std::remove(scrollButtons.begin(), scrollButtons.end(), m_centerActiveTabButton), scrollButtons.end());
+    scrollButtons.removeAll(m_centerActiveTabButton);
+    scrollButtons.removeAll(m_previousTabButton);
+    scrollButtons.removeAll(m_nextTabButton);
     scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
                             return !button || !button->isVisible() || button->geometry().isEmpty();
                         }),
@@ -1731,7 +1757,7 @@ void Shell::scheduleOpenTabButtonGeometryUpdate()
 
 void Shell::updateOpenTabButtonGeometry()
 {
-    if (!m_openTabButton || !m_centerActiveTabButton || !m_tabWidget) {
+    if (!m_openTabButton || !m_centerActiveTabButton || !m_previousTabButton || !m_nextTabButton || !m_tabWidget) {
         return;
     }
 
@@ -1744,7 +1770,9 @@ void Shell::updateOpenTabButtonGeometry()
     }
 
     QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
-    scrollButtons.erase(std::remove(scrollButtons.begin(), scrollButtons.end(), m_centerActiveTabButton), scrollButtons.end());
+    scrollButtons.removeAll(m_centerActiveTabButton);
+    scrollButtons.removeAll(m_previousTabButton);
+    scrollButtons.removeAll(m_nextTabButton);
     scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
                             return !button || !button->isVisible() || button->geometry().isEmpty();
                         }),
@@ -1764,12 +1792,22 @@ void Shell::updateOpenTabButtonGeometry()
         leftScrollButton->setGeometry(leftX, rightRect.y(), leftRect.width(), rightRect.height());
         m_centerActiveTabButton->setGeometry(centerX, rightRect.y(), m_centerActiveTabButton->width(), rightRect.height());
         rightScrollButton->setGeometry(rightRect);
+        m_previousTabButton->setGeometry(leftScrollButton->geometry());
+        m_nextTabButton->setGeometry(rightScrollButton->geometry());
+        m_previousTabButton->setEnabled(m_tabWidget->currentIndex() > 0);
+        m_nextTabButton->setEnabled(m_tabWidget->currentIndex() < m_tabWidget->count() - 1);
         m_centerActiveTabButton->show();
+        m_previousTabButton->show();
+        m_nextTabButton->show();
         leftScrollButton->raise();
         m_centerActiveTabButton->raise();
         rightScrollButton->raise();
+        m_previousTabButton->raise();
+        m_nextTabButton->raise();
     } else {
         m_centerActiveTabButton->hide();
+        m_previousTabButton->hide();
+        m_nextTabButton->hide();
     }
 
     m_openTabButton->show();

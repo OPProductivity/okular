@@ -15,11 +15,14 @@
 #include <QClipboard>
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
+#include <QItemSelectionModel>
 #include <QMenu>
 #include <QResizeEvent>
 #include <QStyledItemDelegate>
 
 #include "gui/recentitemsmodel.h"
+
+#include <algorithm>
 
 class RecentsListItemDelegate : public QStyledItemDelegate
 {
@@ -118,8 +121,12 @@ WelcomeScreen::WelcomeScreen(QWidget *parent)
 
     recentsListView->setContextMenuPolicy(Qt::DefaultContextMenu);
     recentsListView->setModel(m_recentsModel);
+    recentsListView->setSelectionMode(QAbstractItemView::ExtendedSelection);
     recentsListView->setItemDelegate(m_recentsItemDelegate);
     connect(recentsListView, &QListView::activated, this, &WelcomeScreen::recentsItemActivated);
+    connect(recentsListView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
+        openSelectedRecentsButton->setEnabled(recentsListView->selectionModel()->hasSelection());
+    });
 
     connect(m_recentsModel, &RecentItemsModel::layoutChanged, this, &WelcomeScreen::recentListChanged);
 
@@ -141,6 +148,7 @@ WelcomeScreen::WelcomeScreen(QWidget *parent)
     m_noRecentsLabel->setGraphicsEffect(effect);
 
     connect(forgetAllButton, &QToolButton::clicked, this, &WelcomeScreen::forgetAllRecents);
+    connect(openSelectedRecentsButton, &QToolButton::clicked, this, &WelcomeScreen::openSelectedRecentsClicked);
     connect(openAllRecentsButton, &QToolButton::clicked, this, &WelcomeScreen::openAllRecentsClicked);
 }
 
@@ -161,6 +169,7 @@ void WelcomeScreen::showEvent(QShowEvent *e)
 
 void WelcomeScreen::loadRecents()
 {
+    recentsListView->clearSelection();
     m_recentsModel->loadEntries(KSharedConfig::openConfig()->group(QStringLiteral("Recent Files")));
 }
 
@@ -185,12 +194,32 @@ void WelcomeScreen::recentsItemActivated(const QModelIndex &index)
 void WelcomeScreen::recentListChanged()
 {
     openAllRecentsButton->setEnabled(recentsCount() > 0);
+    openSelectedRecentsButton->setEnabled(recentsListView->selectionModel()->hasSelection());
     if (recentsCount() == 0) {
         m_noRecentsLabel->show();
         forgetAllButton->setEnabled(false);
     } else {
         m_noRecentsLabel->hide();
         forgetAllButton->setEnabled(true);
+    }
+}
+
+void WelcomeScreen::openSelectedRecentsClicked()
+{
+    QList<QModelIndex> selectedRows = recentsListView->selectionModel()->selectedRows();
+    std::sort(selectedRows.begin(), selectedRows.end(), [](const QModelIndex &a, const QModelIndex &b) {
+        return a.row() > b.row();
+    });
+
+    QList<QUrl> urls;
+    for (const QModelIndex &index : selectedRows) {
+        const RecentItemsModel::RecentItem *item = m_recentsModel->getItem(index);
+        if (item) {
+            urls.append(item->url);
+        }
+    }
+    if (!urls.isEmpty()) {
+        Q_EMIT openAllRecents(urls);
     }
 }
 

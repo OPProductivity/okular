@@ -201,6 +201,8 @@ private:
     bool m_unique;
     QTabWidget *m_tabWidget;
     QToolButton *m_centerActiveTabButton = nullptr;
+    QToolButton *m_previousTabButton = nullptr;
+    QToolButton *m_nextTabButton = nullptr;
     QToolButton *m_openTabButton = nullptr;
     KToggleAction *m_openInTab;
     WelcomeScreen *m_welcomeScreen;
