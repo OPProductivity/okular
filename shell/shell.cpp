@@ -74,6 +74,7 @@
 #include "shellutils.h"
 
 #include <algorithm>
+#include <cmath>
 
 #if defined(Q_OS_WIN)
 #ifndef NOMINMAX
@@ -245,6 +246,7 @@ Shell::Shell(const QString &serializedOptions)
     if (firstPart) {
         // Setup the central widget
         m_centralStackedWidget = new ResizableStackedWidget();
+        m_centralStackedWidget->setAutoFillBackground(true);
         setCentralWidget(m_centralStackedWidget);
 
         // Setup the welcome screen
@@ -252,8 +254,8 @@ Shell::Shell(const QString &serializedOptions)
         connect(m_welcomeScreen, &WelcomeScreen::openClicked, this, &Shell::fileOpen);
         connect(m_welcomeScreen, &WelcomeScreen::closeClicked, this, &Shell::hideWelcomeScreen);
         connect(m_welcomeScreen, &WelcomeScreen::recentItemClicked, this, [this](const QUrl &url) { openUrl(url); });
-        connect(m_welcomeScreen, &WelcomeScreen::openAllRecents, this, &Shell::openRecentDocuments);
-        connect(m_welcomeScreen, &WelcomeScreen::forgetRecentItem, this, &Shell::forgetRecentItem);
+        connect(m_welcomeScreen, &WelcomeScreen::openRecentDocuments, this, &Shell::openRecentDocuments);
+        connect(m_welcomeScreen, &WelcomeScreen::forgetRecentItems, this, &Shell::forgetRecentItems);
         m_centralStackedWidget->addWidget(m_welcomeScreen);
 
         m_welcomeScreen->installEventFilter(this);
@@ -284,8 +286,8 @@ Shell::Shell(const QString &serializedOptions)
 
         m_centerActiveTabButton = new QToolButton(m_tabWidget->tabBar());
         m_centerActiveTabButton->setText(QStringLiteral("o"));
-        m_centerActiveTabButton->setToolTip(i18n("Show Active Tab"));
-        m_centerActiveTabButton->setAccessibleName(i18n("Show Active Tab"));
+        m_centerActiveTabButton->setToolTip(i18n("Center Active Tab"));
+        m_centerActiveTabButton->setAccessibleName(i18n("Center Active Tab"));
         QFont centerActiveTabButtonFont = m_centerActiveTabButton->font();
         centerActiveTabButtonFont.setPixelSize(13);
         centerActiveTabButtonFont.setBold(false);
@@ -294,7 +296,7 @@ Shell::Shell(const QString &serializedOptions)
         m_centerActiveTabButton->setStyleSheet(tabCornerButtonStyle);
         m_centerActiveTabButton->setAutoRaise(false);
         m_centerActiveTabButton->hide();
-        connect(m_centerActiveTabButton, &QToolButton::clicked, this, &Shell::scrollTabBarToCurrentTab);
+        connect(m_centerActiveTabButton, &QToolButton::clicked, this, &Shell::centerActiveTabInTabBar);
 
         m_previousTabButton = new QToolButton(m_tabWidget->tabBar());
         m_previousTabButton->setObjectName(QStringLiteral("previousTabButton"));
@@ -548,6 +550,11 @@ bool Shell::openDocumentInTab(const QUrl &url, const QString &serializedOptions)
         openNewTab(url, serializedOptions);
     }
     return true;
+}
+
+void Shell::prepareForDocumentOpen()
+{
+    hideWelcomeScreen();
 }
 
 bool Shell::openDocument(const QString &urlString, const QString &serializedOptions)
@@ -1702,7 +1709,7 @@ void Shell::resetTabBarScrollToStart()
     updateOpenTabButtonGeometry();
 }
 
-void Shell::scrollTabBarToCurrentTab()
+void Shell::centerActiveTabInTabBar()
 {
     if (!m_tabWidget || m_tabWidget->currentIndex() < 0) {
         return;
@@ -1729,19 +1736,32 @@ void Shell::scrollTabBarToCurrentTab()
         QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
         const int visibleLeft = tabBar->rect().left();
         const int visibleRight = leftScrollButton->geometry().left() - 1;
+        const int visibleCenter = (visibleLeft + visibleRight) / 2;
+        const int tolerance = std::max(1, tabBar->tabRect(currentIndex).width() / 4);
 
         for (int i = 0; i < tabBar->count(); ++i) {
             const QRect currentRect = tabBar->tabRect(currentIndex);
-            if (currentRect.left() >= visibleLeft && currentRect.right() <= visibleRight) {
+            const int displacement = currentRect.center().x() - visibleCenter;
+            if (std::abs(displacement) <= tolerance) {
                 break;
             }
 
-            if (currentRect.left() < visibleLeft) {
-                leftScrollButton->click();
-            } else {
-                rightScrollButton->click();
+            QToolButton *const scrollButton = displacement < 0 ? leftScrollButton : rightScrollButton;
+            if (!scrollButton->isEnabled()) {
+                break;
             }
+            const int previousCenter = currentRect.center().x();
+            scrollButton->click();
             QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            const int newCenter = tabBar->tabRect(currentIndex).center().x();
+            if (newCenter == previousCenter) {
+                break;
+            }
+            if (std::abs(newCenter - visibleCenter) >= std::abs(displacement)) {
+                QToolButton *const reverseButton = displacement < 0 ? rightScrollButton : leftScrollButton;
+                reverseButton->click();
+                break;
+            }
         }
     }
 
@@ -1824,7 +1844,16 @@ void Shell::slotFitWindowToPage(const QSize pageViewSize, const QSize pageSize)
 
 void Shell::hideWelcomeScreen()
 {
-    m_centralStackedWidget->setCurrentWidget(m_tabWidget);
+    if (m_centralStackedWidget->currentWidget() == m_welcomeScreen) {
+        m_centralStackedWidget->setCurrentWidget(m_tabWidget);
+        // Clear the old welcome-page pixels before a synchronous PDF load.
+        // Its first page may not paint until the load returns.
+        m_centralStackedWidget->repaint();
+        m_tabWidget->repaint();
+        if (isVisible()) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers);
+        }
+    }
     m_sidebar->setVisible(m_showSidebarAction->isChecked());
     m_showSidebarAction->setEnabled(true);
 }
@@ -1844,11 +1873,12 @@ void Shell::refreshRecentsOnWelcomeScreen()
     m_welcomeScreen->loadRecents();
 }
 
-void Shell::forgetRecentItem(QUrl const &url)
+void Shell::forgetRecentItems(const QList<QUrl> &urls)
 {
     if (m_recent != nullptr) {
-        m_recent->removeUrl(url);
-        saveRecents();
+        for (const QUrl &url : urls) {
+            m_recent->removeUrl(url);
+        }
         refreshRecentsOnWelcomeScreen();
     }
 }

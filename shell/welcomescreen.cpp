@@ -13,10 +13,12 @@
 
 #include <QAction>
 #include <QClipboard>
+#include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
 #include <QItemSelectionModel>
 #include <QMenu>
+#include <QMap>
 #include <QResizeEvent>
 #include <QStyledItemDelegate>
 
@@ -62,36 +64,49 @@ public:
             if (willOpenMenu) {
                 event->accept();
 
+                const QList<QUrl> urls = welcomeScreen()->recentUrlsForContextMenu(index);
                 QMenu menu;
 
-                QAction *copyPathAction = new QAction(i18n("&Copy Path"));
+                QAction *openAction = menu.addAction(QIcon::fromTheme(QStringLiteral("document-open")), i18n("&Open Selected"));
+                connect(openAction, &QAction::triggered, this, [this, urls]() {
+                    QList<QUrl> openingOrder = urls;
+                    std::reverse(openingOrder.begin(), openingOrder.end());
+                    Q_EMIT welcomeScreen()->openRecentDocuments(openingOrder);
+                });
+                menu.addSeparator();
+
+                QAction *copyPathAction = new QAction(i18np("&Copy Path", "&Copy Paths", urls.size()));
                 copyPathAction->setIcon(QIcon::fromTheme(QStringLiteral("edit-copy")));
-                connect(copyPathAction, &QAction::triggered, this, [item]() {
-                    QString path;
-                    if (item->url.isLocalFile()) {
-                        path = item->url.toLocalFile();
-                    } else {
-                        path = item->url.toString();
+                connect(copyPathAction, &QAction::triggered, this, [urls]() {
+                    QStringList paths;
+                    for (const QUrl &url : urls) {
+                        paths.append(url.isLocalFile() ? url.toLocalFile() : url.toString());
                     }
-                    QGuiApplication::clipboard()->setText(path);
+                    QGuiApplication::clipboard()->setText(paths.join(QLatin1Char('\n')));
                 });
                 menu.addAction(copyPathAction);
 
-                QAction *showDirectoryAction = new QAction(i18n("&Open Containing Folder"));
+                QAction *showDirectoryAction = new QAction(i18np("&Open Containing Folder", "&Open Containing Folders", urls.size()));
                 showDirectoryAction->setIcon(QIcon::fromTheme(QStringLiteral("document-open-folder")));
-                connect(showDirectoryAction, &QAction::triggered, this, [item]() {
-                    if (item->url.isLocalFile()) {
-                        KIO::highlightInFileManager({item->url});
+                connect(showDirectoryAction, &QAction::triggered, this, [urls]() {
+                    QMap<QString, QList<QUrl>> filesByFolder;
+                    for (const QUrl &url : urls) {
+                        if (url.isLocalFile()) {
+                            filesByFolder[QFileInfo(url.toLocalFile()).absolutePath()].append(url);
+                        }
+                    }
+                    for (const QList<QUrl> &files : filesByFolder) {
+                        KIO::highlightInFileManager(files);
                     }
                 });
                 menu.addAction(showDirectoryAction);
-                if (!item->url.isLocalFile()) {
+                if (std::none_of(urls.begin(), urls.end(), [](const QUrl &url) { return url.isLocalFile(); })) {
                     showDirectoryAction->setEnabled(false);
                 }
 
-                QAction *forgetItemAction = new QAction(i18nc("recent items context menu", "&Forget This Item"));
+                QAction *forgetItemAction = new QAction(i18ncp("recent items context menu", "&Forget This Item", "&Forget These Items", urls.size()));
                 forgetItemAction->setIcon(QIcon::fromTheme(QStringLiteral("edit-clear-history")));
-                connect(forgetItemAction, &QAction::triggered, this, [this, item]() { Q_EMIT welcomeScreen()->forgetRecentItem(item->url); });
+                connect(forgetItemAction, &QAction::triggered, this, [this, urls]() { Q_EMIT welcomeScreen()->forgetRecentItems(urls); });
                 menu.addAction(forgetItemAction);
 
                 menu.exec(menuPosition);
@@ -183,6 +198,28 @@ int WelcomeScreen::recentsCount()
     return m_recentsModel->rowCount();
 }
 
+QList<QUrl> WelcomeScreen::recentUrlsForContextMenu(const QModelIndex &clickedIndex)
+{
+    if (!recentsListView->selectionModel()->isSelected(clickedIndex)) {
+        recentsListView->setCurrentIndex(clickedIndex);
+        recentsListView->selectionModel()->select(clickedIndex, QItemSelectionModel::ClearAndSelect);
+    }
+    QList<QModelIndex> indexes;
+    indexes = recentsListView->selectionModel()->selectedRows();
+    std::sort(indexes.begin(), indexes.end(), [](const QModelIndex &a, const QModelIndex &b) {
+        return a.row() < b.row();
+    });
+
+    QList<QUrl> urls;
+    for (const QModelIndex &index : indexes) {
+        const RecentItemsModel::RecentItem *item = m_recentsModel->getItem(index);
+        if (item) {
+            urls.append(item->url);
+        }
+    }
+    return urls;
+}
+
 void WelcomeScreen::recentsItemActivated(const QModelIndex &index)
 {
     const RecentItemsModel::RecentItem *item = m_recentsModel->getItem(index);
@@ -219,7 +256,7 @@ void WelcomeScreen::openSelectedRecentsClicked()
         }
     }
     if (!urls.isEmpty()) {
-        Q_EMIT openAllRecents(urls);
+        Q_EMIT openRecentDocuments(urls);
     }
 }
 
@@ -233,7 +270,7 @@ void WelcomeScreen::openAllRecentsClicked()
             urls.append(item->url);
         }
     }
-    Q_EMIT openAllRecents(urls);
+    Q_EMIT openRecentDocuments(urls);
 }
 
 #include "moc_welcomescreen.cpp"

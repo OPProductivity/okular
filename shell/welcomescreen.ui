@@ -389,7 +389,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
             <item>
              <widget class="QToolButton" name="openSelectedRecentsButton">
               <property name="text">
-               <string comment="on welcome screen (recent document list)">Open Selected as Tabs</string>
+               <string comment="on welcome screen (recent document list)">Open Selected</string>
               </property>
               <property name="toolTip">
                <string>Use Ctrl or Shift to select multiple recent documents</string>
@@ -411,7 +411,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
             <item>
              <widget class="QToolButton" name="openAllRecentsButton">
               <property name="text">
-               <string comment="on welcome screen (recent document list)">Open All as Tabs</string>
+               <string comment="on welcome screen (recent document list)">Open All</string>
               </property>
               <property name="icon">
                <iconset theme="document-open"/>

@@ -77,6 +77,7 @@ public:
 
     bool openDocument(const QUrl &url, const QString &serializedOptions);
     bool openDocumentInTab(const QUrl &url, const QString &serializedOptions);
+    void prepareForDocumentOpen();
     bool restoreOpenDocumentSession();
 
 public Q_SLOTS:
@@ -157,7 +158,7 @@ private Q_SLOTS:
     void showWelcomeScreen();
     void refreshRecentsOnWelcomeScreen();
 
-    void forgetRecentItem(QUrl const &url);
+    void forgetRecentItems(const QList<QUrl> &urls);
 
 Q_SIGNALS:
     void moveSplitter(int sideWidgetSize);
@@ -175,7 +176,7 @@ private:
     bool openDocumentSessionRestoreEnabled() const;
     void writeOpenDocumentSession(KConfigGroup &group) const;
     void resetTabBarScrollToStart();
-    void scrollTabBarToCurrentTab();
+    void centerActiveTabInTabBar();
     void scheduleOpenTabButtonGeometryUpdate();
     void updateOpenTabButtonGeometry();
 #if defined(Q_OS_WIN)

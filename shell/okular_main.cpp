@@ -392,6 +392,9 @@ Status main(const QStringList &paths, const QString &serializedOptions)
         return Error;
     }
 
+    if (!paths.isEmpty()) {
+        shell->prepareForDocumentOpen();
+    }
     shell->show();
     const bool restoredOpenDocumentSession = shouldRestoreOpenDocumentSession(serializedOptions) && shell->restoreOpenDocumentSession();
 

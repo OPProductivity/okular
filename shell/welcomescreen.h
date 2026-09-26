@@ -11,6 +11,7 @@
 
 #include <QFrame>
 #include <QList>
+#include <QModelIndex>
 #include <QUrl>
 
 class KRecentFilesAction;
@@ -27,14 +28,15 @@ public:
 
     void loadRecents();
     void setMaxRecentItems(const int maxItems);
+    QList<QUrl> recentUrlsForContextMenu(const QModelIndex &clickedIndex);
 
 Q_SIGNALS:
     void openClicked();
     void closeClicked();
     void recentItemClicked(QUrl const &url);
-    void openAllRecents(QList<QUrl> const &urls);
+    void openRecentDocuments(QList<QUrl> const &urls);
     void forgetAllRecents();
-    void forgetRecentItem(QUrl const &url);
+    void forgetRecentItems(const QList<QUrl> &urls);
 
 protected:
     void showEvent(QShowEvent *e) override;

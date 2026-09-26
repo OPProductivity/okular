@@ -11,6 +11,7 @@
 
 #include <KConfigGroup>
 #include <KLineEdit>
+#include <KLocalizedString>
 #include <KRecentFilesAction>
 
 #if HAVE_DBUS
@@ -25,10 +26,12 @@
 #include <windows.h>
 #endif
 #include <QDir>
+#include <QClipboard>
 #include <QFile>
 #include <QGuiApplication>
 #include <QItemSelectionModel>
 #include <QListView>
+#include <QMenu>
 #include <QPrintDialog>
 #include <QProcessEnvironment>
 #include <QScreen>
@@ -51,6 +54,8 @@
 #include "../shell/shellutils.h"
 #include "closedialoghelper.h"
 
+#include <algorithm>
+#include <cmath>
 #include <sys/types.h>
 #ifndef Q_OS_WIN
 #include <unistd.h>
@@ -138,8 +143,14 @@ private Q_SLOTS:
     void testOpenAllRecentDocumentsAsTabs();
     void testSelectRecentDocumentsWithCtrlClick();
     void testSelectRecentDocumentsWithShiftClick();
+    void testRecentContextMenuSelectedActions();
+    void testRecentContextMenuOpensSelected();
+    void testRecentContextMenuCopiesSelectedPaths();
     void testTabControlsRemainAvailable();
     void testOverflowArrowsSelectEveryTab();
+    void testCenterButtonFramesActiveTab();
+    void testFileLaunchShowsDocumentViewFirst();
+    void testWelcomeClearedBeforeDocumentLoad();
 
 private:
 };
@@ -606,6 +617,128 @@ void MainShellTest::testSelectRecentDocumentsWithShiftClick()
     QCOMPARE(shell->m_tabWidget->currentIndex(), 2);
 }
 
+void MainShellTest::testRecentContextMenuSelectedActions()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl thirdUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
+    shell->m_recent->clear();
+    shell->m_recent->addUrl(firstUrl);
+    shell->m_recent->addUrl(secondUrl);
+    shell->m_recent->addUrl(thirdUrl);
+    shell->refreshRecentsOnWelcomeScreen();
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QVERIFY(view);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(2, 0)).center());
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
+    QCOMPARE(shell->m_welcomeScreen->recentUrlsForContextMenu(view->model()->index(0, 0)), (QList<QUrl> {thirdUrl, firstUrl}));
+    QCOMPARE(shell->m_welcomeScreen->recentUrlsForContextMenu(view->model()->index(1, 0)), (QList<QUrl> {secondUrl}));
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(2, 0)).center());
+
+    bool sawContextMenu = false;
+    bool sawPluralActions = false;
+    QTimer::singleShot(0, this, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) {
+            return;
+        }
+        sawContextMenu = true;
+        const QList<QAction *> actions = menu->actions();
+        if (actions.size() == 5) {
+            sawPluralActions = actions.at(0)->text() == i18n("&Open Selected") && actions.at(2)->text() == i18np("&Copy Path", "&Copy Paths", 2)
+                && actions.at(3)->text() == i18np("&Open Containing Folder", "&Open Containing Folders", 2) && actions.at(3)->isEnabled()
+                && actions.at(4)->text() == i18ncp("recent items context menu", "&Forget This Item", "&Forget These Items", 2);
+            actions.at(4)->trigger();
+        }
+        menu->close();
+    });
+    QTest::mouseClick(view->viewport(), Qt::RightButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QVERIFY(sawContextMenu);
+    QVERIFY(sawPluralActions);
+    QCOMPARE(shell->m_recent->urls(), (QList<QUrl> {secondUrl}));
+}
+
+void MainShellTest::testRecentContextMenuOpensSelected()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    const QUrl olderUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl middleUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl newerUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
+    shell->m_recent->clear();
+    shell->m_recent->addUrl(olderUrl);
+    shell->m_recent->addUrl(middleUrl);
+    shell->m_recent->addUrl(newerUrl);
+    shell->refreshRecentsOnWelcomeScreen();
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QVERIFY(view);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(2, 0)).center());
+
+    bool openedFromMenu = false;
+    QTimer::singleShot(0, this, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (menu && !menu->actions().isEmpty()) {
+            openedFromMenu = true;
+            menu->actions().first()->trigger();
+            menu->close();
+        }
+    });
+    QTest::mouseClick(view->viewport(), Qt::RightButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QVERIFY(openedFromMenu);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(olderUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(newerUrl.toLocalFile()));
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
+}
+
+void MainShellTest::testRecentContextMenuCopiesSelectedPaths()
+{
+    if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
+        QSKIP("Clipboard test runs only with an isolated offscreen Qt platform");
+    }
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QUrl olderUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl newerUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    shell->m_recent->clear();
+    shell->m_recent->addUrl(olderUrl);
+    shell->m_recent->addUrl(newerUrl);
+    shell->refreshRecentsOnWelcomeScreen();
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QVERIFY(view);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(1, 0)).center());
+    const QString oldClipboardText = QGuiApplication::clipboard()->text();
+    bool copied = false;
+    QTimer::singleShot(0, this, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (menu && menu->actions().size() == 5) {
+            copied = true;
+            menu->actions().at(2)->trigger();
+            menu->close();
+        }
+    });
+    QTest::mouseClick(view->viewport(), Qt::RightButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    const QString copiedText = QGuiApplication::clipboard()->text();
+    QGuiApplication::clipboard()->setText(oldClipboardText);
+    QVERIFY(copied);
+    QCOMPARE(copiedText, newerUrl.toLocalFile() + QLatin1Char('\n') + olderUrl.toLocalFile());
+}
+
 void MainShellTest::testTabControlsRemainAvailable()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -669,6 +802,101 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     }
     QVERIFY(!shell->m_nextTabButton->isEnabled());
     delete shell;
+}
+
+void MainShellTest::testCenterButtonFramesActiveTab()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->resize(500, 520);
+    const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
+    for (int i = 0; i < 9; ++i) {
+        const QString path = directory.filePath(QStringLiteral("tab-%1.pdf").arg(i));
+        QVERIFY(QFile::copy(sourcePath, path));
+        shell->openUrl(QUrl::fromLocalFile(path));
+    }
+    shell->setActiveTab(4);
+    QCoreApplication::processEvents();
+    shell->updateOpenTabButtonGeometry();
+    QTabBar *tabBar = shell->m_tabWidget->tabBar();
+    QList<QToolButton *> nativeButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
+    nativeButtons.removeAll(shell->m_centerActiveTabButton);
+    nativeButtons.removeAll(shell->m_previousTabButton);
+    nativeButtons.removeAll(shell->m_nextTabButton);
+    nativeButtons.erase(std::remove_if(nativeButtons.begin(), nativeButtons.end(), [](QToolButton *button) { return !button->isVisible(); }), nativeButtons.end());
+    std::sort(nativeButtons.begin(), nativeButtons.end(), [](QToolButton *a, QToolButton *b) { return a->x() < b->x(); });
+    QVERIFY(nativeButtons.size() >= 2);
+    QToolButton *const rightScrollButton = nativeButtons.last();
+    for (int i = 0; i < 9 && rightScrollButton->isEnabled(); ++i) {
+        rightScrollButton->click();
+        QCoreApplication::processEvents();
+    }
+    const int visibleCenter = (tabBar->rect().left() + nativeButtons.at(nativeButtons.size() - 2)->x() - 1) / 2;
+    const int before = std::abs(tabBar->tabRect(4).center().x() - visibleCenter);
+    shell->m_centerActiveTabButton->click();
+    const int after = std::abs(tabBar->tabRect(4).center().x() - visibleCenter);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 4);
+    QVERIFY(after < before);
+    delete shell;
+}
+
+void MainShellTest::testFileLaunchShowsDocumentViewFirst()
+{
+    class ShowProbe : public QObject
+    {
+    public:
+        bool sawShell = false;
+        bool showedDocumentView = false;
+
+        bool eventFilter(QObject *object, QEvent *event) override
+        {
+            if (event->type() == QEvent::Show) {
+                if (auto *shell = qobject_cast<Shell *>(object)) {
+                    sawShell = true;
+                    auto *stack = qobject_cast<QStackedWidget *>(shell->centralWidget());
+                    showedDocumentView = stack && stack->currentWidget() != shell->findChild<WelcomeScreen *>();
+                }
+            }
+            return false;
+        }
+    } probe;
+    QApplication::instance()->installEventFilter(&probe);
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QString path = QStringLiteral(KDESRCDIR "data/file1.pdf");
+    const Okular::Status status = Okular::main(QStringList {path}, options);
+    QApplication::instance()->removeEventFilter(&probe);
+    QCOMPARE(status, Okular::Success);
+    QVERIFY(probe.sawShell);
+    QVERIFY(probe.showedDocumentView);
+}
+
+void MainShellTest::testWelcomeClearedBeforeDocumentLoad()
+{
+    class PaintProbe : public QObject
+    {
+    public:
+        bool painted = false;
+        bool eventFilter(QObject *, QEvent *event) override
+        {
+            painted |= event->type() == QEvent::Paint;
+            return false;
+        }
+    } probe;
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_centralStackedWidget->currentWidget(), static_cast<QWidget *>(shell->m_welcomeScreen));
+    shell->m_tabWidget->installEventFilter(&probe);
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    shell->m_tabWidget->removeEventFilter(&probe);
+    QCOMPARE(shell->m_centralStackedWidget->currentWidget(), static_cast<QWidget *>(shell->m_tabWidget));
+    QVERIFY(!shell->m_welcomeScreen->isVisible());
+    QVERIFY(probe.painted);
 }
 
 void MainShellTest::testShell_data()
