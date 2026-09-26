@@ -17,12 +17,15 @@
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #endif // HAVE_DBUS
+#include <QDir>
 #include <QPrintDialog>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryFile>
 #include <QTimer>
+#include <QToolButton>
 #include <qwidget.h>
 
 #include "../core/document_p.h"
@@ -109,6 +112,11 @@ private Q_SLOTS:
     void testOpenInvalidFiles_data();
     void testOpenInvalidFiles();
     void testOpenTheSameFileSeveralTimes();
+#if defined(Q_OS_WIN)
+    void testForwardedWindowReturnsFromOffscreen();
+#endif
+    void testOpenDocumentSessionRestoresTabs();
+    void testTabControlsRemainAvailable();
 
 private:
 };
@@ -141,6 +149,7 @@ Shell *findShell(Shell *ignore = nullptr)
 void MainShellTest::initTestCase()
 {
     QStandardPaths::setTestModeEnabled(true);
+    QVERIFY(QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)));
     // Don't pollute people's okular settings
     Okular::Settings::instance(QStringLiteral("mainshelltest"));
 
@@ -183,6 +192,115 @@ void MainShellTest::cleanup()
     while ((s = findShell())) {
         delete s;
     }
+}
+
+#if defined(Q_OS_WIN)
+void MainShellTest::testForwardedWindowReturnsFromOffscreen()
+{
+    const QString uniqueOptions = ShellUtils::serializeOptions(false, false, false, true, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), uniqueOptions), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    // Let the one-time startup placement finish before moving this test window.
+    QTest::qWait(100);
+    QScreen *screen = shell->screen();
+    QVERIFY(screen);
+    const QRect bounds = screen->geometry();
+    const QRect startupGeometry = shell->geometry();
+    QVERIFY(bounds.contains(startupGeometry));
+    QCOMPARE(startupGeometry.left(), bounds.left());
+
+    for (const int offset : {bounds.width() / 6, bounds.width() / 3, bounds.width() / 2, -bounds.width() / 6}) {
+        shell->setGeometry(bounds.left() + offset, startupGeometry.top(), startupGeometry.width(), startupGeometry.height());
+        QCoreApplication::processEvents();
+        QVERIFY(!bounds.contains(shell->geometry()));
+
+        shell->raisePrivateWindowsShell();
+        QCoreApplication::processEvents();
+        QVERIFY2(shell->screen()->geometry().contains(shell->geometry()), "Forwarded file raise left the window outside the screen");
+    }
+
+    const QRect deliberateGeometry(bounds.left() + bounds.width() / 8, bounds.top() + bounds.height() / 8, bounds.width() / 2, bounds.height() / 2);
+    shell->setGeometry(deliberateGeometry);
+    QCoreApplication::processEvents();
+    shell->raisePrivateWindowsShell();
+    QCoreApplication::processEvents();
+    QCOMPARE(shell->geometry(), deliberateGeometry);
+
+    shell->setGeometry(bounds.left() + bounds.width() / 2, startupGeometry.top(), startupGeometry.width(), startupGeometry.height());
+    shell->showMinimized();
+    QCoreApplication::processEvents();
+    shell->raisePrivateWindowsShell();
+    QCoreApplication::processEvents();
+    QVERIFY(!shell->isMinimized());
+    QVERIFY(shell->screen()->geometry().contains(shell->geometry()));
+
+    shell->showMaximized();
+    QCoreApplication::processEvents();
+    shell->raisePrivateWindowsShell();
+    QCoreApplication::processEvents();
+    QVERIFY(shell->isMaximized());
+}
+#endif
+
+void MainShellTest::testOpenDocumentSessionRestoresTabs()
+{
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup session = config->group(QStringLiteral("Shell Open Documents Session"));
+    session.deleteGroup();
+    config->sync();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openUrl(firstUrl);
+    shell->openUrl(secondUrl);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    shell->m_tabWidget->setCurrentIndex(0);
+    shell->saveOpenDocumentSession();
+    QCOMPARE(session.readPathEntry("Urls", QStringList()).size(), 2);
+
+    delete shell;
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *restored = findShell();
+    QVERIFY(restored);
+    QCOMPARE(restored->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(restored->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(restored->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QCOMPARE(restored->m_tabWidget->currentIndex(), 0);
+
+    delete restored;
+    session.deleteGroup();
+    config->sync();
+}
+
+void MainShellTest::testTabControlsRemainAvailable()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    Okular::Settings::self()->setShellOpenFileInTabs(true);
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    QCoreApplication::processEvents();
+    QCOMPARE(shell->m_tabWidget->count(), 1);
+    QVERIFY(shell->m_tabWidget->tabBar()->isVisible());
+    QVERIFY(shell->m_openTabButton->isVisible());
+
+    shell->resize(640, 520);
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf")));
+    QCoreApplication::processEvents();
+    QCOMPARE(shell->m_tabWidget->count(), 3);
+    QVERIFY(shell->m_openTabButton->isVisible());
+    const QRect buttonRect(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
+    QVERIFY(shell->rect().contains(buttonRect));
 }
 
 void MainShellTest::testShell_data()

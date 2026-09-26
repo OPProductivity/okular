@@ -1,4 +1,27 @@
-# Okular – Universal Document Viewer
+# Okular for Windows: Single-Window Tabs, Session Restore, and Window Placement
+
+> **Unofficial Windows-focused source fork.** This branch builds on KDE Okular and is maintained independently by OPProductivity. The KDE downloads linked below are upstream releases and do not include this fork's changes.
+
+## Changes in this fork
+
+- Regular Windows file opens, including several files opened at once from File Explorer, join one tabbed Okular window.
+- The tab bar remains visible with one document. An adjacent `+` button opens another document, and crowded tabs retain usable scroll controls.
+- Open local documents and the active tab can be restored at the next launch; this can be turned off in Okular's settings.
+- A window that has moved beyond the screen is brought back into view when another file is opened in it. An intentionally placed, fully visible window keeps its position.
+
+These are changes to the application source. A build on another computer uses that computer's own document paths and settings. No personal documents, local build directories, or Windows installation files are part of this fork.
+
+### Building on Windows
+
+Follow KDE's [Craft setup guide](https://develop.kde.org/docs/getting-started/building/craft/) to install the compiler and dependencies. In a Craft PowerShell environment, change to your clone of this repository and build that checkout:
+
+```powershell
+craft --ignoreInstalled --options "kde/applications/okular.srcDir=$((Get-Location).Path)" kde/applications/okular
+```
+
+Craft's installation directory is chosen on the builder's machine; the source code does not depend on the maintainer's Windows paths. Check the executable produced by your build before changing file associations or shortcuts.
+
+## Upstream Okular
 
 Okular can view and annotate documents of various formats, including PDF, Postscript, Comic Book, and various image formats.
 It supports native PDF annotations.
