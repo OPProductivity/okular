@@ -941,6 +941,9 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     QCOMPARE(nextRect.right(), reservedRight.right());
     QCOMPARE(reservedLeft.right() + 1, reservedRight.left());
     QVERIFY(previousRect.left() > tabBar->width() / 2);
+    const QRect nextRectInShell(nextTabButton->mapTo(shell, QPoint(0, 0)), nextTabButton->size());
+    const QRect openRectInShell(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
+    QVERIFY(openRectInShell.left() - nextRectInShell.right() - 1 >= 8);
 
     for (int expected = 7; expected >= 0; --expected) {
         QVERIFY(previousTabButton->isEnabled());

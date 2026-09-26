@@ -331,7 +331,8 @@ Shell::Shell(const QString &serializedOptions)
         QWidget *const tabCornerWidget = new QWidget(m_tabWidget);
         tabCornerWidget->setObjectName(QStringLiteral("tabCornerWidget"));
         QHBoxLayout *const tabCornerLayout = new QHBoxLayout(tabCornerWidget);
-        tabCornerLayout->setContentsMargins(0, 0, 1, 0);
+        constexpr int openButtonGap = 8;
+        tabCornerLayout->setContentsMargins(openButtonGap, 0, 1, 0);
         tabCornerLayout->setSpacing(1);
 
         const QString tabCornerButtonStyle = QStringLiteral("QToolButton { border: 1px solid transparent; border-radius: 2px; padding: 0px 0px 2px 0px; }"
@@ -364,7 +365,7 @@ Shell::Shell(const QString &serializedOptions)
         m_openTabButton->setAutoRaise(false);
         connect(m_openTabButton, &QToolButton::clicked, this, &Shell::fileOpen);
         tabCornerLayout->addWidget(m_openTabButton);
-        tabCornerWidget->setFixedWidth(m_openTabButton->width() + 2);
+        tabCornerWidget->setFixedWidth(m_openTabButton->width() + openButtonGap + 1);
         m_tabWidget->setCornerWidget(tabCornerWidget, Qt::TopRightCorner);
 
         m_tabWidget->setAcceptDrops(true);
