@@ -504,7 +504,12 @@ bool Shell::openDocument(const QUrl &url, const QString &serializedOptions)
 
     hideWelcomeScreen();
 
+#if !defined(Q_OS_WIN)
     KParts::ReadWritePart *const part = m_tabs[0].part;
+    if (!qobject_cast<Okular::ViewerInterface *>(part)->openNewFilesInTabs() && !part->url().isEmpty() && !ShellUtils::unique(serializedOptions)) {
+        return false;
+    }
+#endif
 
     openUrl(url, serializedOptions);
 
@@ -686,6 +691,14 @@ bool Shell::canOpenDocs(int numDocs, int desktop)
         return false;
     }
 
+#if !defined(Q_OS_WIN)
+    KParts::ReadWritePart *const part = m_tabs[0].part;
+    const bool allowTabs = qobject_cast<Okular::ViewerInterface *>(part)->openNewFilesInTabs();
+    if (!allowTabs && (numDocs > 1 || !part->url().isEmpty())) {
+        return false;
+    }
+#endif
+
 #if !defined(Q_OS_WIN) && !defined(Q_OS_OSX) && !defined(Q_OS_HAIKU)
     const KWindowInfo winfo(window()->effectiveWinId(), NET::WMDesktop);
     if (winfo.desktop() != desktop) {
@@ -711,7 +724,17 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
                 scheduleOpenDocumentSessionSave();
             }
         } else {
+#if defined(Q_OS_WIN)
             openNewTab(url, serializedOptions);
+#else
+            if (qobject_cast<Okular::ViewerInterface *>(activePart)->openNewFilesInTabs()) {
+                openNewTab(url, serializedOptions);
+            } else {
+                Shell *newShell = new Shell(serializedOptions);
+                newShell->show();
+                newShell->openUrl(url, serializedOptions);
+            }
+#endif
         }
     } else {
         m_tabWidget->setTabText(activeTab, url.fileName());
