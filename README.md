@@ -7,7 +7,7 @@
 - Regular Windows file opens, including several files opened at once from File Explorer, join one tabbed Okular window.
 - The tab bar remains visible with one document. An adjacent `+` button opens another document, and crowded tabs retain usable scroll controls.
 - Open local documents and the active tab can be restored at the next launch; this can be turned off in Okular's settings.
-- A window that has moved beyond the screen is brought back into view when another file is opened in it. An intentionally placed, fully visible window keeps its position.
+- Regular Windows launches place the normal Okular window at the top-left of the primary screen with screen-sized geometry, even after a prior window was moved or maximized. This also applies when another file joins an existing window. Explicit full-screen mode remains available.
 
 These are changes to the application source. A build on another computer uses that computer's own document paths and settings. No personal documents, local build directories, or Windows installation files are part of this fork.
 

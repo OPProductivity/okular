@@ -21,8 +21,11 @@
 #include <QDataStream>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <dwmapi.h>
+#include <windows.h>
 #endif
 #include <QDir>
+#include <QGuiApplication>
 #include <QPrintDialog>
 #include <QScreen>
 #include <QStandardPaths>
@@ -201,6 +204,22 @@ void MainShellTest::cleanup()
 }
 
 #if defined(Q_OS_WIN)
+static QRect visibleWindowsFrame(QWidget *widget)
+{
+    const HWND hwnd = reinterpret_cast<HWND>(widget->winId());
+    RECT rect = {};
+    const HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+    using DwmGetWindowAttributeFunction = HRESULT(WINAPI *)(HWND, DWORD, PVOID, DWORD);
+    const auto getWindowAttribute = dwm ? reinterpret_cast<DwmGetWindowAttributeFunction>(GetProcAddress(dwm, "DwmGetWindowAttribute")) : nullptr;
+    if (!getWindowAttribute || FAILED(getWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(rect)))) {
+        GetWindowRect(hwnd, &rect);
+    }
+    if (dwm) {
+        FreeLibrary(dwm);
+    }
+    return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+}
+
 void MainShellTest::testForwardedWindowReturnsFromOffscreen()
 {
     const QString uniqueOptions = ShellUtils::serializeOptions(false, false, false, true, false, QString(), QString(), QString());
@@ -208,23 +227,24 @@ void MainShellTest::testForwardedWindowReturnsFromOffscreen()
     Shell *shell = findShell();
     QVERIFY(shell);
 
-    // Let the one-time startup placement finish before moving this test window.
-    QTest::qWait(100);
-    QScreen *screen = shell->screen();
+    // Let both startup placement passes finish before moving this test window.
+    QTest::qWait(200);
+    QScreen *screen = QGuiApplication::primaryScreen();
     QVERIFY(screen);
     const QRect bounds = screen->geometry();
     const QRect startupGeometry = shell->geometry();
-    QVERIFY(bounds.contains(startupGeometry));
-    QCOMPARE(startupGeometry.left(), bounds.left());
+    QCOMPARE(visibleWindowsFrame(shell), bounds);
+    QVERIFY(!shell->isMaximized());
 
     for (const int offset : {bounds.width() / 6, bounds.width() / 3, bounds.width() / 2, -bounds.width() / 6}) {
         shell->setGeometry(bounds.left() + offset, startupGeometry.top(), startupGeometry.width(), startupGeometry.height());
         QCoreApplication::processEvents();
-        QVERIFY(!bounds.contains(shell->geometry()));
+        QVERIFY(!bounds.contains(visibleWindowsFrame(shell)));
 
         shell->raisePrivateWindowsShell();
         QCoreApplication::processEvents();
-        QVERIFY2(shell->screen()->geometry().contains(shell->geometry()), "Forwarded file raise left the window outside the screen");
+        QCOMPARE(visibleWindowsFrame(shell), bounds);
+        QVERIFY(!shell->isMaximized());
     }
 
     const QRect deliberateGeometry(bounds.left() + bounds.width() / 8, bounds.top() + bounds.height() / 8, bounds.width() / 2, bounds.height() / 2);
@@ -232,7 +252,7 @@ void MainShellTest::testForwardedWindowReturnsFromOffscreen()
     QCoreApplication::processEvents();
     shell->raisePrivateWindowsShell();
     QCoreApplication::processEvents();
-    QCOMPARE(shell->geometry(), deliberateGeometry);
+    QCOMPARE(visibleWindowsFrame(shell), bounds);
 
     shell->setGeometry(bounds.left() + bounds.width() / 2, startupGeometry.top(), startupGeometry.width(), startupGeometry.height());
     shell->showMinimized();
@@ -240,13 +260,30 @@ void MainShellTest::testForwardedWindowReturnsFromOffscreen()
     shell->raisePrivateWindowsShell();
     QCoreApplication::processEvents();
     QVERIFY(!shell->isMinimized());
-    QVERIFY(shell->screen()->geometry().contains(shell->geometry()));
+    QCOMPARE(visibleWindowsFrame(shell), bounds);
 
     shell->showMaximized();
     QCoreApplication::processEvents();
     shell->raisePrivateWindowsShell();
     QCoreApplication::processEvents();
-    QVERIFY(shell->isMaximized());
+    QVERIFY(!shell->isMaximized());
+    QCOMPARE(visibleWindowsFrame(shell), bounds);
+
+    shell->showFullScreen();
+    QCoreApplication::processEvents();
+    shell->raisePrivateWindowsShell();
+    QCoreApplication::processEvents();
+    QVERIFY(shell->isFullScreen());
+
+    delete shell;
+    Shell *restored = new Shell(uniqueOptions);
+    QVERIFY(restored->isValid());
+    restored->setGeometry(bounds.left() + bounds.width() / 2, bounds.top(), bounds.width(), bounds.height());
+    restored->show();
+    QTest::qWait(200);
+    QVERIFY(!restored->isMaximized());
+    QVERIFY(!restored->isFullScreen());
+    QCOMPARE(visibleWindowsFrame(restored), bounds);
 }
 #endif
 

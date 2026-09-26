@@ -80,6 +80,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <dwmapi.h>
 #endif
 
 static const char *shouldShowMenuBarComingFromFullScreen = "shouldShowMenuBarComingFromFullScreen";
@@ -610,11 +611,15 @@ void Shell::handleWindowsTabOpenConnection()
 
 void Shell::raisePrivateWindowsShell()
 {
-    if (isMinimized()) {
+    if (!isFullScreen() && (isMinimized() || isMaximized())) {
         showNormal();
     } else {
         show();
     }
+
+    // Every regular Windows file launch starts from the same normal-window
+    // placement, including launches forwarded to an existing shell.
+    applyPrivateWindowsStartupGeometry();
 
     raise();
     activateWindow();
@@ -655,19 +660,6 @@ void Shell::raisePrivateWindowsShell()
 
     if (attached) {
         AttachThreadInput(currentThread, foregroundThread, FALSE);
-    }
-
-    // Forwarded file opens reuse this window, so the startup placement in
-    // showEvent() will not run again. Bring an off-screen normal window back
-    // onto its screen without disturbing deliberate on-screen placement.
-    if (!isMaximized() && !isFullScreen()) {
-        QScreen *targetScreen = screen();
-        if (!targetScreen) {
-            targetScreen = QGuiApplication::primaryScreen();
-        }
-        if (targetScreen && !targetScreen->geometry().contains(geometry())) {
-            applyPrivateWindowsStartupGeometry();
-        }
     }
 }
 #endif
@@ -1172,7 +1164,9 @@ void Shell::showEvent(QShowEvent *e)
 #if defined(Q_OS_WIN)
     if (!m_privateWindowsStartupGeometryApplied && !isFullScreen()) {
         m_privateWindowsStartupGeometryApplied = true;
+        applyPrivateWindowsStartupGeometry();
         QTimer::singleShot(0, this, &Shell::applyPrivateWindowsStartupGeometry);
+        QTimer::singleShot(150, this, &Shell::applyPrivateWindowsStartupGeometry);
     }
 #endif
 }
@@ -1190,9 +1184,48 @@ void Shell::applyPrivateWindowsStartupGeometry()
         return;
     }
 
-    QScreen *targetScreen = screen();
+    if (isMinimized() || isMaximized()) {
+        showNormal();
+    }
+
+    const HWND hwnd = reinterpret_cast<HWND>(winId());
+    MONITORINFO monitorInfo = {sizeof(MONITORINFO)};
+    const HMONITOR primaryMonitor = MonitorFromPoint(POINT {0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    RECT windowRect = {};
+    if (hwnd && primaryMonitor && GetMonitorInfoW(primaryMonitor, &monitorInfo) && GetWindowRect(hwnd, &windowRect)) {
+        RECT visibleRect = windowRect;
+        const HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        using DwmGetWindowAttributeFunction = HRESULT(WINAPI *)(HWND, DWORD, PVOID, DWORD);
+        const auto getWindowAttribute = dwm ? reinterpret_cast<DwmGetWindowAttributeFunction>(GetProcAddress(dwm, "DwmGetWindowAttribute")) : nullptr;
+        if (getWindowAttribute) {
+            RECT dwmRect = {};
+            if (SUCCEEDED(getWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &dwmRect, sizeof(dwmRect))) && dwmRect.right > dwmRect.left && dwmRect.bottom > dwmRect.top) {
+                visibleRect = dwmRect;
+            }
+        }
+        if (dwm) {
+            FreeLibrary(dwm);
+        }
+
+        const int leftInset = visibleRect.left - windowRect.left;
+        const int topInset = visibleRect.top - windowRect.top;
+        const int rightInset = windowRect.right - visibleRect.right;
+        const int bottomInset = windowRect.bottom - visibleRect.bottom;
+        const RECT screenRect = monitorInfo.rcMonitor;
+        if (SetWindowPos(hwnd,
+                         nullptr,
+                         screenRect.left - leftInset,
+                         screenRect.top - topInset,
+                         screenRect.right - screenRect.left + leftInset + rightInset,
+                         screenRect.bottom - screenRect.top + topInset + bottomInset,
+                         SWP_NOZORDER | SWP_NOACTIVATE)) {
+            return;
+        }
+    }
+
+    QScreen *targetScreen = QGuiApplication::primaryScreen();
     if (!targetScreen) {
-        targetScreen = QGuiApplication::primaryScreen();
+        targetScreen = screen();
     }
     if (!targetScreen) {
         return;
@@ -1207,8 +1240,8 @@ void Shell::applyPrivateWindowsStartupGeometry()
     const int rightFrame = frame.right() - client.right();
     const int bottomFrame = frame.bottom() - client.bottom();
 
-    const int width = std::max(640, screenGeometry.width() - leftFrame - rightFrame);
-    const int height = std::max(480, screenGeometry.height() - topFrame - bottomFrame);
+    const int width = std::max(1, screenGeometry.width() - leftFrame - rightFrame);
+    const int height = std::max(1, screenGeometry.height() - topFrame - bottomFrame);
 
     setGeometry(screenGeometry.left() + leftFrame, screenGeometry.top() + topFrame, width, height);
 }
