@@ -17,6 +17,11 @@
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #endif // HAVE_DBUS
+#if defined(Q_OS_WIN)
+#include <QDataStream>
+#include <QLocalServer>
+#include <QLocalSocket>
+#endif
 #include <QDir>
 #include <QPrintDialog>
 #include <QScreen>
@@ -114,6 +119,7 @@ private Q_SLOTS:
     void testOpenTheSameFileSeveralTimes();
 #if defined(Q_OS_WIN)
     void testForwardedWindowReturnsFromOffscreen();
+    void testForwardedFileOpensInExistingTabs();
 #endif
     void testOpenDocumentSessionRestoresTabs();
     void testTabControlsRemainAvailable();
@@ -241,6 +247,38 @@ void MainShellTest::testForwardedWindowReturnsFromOffscreen()
     shell->raisePrivateWindowsShell();
     QCoreApplication::processEvents();
     QVERIFY(shell->isMaximized());
+}
+#endif
+
+#if defined(Q_OS_WIN)
+void MainShellTest::testForwardedFileOpensInExistingTabs()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QVERIFY(shell->m_windowsTabOpenServer);
+    QVERIFY(shell->m_windowsTabOpenServer->isListening());
+
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    shell->openUrl(firstUrl);
+    QCOMPARE(shell->m_tabs.size(), 1);
+
+    QLocalSocket socket;
+    socket.connectToServer(QStringLiteral("okular-private-tab-open-v1-test-%1").arg(QCoreApplication::applicationPid()), QIODevice::WriteOnly);
+    QVERIFY(socket.waitForConnected(1000));
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(0x4f4b5450) << options << QStringList {secondUrl.toLocalFile()};
+    QCOMPARE(socket.write(payload), payload.size());
+    socket.flush();
+
+    QTRY_COMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QVERIFY(findShell(shell) == nullptr);
+    socket.disconnectFromServer();
 }
 #endif
 

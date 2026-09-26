@@ -61,6 +61,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QScreen>
+#include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
@@ -111,6 +112,9 @@ static inline QString GeneralGroupKey()
 #if defined(Q_OS_WIN)
 static inline QString WindowsTabOpenServerName()
 {
+    if (QStandardPaths::isTestModeEnabled()) {
+        return QStringLiteral("okular-private-tab-open-v1-test-%1").arg(QCoreApplication::applicationPid());
+    }
     return QStringLiteral("okular-private-tab-open-v1");
 }
 #endif
