@@ -613,6 +613,19 @@ endif()
 set_target_properties(okularpart PROPERTIES PREFIX "")
 set_target_properties(okularpart PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/kf6/parts)
 
+# On Windows the DLL is emitted to the runtime bin directory, while Qt looks
+# for the Part under kf6/parts. Tests link okularpart directly, so loading a
+# second copy from the installed plugin directory breaks QObject type casts.
+if(WIN32 AND BUILD_TESTING)
+    set(_okular_test_part "$<TARGET_FILE_DIR:okularpart>/kf6/parts/$<TARGET_FILE_NAME:okularpart>")
+    add_custom_command(TARGET okularpart POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:okularpart>/kf6/parts"
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${_okular_test_part}"
+        COMMAND ${CMAKE_COMMAND} -E create_hardlink "$<TARGET_FILE:okularpart>" "${_okular_test_part}"
+        VERBATIM
+    )
+endif()
+
 if (Qt6TextToSpeech_FOUND)
    target_link_libraries(okularpart Qt6::TextToSpeech)
 endif()
