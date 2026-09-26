@@ -17,6 +17,9 @@ namespace Okular
 enum Status { Error, AttachedOtherProcess, Success };
 
 Status main(const QStringList &paths, const QString &serializedOptions);
+#if defined(Q_OS_WIN)
+bool claimWindowsTabOpenPrimary();
+#endif
 
 }
 

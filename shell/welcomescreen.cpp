@@ -17,7 +17,6 @@
 #include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
-#include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QMap>
@@ -153,36 +152,6 @@ WelcomeScreen::WelcomeScreen(QWidget *parent)
         openSelectedRecentsButton->setEnabled(recentsListView->selectionModel()->hasSelection());
     });
 
-    m_recentPagesWidget = new QWidget(recentsArea);
-    auto *pageLayout = new QHBoxLayout(m_recentPagesWidget);
-    pageLayout->setContentsMargins(0, 0, 0, 0);
-    pageLayout->setSpacing(4);
-    pageLayout->addStretch();
-    m_previousRecentPageButton = new QToolButton(m_recentPagesWidget);
-    m_previousRecentPageButton->setObjectName(QStringLiteral("previousRecentPageButton"));
-    m_previousRecentPageButton->setArrowType(Qt::LeftArrow);
-    m_previousRecentPageButton->setToolTip(i18n("Previous recent documents page"));
-    pageLayout->addWidget(m_previousRecentPageButton);
-    connect(m_previousRecentPageButton, &QToolButton::clicked, this, [this]() { m_recentsModel->setPage(m_recentsModel->currentPage() - 1); });
-    for (int page = 0; page < 5; ++page) {
-        auto *button = new QToolButton(m_recentPagesWidget);
-        button->setObjectName(QStringLiteral("recentPageButton%1").arg(page + 1));
-        button->setText(QString::number(page + 1));
-        button->setCheckable(true);
-        pageLayout->addWidget(button);
-        m_recentPageButtons.append(button);
-        connect(button, &QToolButton::clicked, this, [this, page]() { m_recentsModel->setPage(page); });
-    }
-    m_nextRecentPageButton = new QToolButton(m_recentPagesWidget);
-    m_nextRecentPageButton->setObjectName(QStringLiteral("nextRecentPageButton"));
-    m_nextRecentPageButton->setArrowType(Qt::RightArrow);
-    m_nextRecentPageButton->setToolTip(i18n("Next recent documents page"));
-    pageLayout->addWidget(m_nextRecentPageButton);
-    connect(m_nextRecentPageButton, &QToolButton::clicked, this, [this]() { m_recentsModel->setPage(m_recentsModel->currentPage() + 1); });
-    pageLayout->addStretch();
-    recentsArea->layout()->addWidget(m_recentPagesWidget);
-    m_recentPagesWidget->hide();
-
     connect(m_recentsModel, &RecentItemsModel::modelReset, this, &WelcomeScreen::recentListChanged);
 
     QVBoxLayout *noRecentsLayout = new QVBoxLayout(recentsListView);
@@ -238,20 +207,6 @@ int WelcomeScreen::recentsCount()
     return m_recentsModel->totalItems();
 }
 
-void WelcomeScreen::updateRecentPages()
-{
-    const int pages = m_recentsModel->pageCount();
-    const int currentPage = m_recentsModel->currentPage();
-    m_recentPagesWidget->setVisible(pages > 1);
-    m_previousRecentPageButton->setEnabled(currentPage > 0);
-    m_nextRecentPageButton->setEnabled(currentPage + 1 < pages);
-    for (int page = 0; page < m_recentPageButtons.size(); ++page) {
-        m_recentPageButtons.at(page)->setVisible(page < pages);
-        m_recentPageButtons.at(page)->setChecked(page == currentPage);
-    }
-    recentsListView->scrollToTop();
-}
-
 QList<QUrl> WelcomeScreen::recentUrlsForContextMenu(const QModelIndex &clickedIndex)
 {
     if (!recentsListView->selectionModel()->isSelected(clickedIndex)) {
@@ -284,7 +239,6 @@ void WelcomeScreen::recentsItemActivated(const QModelIndex &index)
 
 void WelcomeScreen::recentListChanged()
 {
-    updateRecentPages();
     openAllRecentsButton->setEnabled(recentsCount() > 0);
     openSelectedRecentsButton->setEnabled(recentsListView->selectionModel()->hasSelection());
     if (recentsCount() == 0) {

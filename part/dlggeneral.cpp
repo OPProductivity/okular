@@ -116,6 +116,7 @@ DlgGeneral::DlgGeneral(QWidget *parent, Okular::EmbedMode embedMode)
     };
 
     if (embedMode == Okular::NativeShellMode) {
+#if !defined(Q_OS_WIN)
         // Shell document/tab behavior.
         QCheckBox *useTabs = new QCheckBox(this);
         useTabs->setText(i18nc("@option:check Config dialog, general page", "Open new files in tabs"));
@@ -130,11 +131,12 @@ DlgGeneral::DlgGeneral(QWidget *parent, Okular::EmbedMode embedMode)
         useTabs->setChecked(false);
         switchToTab->setEnabled(false);
         connect(useTabs, &QCheckBox::toggled, switchToTab, &QWidget::setEnabled);
+#endif
 
         QCheckBox *restoreOpenDocuments = new QCheckBox(this);
         restoreOpenDocuments->setText(i18nc("@option:check Config dialog, general page", "Restore previously open documents on launch"));
         restoreOpenDocuments->setObjectName(QStringLiteral("kcfg_ShellRestoreOpenDocuments"));
-        layout->addRow(QString(), restoreOpenDocuments);
+        layout->addRow(programFeaturesLabel(), restoreOpenDocuments);
     }
 
 #if !OKULAR_FORCE_DRM

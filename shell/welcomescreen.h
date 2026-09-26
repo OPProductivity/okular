@@ -18,7 +18,6 @@ class KRecentFilesAction;
 class QListWidgetItem;
 class RecentItemsModel;
 class RecentsListItemDelegate;
-class QToolButton;
 
 class WelcomeScreen : public QWidget, Ui::WelcomeScreen
 {
@@ -47,7 +46,6 @@ private Q_SLOTS:
     void recentListChanged();
     void openSelectedRecentsClicked();
     void openAllRecentsClicked();
-    void updateRecentPages();
 
 private:
     int recentsCount();
@@ -56,10 +54,6 @@ private:
     RecentsListItemDelegate *m_recentsItemDelegate;
 
     QLabel *m_noRecentsLabel;
-    QWidget *m_recentPagesWidget = nullptr;
-    QToolButton *m_previousRecentPageButton = nullptr;
-    QToolButton *m_nextRecentPageButton = nullptr;
-    QList<QToolButton *> m_recentPageButtons;
 };
 
 #endif // WELCOMESCREEN_H

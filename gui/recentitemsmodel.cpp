@@ -13,8 +13,6 @@
 
 #include <KConfigGroup>
 
-#include <algorithm>
-
 RecentItemsModel::RecentItemsModel()
 {
 }
@@ -27,7 +25,6 @@ void RecentItemsModel::loadEntries(const KConfigGroup &cg)
 {
     beginResetModel();
     m_recentItems.clear();
-    m_currentPage = 0;
 
     // Based on implementation of KRecentFilesAction::loadEntries.
 
@@ -51,7 +48,6 @@ void RecentItemsModel::clearEntries()
 {
     beginResetModel();
     m_recentItems.clear();
-    m_currentPage = 0;
     endResetModel();
 }
 
@@ -70,7 +66,7 @@ int RecentItemsModel::rowCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
 
-    return std::max(0, std::min(pageSize, static_cast<int>(m_recentItems.size()) - m_currentPage * pageSize));
+    return m_recentItems.size();
 }
 
 QVariant RecentItemsModel::data(const QModelIndex &index, int role) const
@@ -126,7 +122,7 @@ QVariant RecentItemsModel::data(const QModelIndex &index, int role) const
 
 RecentItemsModel::RecentItem const *RecentItemsModel::getItem(int index) const
 {
-    return index >= 0 && index < rowCount() ? getItemAtAbsoluteRow(m_currentPage * pageSize + index) : nullptr;
+    return getItemAtAbsoluteRow(index);
 }
 
 RecentItemsModel::RecentItem const *RecentItemsModel::getItemAtAbsoluteRow(int row) const
@@ -152,26 +148,6 @@ void RecentItemsModel::setMaxItems(const int maxItems)
 int RecentItemsModel::totalItems() const
 {
     return static_cast<int>(m_recentItems.size());
-}
-
-int RecentItemsModel::pageCount() const
-{
-    return (totalItems() + pageSize - 1) / pageSize;
-}
-
-int RecentItemsModel::currentPage() const
-{
-    return m_currentPage;
-}
-
-void RecentItemsModel::setPage(int page)
-{
-    if (page < 0 || page >= pageCount() || page == m_currentPage) {
-        return;
-    }
-    beginResetModel();
-    m_currentPage = page;
-    endResetModel();
 }
 
 #include "moc_recentitemsmodel.cpp"

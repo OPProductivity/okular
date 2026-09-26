@@ -37,6 +37,7 @@
 #include <QPrintDialog>
 #include <QProcessEnvironment>
 #include <QScreen>
+#include <QScrollBar>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QStyleOption>
@@ -137,17 +138,23 @@ private Q_SLOTS:
     void testForwardedWindowReturnsFromOffscreen();
     void testForwardedFileOpensInExistingTabs();
     void testShortcutLaunchReusesExistingWindow();
+    void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
+    void testDroppedFileOpensNewTab();
 #endif
     void testOpenDocumentSessionRestoresTabs();
     void testFileLaunchRestoresTabsBeforeOpeningFile();
     void testDisabledOpenDocumentSessionRestore();
     void testOpenDocumentSessionIgnoresNewFileTabPreference();
     void testOpenDocumentSessionSkipsMissingFile();
+#if defined(Q_OS_WIN)
+    void testOpenDocumentSessionDeduplicatesSavedUrls();
+#endif
     void testOpenAllRecentDocumentsAsTabs();
     void testOpenAllIgnoresRecentSelection();
-    void testOpenAllRecentDocumentsAcrossPages();
+    void testOpenAllRecentDocumentsFromScrolledList();
     void testRecentFilesExpireAfterThreeDays();
     void testRecentFilesLimitedToFifty();
+    void testSelectRecentDocumentsAcrossScrollRange();
     void testSelectRecentDocumentsWithCtrlClick();
     void testSelectRecentDocumentsWithShiftClick();
     void testRecentContextMenuSelectedActions();
@@ -382,6 +389,40 @@ void MainShellTest::testShortcutLaunchReusesExistingWindow()
     QCOMPARE(process.exitCode(), 0);
     QVERIFY(findShell(shell) == nullptr);
 }
+
+void MainShellTest::testAdditionalShellDoesNotRegisterWindowsTabOpenServer()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *primary = findShell();
+    QVERIFY(primary);
+    QVERIFY(primary->m_windowsTabOpenServer);
+    QVERIFY(primary->m_windowsTabOpenServer->isListening());
+
+    Shell *additional = new Shell(options);
+    QVERIFY(additional->isValid());
+    QVERIFY(!additional->m_windowsTabOpenServer);
+    QVERIFY(primary->m_windowsTabOpenServer->isListening());
+    delete additional;
+}
+
+void MainShellTest::testDroppedFileOpensNewTab()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    Okular::Settings::self()->setShellOpenFileInTabs(false);
+
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    shell->openUrl(firstUrl);
+    KParts::ReadWritePart *part = shell->m_tabs.first().part;
+    QVERIFY(QMetaObject::invokeMethod(part, "handleDroppedUrls", Q_ARG(QList<QUrl>, QList<QUrl> {secondUrl})));
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.last().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+}
 #endif
 
 void MainShellTest::testOpenDocumentSessionRestoresTabs()
@@ -515,6 +556,29 @@ void MainShellTest::testOpenDocumentSessionSkipsMissingFile()
     QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
 }
 
+#if defined(Q_OS_WIN)
+void MainShellTest::testOpenDocumentSessionDeduplicatesSavedUrls()
+{
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup session = config->group(QStringLiteral("Shell Open Documents Session"));
+    session.writePathEntry("Urls", QStringList {firstUrl.url(), firstUrl.url(), secondUrl.url()});
+    session.writeEntry("ActiveTab", 1);
+    config->sync();
+    Okular::Settings::self()->setSwitchToTabIfOpen(false);
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 0);
+}
+#endif
+
 void MainShellTest::testOpenAllRecentDocumentsAsTabs()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -606,7 +670,7 @@ void MainShellTest::testRecentFilesExpireAfterThreeDays()
     QCOMPARE(view->model()->rowCount(), 1);
 }
 
-void MainShellTest::testOpenAllRecentDocumentsAcrossPages()
+void MainShellTest::testOpenAllRecentDocumentsFromScrolledList()
 {
     QTemporaryDir directory(QDir::currentPath() + QStringLiteral("/okular-recent-pages-XXXXXX"));
     QVERIFY(directory.isValid());
@@ -626,14 +690,11 @@ void MainShellTest::testOpenAllRecentDocumentsAcrossPages()
     }
     shell->refreshRecentsOnWelcomeScreen();
     QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
-    QToolButton *nextPage = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("nextRecentPageButton"));
     QToolButton *openAll = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("openAllRecentsButton"));
     QVERIFY(view);
-    QVERIFY(nextPage);
     QVERIFY(openAll);
-    QCOMPARE(view->model()->rowCount(), 10);
-    QTest::mouseClick(nextPage, Qt::LeftButton);
-    QCOMPARE(view->model()->rowCount(), 1);
+    QCOMPARE(view->model()->rowCount(), 11);
+    view->scrollTo(view->model()->index(10, 0));
     QTest::mouseClick(openAll, Qt::LeftButton);
     QCOMPARE(shell->m_tabs.size(), 11);
     QCOMPARE(shell->m_tabs.first().part->url(), urls.first());
@@ -662,17 +723,48 @@ void MainShellTest::testRecentFilesLimitedToFifty()
     QCOMPARE(shell->m_recent->urls().size(), 50);
     QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
     QVERIFY(view);
-    QCOMPARE(view->model()->rowCount(), 10);
-    QToolButton *nextPage = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("nextRecentPageButton"));
-    QVERIFY(nextPage);
-    for (int page = 1; page < 5; ++page) {
-        QTest::mouseClick(nextPage, Qt::LeftButton);
-        QCOMPARE(view->model()->rowCount(), 10);
+    QCOMPARE(view->model()->rowCount(), 50);
+    view->setFixedHeight(160);
+    QTRY_VERIFY(view->verticalScrollBar()->maximum() > 0);
+    view->scrollTo(view->model()->index(49, 0));
+    QVERIFY(view->visualRect(view->model()->index(49, 0)).intersects(view->viewport()->rect()));
+}
+
+void MainShellTest::testSelectRecentDocumentsAcrossScrollRange()
+{
+    QTemporaryDir directory(QDir::currentPath() + QStringLiteral("/okular-recent-scroll-XXXXXX"));
+    QVERIFY(directory.isValid());
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->m_recent->clear();
+    QList<QUrl> urls;
+    for (int i = 0; i < 25; ++i) {
+        const QString path = directory.filePath(QStringLiteral("recent-%1.pdf").arg(i));
+        QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file1.pdf"), path));
+        const QUrl url = QUrl::fromLocalFile(path);
+        urls.append(url);
+        shell->addRecentUrl(url);
     }
-    QVERIFY(!nextPage->isEnabled());
-    QToolButton *lastPage = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("recentPageButton5"));
-    QVERIFY(lastPage);
-    QVERIFY(lastPage->isChecked());
+    shell->refreshRecentsOnWelcomeScreen();
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QToolButton *openSelected = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("openSelectedRecentsButton"));
+    QVERIFY(view);
+    QVERIFY(openSelected);
+    QCOMPARE(view->model()->rowCount(), 25);
+    view->setFixedHeight(160);
+    QTRY_VERIFY(view->verticalScrollBar()->maximum() > 0);
+    view->scrollTo(view->model()->index(0, 0));
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->visualRect(view->model()->index(0, 0)).center());
+    view->scrollTo(view->model()->index(24, 0));
+    QVERIFY(view->verticalScrollBar()->value() > 0);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::ControlModifier, view->visualRect(view->model()->index(24, 0)).center());
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
+    QTest::mouseClick(openSelected, Qt::LeftButton);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(shell->m_tabs.first().part->url(), urls.first());
+    QCOMPARE(shell->m_tabs.last().part->url(), urls.last());
 }
 
 void MainShellTest::testSelectRecentDocumentsWithCtrlClick()
@@ -1603,12 +1695,31 @@ void MainShellTest::testOpenTheSameFileSeveralTimes()
 
     shell->openUrl(file2);
 
+#if defined(Q_OS_WIN)
+    QVERIFY(shell->m_tabs.size() == 2);
+    QVERIFY(shell->m_tabWidget->currentIndex() == 1);
+#else
     QVERIFY(shell->m_tabs.size() == 3);
+#endif
 
     shell->openUrl(file3);
+#if defined(Q_OS_WIN)
+    QVERIFY(shell->m_tabWidget->currentIndex() == 2);
+    QVERIFY(shell->m_tabs.size() == 3);
+    const QUrl differentlyCasedFile2 = QUrl::fromLocalFile(file2.toLocalFile().toUpper());
+    shell->openUrl(differentlyCasedFile2);
+    QCOMPARE(shell->m_tabs.size(), 3);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
+    QVERIFY(shell->m_tabs.at(2).part->closeUrl());
+    shell->m_tabWidget->setCurrentIndex(2);
+    shell->openUrl(file1);
+    QCOMPARE(shell->m_tabs.size(), 3);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 0);
+#else
     QVERIFY(shell->m_tabWidget->currentIndex() == 3);
 
     QVERIFY(shell->m_tabs.size() == 4);
+#endif
 
     Okular::Settings::self()->setSwitchToTabIfOpen(true);
 }

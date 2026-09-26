@@ -45,9 +45,6 @@ public:
     int maxItems();
     void setMaxItems(const int maxItems);
     int totalItems() const;
-    int pageCount() const;
-    int currentPage() const;
-    void setPage(int page);
 
     RecentItemsModel::RecentItem const *getItem(const QModelIndex &) const;
     RecentItemsModel::RecentItem const *getItem(int index) const;
@@ -60,9 +57,7 @@ public:
 
 private:
     QList<RecentItemsModel::RecentItem> m_recentItems;
-    static constexpr int pageSize = 10;
     int m_maxItems = 50;
-    int m_currentPage = 0;
     QFileIconProvider m_iconProvider;
 };
 

@@ -49,6 +49,7 @@
 #include <QDragMoveEvent>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -75,6 +76,7 @@
 // local includes
 #include "../interfaces/viewerinterface.h"
 #include "kdocumentviewer.h"
+#include "okular_main.h"
 #include "shellutils.h"
 
 #include <algorithm>
@@ -99,6 +101,7 @@ static constexpr qint64 RECENT_FILE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60;
 static constexpr int MAX_RECENT_FILES = 50;
 #if defined(Q_OS_WIN)
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
+static QPointer<QLocalServer> s_windowsTabOpenPrimaryServer;
 #endif
 
 static constexpr char SIDEBAR_LOCKED_KEY[] = "LockSidebar";
@@ -595,7 +598,7 @@ bool Shell::openDocument(const QString &urlString, const QString &serializedOpti
 #if defined(Q_OS_WIN)
 void Shell::startWindowsTabOpenServer()
 {
-    if (m_unique || m_windowsTabOpenServer) {
+    if (m_unique || m_windowsTabOpenServer || s_windowsTabOpenPrimaryServer || !Okular::claimWindowsTabOpenPrimary()) {
         return;
     }
 
@@ -603,6 +606,7 @@ void Shell::startWindowsTabOpenServer()
     connect(m_windowsTabOpenServer, &QLocalServer::newConnection, this, &Shell::handleWindowsTabOpenConnection);
 
     if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
+        s_windowsTabOpenPrimaryServer = m_windowsTabOpenServer;
         return;
     }
 
@@ -620,6 +624,7 @@ void Shell::startWindowsTabOpenServer()
 
         QLocalServer::removeServer(ShellUtils::windowsTabOpenServerName());
         if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
+            s_windowsTabOpenPrimaryServer = m_windowsTabOpenServer;
             return;
         }
     }
@@ -782,6 +787,16 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
 
     const int activeTab = m_tabWidget->currentIndex();
     KParts::ReadWritePart *const activePart = m_tabs[activeTab].part;
+#if defined(Q_OS_WIN)
+    if (!m_unique) {
+        const int existingTab = findTabIndex(url);
+        if (existingTab >= 0) {
+            setActiveTab(existingTab);
+            addRecentUrl(url);
+            return;
+        }
+    }
+#endif
     if (!activePart->url().isEmpty()) {
         if (m_unique) {
             applyOptionsToPart(activePart, serializedOptions);
@@ -1137,8 +1152,8 @@ bool Shell::restoreOpenDocumentSession()
             // tabs are disabled for ordinary opens on another platform.
             openNewTab(url, QString());
         }
-        const int openedTab = findTabIndex(url);
-        if (openedTab < 0) {
+        const int openedTab = m_tabWidget->currentIndex();
+        if (openedTab < 0 || m_tabs[openedTab].part->url() != url) {
             qWarning() << "Failed to restore Okular open document session URL:" << url;
             continue;
         }
@@ -1568,12 +1583,14 @@ void Shell::closeTab(int tab)
 void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
 {
     const int previousActiveTab = m_tabWidget->currentIndex();
-    KParts::ReadWritePart *const activePart = m_tabs[previousActiveTab].part;
 
     hideWelcomeScreen();
 
-    bool activateTabIfAlreadyOpen;
+    bool activateTabIfAlreadyOpen = true;
+#if !defined(Q_OS_WIN)
+    KParts::ReadWritePart *const activePart = m_tabs[previousActiveTab].part;
     QMetaObject::invokeMethod(activePart, "activateTabIfAlreadyOpenFile", Q_RETURN_ARG(bool, activateTabIfAlreadyOpen));
+#endif
 
     if (activateTabIfAlreadyOpen) {
         const int tabIndex = findTabIndex(url);
@@ -1740,7 +1757,21 @@ int Shell::findTabIndex(QObject *sender) const
 
 int Shell::findTabIndex(const QUrl &url) const
 {
-    auto it = std::find_if(m_tabs.begin(), m_tabs.end(), [&url](const TabState state) { return state.part->url() == url; });
+    auto it = std::find_if(m_tabs.begin(), m_tabs.end(), [&url](const TabState &state) { return state.part->url() == url; });
+#if defined(Q_OS_WIN)
+    // Explorer and session entries can spell the same Windows path differently.
+    // Compare resolved paths only after the cheap URL match fails; distinct
+    // copies of a PDF remain separate documents.
+    if (it == m_tabs.end() && url.isLocalFile()) {
+        const QString canonicalPath = QFileInfo(url.toLocalFile()).canonicalFilePath();
+        if (!canonicalPath.isEmpty()) {
+            it = std::find_if(m_tabs.begin(), m_tabs.end(), [&canonicalPath](const TabState &state) {
+                const QUrl openUrl = state.part->url();
+                return openUrl.isLocalFile() && QFileInfo(openUrl.toLocalFile()).canonicalFilePath().compare(canonicalPath, Qt::CaseInsensitive) == 0;
+            });
+        }
+    }
+#endif
     return (it != m_tabs.end()) ? std::distance(m_tabs.begin(), it) : -1;
 }
 

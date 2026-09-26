@@ -1178,7 +1178,11 @@ void Part::handleDroppedUrls(const QList<QUrl> &urls)
         return;
     }
 
-    if (m_embedMode != NativeShellMode || !openNewFilesInTabs()) {
+    if (m_embedMode != NativeShellMode
+#if !defined(Q_OS_WIN)
+        || !openNewFilesInTabs()
+#endif
+    ) {
         openUrlFromDocument(urls.first());
         return;
     }

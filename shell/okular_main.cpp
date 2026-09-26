@@ -77,7 +77,7 @@ static bool tryBecomeWindowsTabOpenPrimary()
     }
 
     if (!s_windowsTabOpenPrimaryMutex) {
-        return true;
+        return false;
     }
 
     const DWORD waitResult = WaitForSingleObject(s_windowsTabOpenPrimaryMutex, 0);
@@ -169,6 +169,11 @@ static bool attachExistingWindowsInstance(const QStringList &paths, const QStrin
         return false;
     }
 
+    if (!s_windowsTabOpenPrimaryMutex) {
+        // We cannot prove ownership, so this process must not claim the pipe.
+        return false;
+    }
+
     if (waitForExistingWindowsInstance(paths, serializedOptions, 60000)) {
         return true;
     }
@@ -180,6 +185,14 @@ static bool attachExistingWindowsInstance(const QStringList &paths, const QStrin
 
     // No instance confirmed receipt. Open the requested file in this process.
     return false;
+}
+
+namespace Okular
+{
+bool claimWindowsTabOpenPrimary()
+{
+    return tryBecomeWindowsTabOpenPrimary();
+}
 }
 #endif
 
