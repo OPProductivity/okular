@@ -27,6 +27,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QPrintDialog>
+#include <QProcessEnvironment>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTabBar>
@@ -123,8 +124,12 @@ private Q_SLOTS:
 #if defined(Q_OS_WIN)
     void testForwardedWindowReturnsFromOffscreen();
     void testForwardedFileOpensInExistingTabs();
+    void testShortcutLaunchReusesExistingWindow();
 #endif
     void testOpenDocumentSessionRestoresTabs();
+    void testFileLaunchRestoresTabsBeforeOpeningFile();
+    void testDisabledOpenDocumentSessionRestore();
+    void testOpenDocumentSessionIgnoresNewFileTabPreference();
     void testOpenAllRecentDocumentsAsTabs();
     void testTabControlsRemainAvailable();
 
@@ -183,6 +188,13 @@ void MainShellTest::init()
 {
     // Default settings for every test
     Okular::Settings::self()->setDefaults();
+    const QString partConfigPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1String("/okularpartrc");
+    KSharedConfigPtr partConfig = KSharedConfig::openConfig(partConfigPath);
+    partConfig->group(QStringLiteral("General")).writeEntry("ShellRestoreOpenDocuments", true);
+    partConfig->sync();
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    config->group(QStringLiteral("Shell Open Documents Session")).deleteGroup();
+    config->sync();
 
     // Clean docdatas
     const QList<QUrl> urls = {QUrl::fromUserInput(QStringLiteral("file://" KDESRCDIR "data/file1.pdf")),
@@ -307,7 +319,7 @@ void MainShellTest::testForwardedFileOpensInExistingTabs()
     QCOMPARE(shell->m_tabs.size(), 1);
 
     QLocalSocket socket;
-    socket.connectToServer(QStringLiteral("okular-private-tab-open-v1-test-%1").arg(QCoreApplication::applicationPid()), QIODevice::WriteOnly);
+    socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
     QVERIFY(socket.waitForConnected(1000));
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
@@ -317,9 +329,31 @@ void MainShellTest::testForwardedFileOpensInExistingTabs()
     socket.flush();
 
     QTRY_COMPARE(shell->m_tabs.size(), 2);
+    QVERIFY(socket.bytesAvailable() > 0 || socket.waitForReadyRead(1000));
+    QCOMPARE(socket.read(1), QByteArrayLiteral("A"));
     QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
     QVERIFY(findShell(shell) == nullptr);
     socket.disconnectFromServer();
+}
+
+void MainShellTest::testShortcutLaunchReusesExistingWindow()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QVERIFY(shell->m_windowsTabOpenServer);
+
+    QProcess process;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("OKULAR_TEST_INSTANCE"), QString::number(QCoreApplication::applicationPid()));
+    process.setProcessEnvironment(environment);
+    process.start(QStringLiteral(OKULAR_BINARY));
+    QVERIFY(process.waitForStarted());
+    QTRY_COMPARE_WITH_TIMEOUT(process.state(), QProcess::NotRunning, 20000);
+    QCOMPARE(process.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(process.exitCode(), 0);
+    QVERIFY(findShell(shell) == nullptr);
 }
 #endif
 
@@ -356,6 +390,79 @@ void MainShellTest::testOpenDocumentSessionRestoresTabs()
     delete restored;
     session.deleteGroup();
     config->sync();
+}
+
+void MainShellTest::testFileLaunchRestoresTabsBeforeOpeningFile()
+{
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup session = config->group(QStringLiteral("Shell Open Documents Session"));
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl newUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
+    session.writePathEntry("Urls", QStringList {firstUrl.url(), secondUrl.url()});
+    session.writeEntry("ActiveTab", 0);
+    config->sync();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList {newUrl.toLocalFile()}, options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 3);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(2).part->url().toLocalFile()), QDir::cleanPath(newUrl.toLocalFile()));
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 2);
+}
+
+void MainShellTest::testDisabledOpenDocumentSessionRestore()
+{
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup session = config->group(QStringLiteral("Shell Open Documents Session"));
+    const QUrl savedUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    session.writePathEntry("Urls", QStringList {savedUrl.url()});
+    config->sync();
+    const QString partConfigPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1String("/okularpartrc");
+    KSharedConfigPtr partConfig = KSharedConfig::openConfig(partConfigPath);
+    partConfig->group(QStringLiteral("General")).writeEntry("ShellRestoreOpenDocuments", false);
+    partConfig->sync();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QVERIFY(shell->m_tabs.at(0).part->url().isEmpty());
+}
+
+void MainShellTest::testOpenDocumentSessionIgnoresNewFileTabPreference()
+{
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup session = config->group(QStringLiteral("Shell Open Documents Session"));
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    session.writePathEntry("Urls", QStringList {firstUrl.url(), secondUrl.url()});
+    config->sync();
+    Okular::Settings::self()->setShellOpenFileInTabs(false);
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(0).part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QVERIFY(findShell(shell) == nullptr);
+
+    // A file argument on this launch must follow the restored set even if
+    // ordinary new-file tabbing is disabled on this platform.
+    delete shell;
+    session.writePathEntry("Urls", QStringList {firstUrl.url(), secondUrl.url()});
+    config->sync();
+    QCOMPARE(Okular::main(QStringList {QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf")).toLocalFile()}, options), Okular::Success);
+    shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 3);
+    QVERIFY(findShell(shell) == nullptr);
 }
 
 void MainShellTest::testOpenAllRecentDocumentsAsTabs()
@@ -575,6 +682,11 @@ void MainShellTest::testShell()
         if (externalProcessExpectPrintDialog) {
             args << QStringLiteral("-print");
         }
+#if defined(Q_OS_WIN)
+        QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+        environment.insert(QStringLiteral("OKULAR_TEST_INSTANCE"), QString::number(QCoreApplication::applicationPid()));
+        p.setProcessEnvironment(environment);
+#endif
         p.start(QStringLiteral(OKULAR_BINARY), args);
         p.waitForStarted();
         QCOMPARE(p.state(), QProcess::Running);

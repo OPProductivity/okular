@@ -89,7 +89,6 @@ static const char *shouldShowToolBarComingFromFullScreen = "shouldShowToolBarCom
 static const char *const SESSION_URL_KEY = "Urls";
 static const char *const SESSION_TAB_KEY = "ActiveTab";
 static const char *const SESSION_ACTIVE_URL_KEY = "ActiveUrl";
-static const char *const SHELL_RESTORE_OPEN_DOCUMENTS_KEY = "ShellRestoreOpenDocuments";
 static constexpr int OPEN_DOCUMENT_SESSION_SAVE_DELAY_MS = 2000;
 #if defined(Q_OS_WIN)
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
@@ -110,15 +109,6 @@ static inline QString GeneralGroupKey()
 {
     return QStringLiteral("General");
 }
-#if defined(Q_OS_WIN)
-static inline QString WindowsTabOpenServerName()
-{
-    if (QStandardPaths::isTestModeEnabled()) {
-        return QStringLiteral("okular-private-tab-open-v1-test-%1").arg(QCoreApplication::applicationPid());
-    }
-    return QStringLiteral("okular-private-tab-open-v1");
-}
-#endif
 static inline QString OpenDocumentSessionGroupKey()
 {
     return QStringLiteral("Shell Open Documents Session");
@@ -522,6 +512,20 @@ bool Shell::openDocument(const QUrl &url, const QString &serializedOptions)
     return true;
 }
 
+bool Shell::openDocumentInTab(const QUrl &url, const QString &serializedOptions)
+{
+    if (m_tabs.isEmpty()) {
+        return false;
+    }
+
+    if (m_tabs[m_tabWidget->currentIndex()].part->url().isEmpty()) {
+        openUrl(url, serializedOptions);
+    } else {
+        openNewTab(url, serializedOptions);
+    }
+    return true;
+}
+
 bool Shell::openDocument(const QString &urlString, const QString &serializedOptions)
 {
     return openDocument(QUrl(urlString), serializedOptions);
@@ -537,13 +541,13 @@ void Shell::startWindowsTabOpenServer()
     m_windowsTabOpenServer = new QLocalServer(this);
     connect(m_windowsTabOpenServer, &QLocalServer::newConnection, this, &Shell::handleWindowsTabOpenConnection);
 
-    if (m_windowsTabOpenServer->listen(WindowsTabOpenServerName())) {
+    if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
         return;
     }
 
     if (m_windowsTabOpenServer->serverError() == QAbstractSocket::AddressInUseError) {
         QLocalSocket probeSocket;
-        probeSocket.connectToServer(WindowsTabOpenServerName(), QIODevice::WriteOnly);
+        probeSocket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::WriteOnly);
         if (probeSocket.waitForConnected(250)) {
             // Another private Okular shell already owns the forwarding endpoint.
             // Do not steal it; otherwise future file opens can target the wrong window.
@@ -553,8 +557,8 @@ void Shell::startWindowsTabOpenServer()
             return;
         }
 
-        QLocalServer::removeServer(WindowsTabOpenServerName());
-        if (m_windowsTabOpenServer->listen(WindowsTabOpenServerName())) {
+        QLocalServer::removeServer(ShellUtils::windowsTabOpenServerName());
+        if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
             return;
         }
     }
@@ -585,6 +589,9 @@ void Shell::handleWindowsTabOpenConnection()
             }
 
             if (magic == WINDOWS_TAB_OPEN_MAGIC) {
+                // Confirm receipt before document loading can block the GUI thread.
+                socket->write("A", 1);
+                socket->flush();
                 const QString page = ShellUtils::page(serializedOptions);
                 for (const QString &path : std::as_const(paths)) {
                     if (path == QLatin1String("-")) {
@@ -935,8 +942,8 @@ void Shell::readProperties(const KConfigGroup &group)
 
 bool Shell::openDocumentSessionRestoreEnabled() const
 {
-    const KConfigGroup group = KSharedConfig::openConfig()->group(GeneralGroupKey());
-    return group.readEntry(SHELL_RESTORE_OPEN_DOCUMENTS_KEY, true);
+    const QString configFilePath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1String("/okularpartrc");
+    return KSharedConfig::openConfig(configFilePath)->group(GeneralGroupKey()).readEntry("ShellRestoreOpenDocuments", true);
 }
 
 void Shell::writeOpenDocumentSession(KConfigGroup &group) const
@@ -970,7 +977,7 @@ void Shell::writeOpenDocumentSession(KConfigGroup &group) const
 
 void Shell::scheduleOpenDocumentSessionSave()
 {
-    if (!m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
+    if (m_unique || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
         return;
     }
 
@@ -979,7 +986,7 @@ void Shell::scheduleOpenDocumentSessionSave()
 
 void Shell::saveOpenDocumentSession()
 {
-    if (!m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
+    if (m_unique || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
         return;
     }
 
@@ -1025,7 +1032,13 @@ bool Shell::restoreOpenDocumentSession()
             continue;
         }
 
-        openUrl(url);
+        if (m_tabs[m_tabWidget->currentIndex()].part->url().isEmpty()) {
+            openUrl(url);
+        } else {
+            // A saved tab set must restore into this shell even when new-file
+            // tabs are disabled for ordinary opens on another platform.
+            openNewTab(url, QString());
+        }
         const int openedTab = findTabIndex(url);
         if (openedTab < 0) {
             qWarning() << "Failed to restore Okular open document session URL:" << url;

@@ -8,10 +8,12 @@
 
 // qt/kde includes
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include <QUrl>
 
 #if HAVE_DBUS
@@ -154,6 +156,20 @@ QString editorCmd(const QString &serializedOptions)
     unserializeOptions(serializedOptions, &dummy, &dummy, &dummy, &dummy, &dummy, &dummyString, &dummyString, &result);
     return QString::fromUtf8(QByteArray::fromBase64(result.toLatin1()));
 }
+
+#if defined(Q_OS_WIN)
+QString windowsTabOpenServerName()
+{
+    const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
+    if (!testInstance.isEmpty()) {
+        return QStringLiteral("okular-private-tab-open-v2-test-%1").arg(testInstance);
+    }
+    if (QStandardPaths::isTestModeEnabled()) {
+        return QStringLiteral("okular-private-tab-open-v2-test-%1").arg(QCoreApplication::applicationPid());
+    }
+    return QStringLiteral("okular-private-tab-open-v2");
+}
+#endif
 
 #if HAVE_DBUS
 QString currentProcessDbusName()

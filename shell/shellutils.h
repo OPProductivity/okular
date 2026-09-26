@@ -36,6 +36,10 @@ QString page(const QString &serializedOptions);
 QString find(const QString &serializedOptions);
 QString editorCmd(const QString &serializedOptions);
 
+#if defined(Q_OS_WIN)
+QString windowsTabOpenServerName();
+#endif
+
 #if HAVE_DBUS
 // Must be a subname of "org.kde.okular" due to Flatpak not supporting wildcard D-Bus permissions.
 inline constexpr QLatin1StringView kPerProcessDbusPrefix("org.kde.okular.Instance_");

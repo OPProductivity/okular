@@ -25,6 +25,7 @@
 #include <QFileOpenEvent>
 #include <QObject>
 #include <QStringList>
+#include <QStandardPaths>
 #include <QTextStream>
 #include <QtGlobal>
 
@@ -75,6 +76,12 @@ int main(int argc, char **argv)
     QCoreApplication::setAttribute(Qt::AA_CompressTabletEvents);
 
     QApplication app(argc, argv);
+#if defined(Q_OS_WIN)
+    // Child processes launched by mainshelltest use its isolated config tree.
+    if (!qEnvironmentVariableIsEmpty("OKULAR_TEST_INSTANCE")) {
+        QStandardPaths::setTestModeEnabled(true);
+    }
+#endif
 
     /**
      * Install event filter to handle macOS file opening.

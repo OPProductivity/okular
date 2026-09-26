@@ -41,6 +41,13 @@
 #include <iostream>
 #include <memory>
 
+static bool shouldRestoreOpenDocumentSession(const QString &serializedOptions)
+{
+    return !ShellUtils::unique(serializedOptions) && !ShellUtils::noRaise(serializedOptions) && !ShellUtils::startInPresentation(serializedOptions)
+        && !ShellUtils::showPrintDialog(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::page(serializedOptions).isEmpty()
+        && ShellUtils::find(serializedOptions).isEmpty() && ShellUtils::editorCmd(serializedOptions).isEmpty();
+}
+
 #if defined(Q_OS_WIN)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -49,14 +56,9 @@
 
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
 
-static QString WindowsTabOpenServerName()
-{
-    return QStringLiteral("okular-private-tab-open-v1");
-}
-
 static QString WindowsTabOpenStartupLockPath()
 {
-    return QDir::temp().filePath(QStringLiteral("okular-private-tab-open-v1.lock"));
+    return QDir::temp().filePath(ShellUtils::windowsTabOpenServerName() + QStringLiteral(".lock"));
 }
 
 static std::unique_ptr<QLockFile> s_windowsTabOpenStartupLock;
@@ -70,7 +72,8 @@ static bool tryBecomeWindowsTabOpenPrimary()
     }
 
     if (!s_windowsTabOpenPrimaryMutex) {
-        s_windowsTabOpenPrimaryMutex = CreateMutexW(nullptr, FALSE, L"Local\\okular-private-tab-open-v1-primary");
+        const std::wstring mutexName = QString(QStringLiteral(R"(Local\)") + ShellUtils::windowsTabOpenServerName() + QStringLiteral("-primary")).toStdWString();
+        s_windowsTabOpenPrimaryMutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
     }
 
     if (!s_windowsTabOpenPrimaryMutex) {
@@ -84,16 +87,17 @@ static bool tryBecomeWindowsTabOpenPrimary()
 
 static bool shouldAttachExistingWindowsInstance(const QStringList &paths, const QString &serializedOptions)
 {
-    return !QStandardPaths::isTestModeEnabled() && !paths.isEmpty() && !ShellUtils::unique(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions)
-        && ShellUtils::editorCmd(serializedOptions).isEmpty();
+    if (QStandardPaths::isTestModeEnabled() && qEnvironmentVariableIsEmpty("OKULAR_TEST_INSTANCE")) {
+        return false;
+    }
+    return !ShellUtils::unique(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::editorCmd(serializedOptions).isEmpty()
+        && (!paths.isEmpty() || shouldRestoreOpenDocumentSession(serializedOptions));
 }
 
 static bool shouldHoldWindowsStartupLock(const QStringList &paths, const QString &serializedOptions)
 {
-    return !QStandardPaths::isTestModeEnabled() && paths.isEmpty() && !ShellUtils::unique(serializedOptions) && !ShellUtils::noRaise(serializedOptions)
-        && !ShellUtils::startInPresentation(serializedOptions)
-        && !ShellUtils::showPrintDialog(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::page(serializedOptions).isEmpty()
-        && ShellUtils::find(serializedOptions).isEmpty() && ShellUtils::editorCmd(serializedOptions).isEmpty();
+    return (!QStandardPaths::isTestModeEnabled() || !qEnvironmentVariableIsEmpty("OKULAR_TEST_INSTANCE")) && paths.isEmpty()
+        && shouldRestoreOpenDocumentSession(serializedOptions);
 }
 
 static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &serializedOptions, int timeoutMs)
@@ -103,7 +107,7 @@ static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &s
     }
 
     QLocalSocket socket;
-    socket.connectToServer(WindowsTabOpenServerName(), QIODevice::WriteOnly);
+    socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
     if (!socket.waitForConnected(timeoutMs)) {
         return false;
     }
@@ -114,6 +118,13 @@ static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &s
     stream << WINDOWS_TAB_OPEN_MAGIC << serializedOptions << paths;
 
     if (socket.write(payload) != payload.size() || !socket.waitForBytesWritten(1000)) {
+        return false;
+    }
+
+    if (socket.bytesAvailable() == 0 && !socket.waitForReadyRead(5000)) {
+        return false;
+    }
+    if (socket.read(1) != QByteArrayLiteral("A")) {
         return false;
     }
 
@@ -167,7 +178,8 @@ static bool attachExistingWindowsInstance(const QStringList &paths, const QStrin
         return false;
     }
 
-    return true;
+    // No instance confirmed receipt. Open the requested file in this process.
+    return false;
 }
 #endif
 
@@ -322,13 +334,6 @@ static bool attachExistingInstance(const QStringList &paths, const QString &seri
 #endif // HAVE_DBUS
 }
 
-static bool shouldRestoreOpenDocumentSession(const QStringList &paths, const QString &serializedOptions)
-{
-    return paths.isEmpty() && !ShellUtils::unique(serializedOptions) && !ShellUtils::noRaise(serializedOptions) && !ShellUtils::startInPresentation(serializedOptions)
-        && !ShellUtils::showPrintDialog(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::page(serializedOptions).isEmpty()
-        && ShellUtils::find(serializedOptions).isEmpty() && ShellUtils::editorCmd(serializedOptions).isEmpty();
-}
-
 namespace Okular
 {
 Status main(const QStringList &paths, const QString &serializedOptions)
@@ -388,9 +393,7 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     }
 
     shell->show();
-    if (shouldRestoreOpenDocumentSession(paths, serializedOptions)) {
-        shell->restoreOpenDocumentSession();
-    }
+    const bool restoredOpenDocumentSession = shouldRestoreOpenDocumentSession(serializedOptions) && shell->restoreOpenDocumentSession();
 
 #if defined(Q_OS_WIN)
     windowsStartupLock.reset();
@@ -400,7 +403,7 @@ Status main(const QStringList &paths, const QString &serializedOptions)
         // Page only makes sense if we are opening one file
         const QString page = ShellUtils::page(serializedOptions);
         const QUrl url = ShellUtils::urlFromArg(paths[i], ShellUtils::qfileExistFunc(), page);
-        if (shell->openDocument(url, serializedOptions)) {
+        if ((restoredOpenDocumentSession ? shell->openDocumentInTab(url, serializedOptions) : shell->openDocument(url, serializedOptions))) {
             ++i;
         } else {
             shell = new Shell(serializedOptions);

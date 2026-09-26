@@ -4,9 +4,9 @@
 
 ## Changes in this fork
 
-- Regular Windows file opens, including several files opened at once from File Explorer, join one tabbed Okular window.
+- Regular Windows file opens, including several files opened at once from File Explorer, join one tabbed Okular window. A second launch from a shortcut raises the existing window.
 - The tab bar remains visible with one document. An adjacent `+` button opens another document, and crowded tabs retain usable scroll controls.
-- Open local documents and the active tab can be restored at the next launch; this can be turned off in Okular's settings.
+- Open local documents and the active tab can be restored at the next launch; this can be turned off in Okular's settings. If the launch names another PDF, it opens as a tab to the right of the restored tabs.
 - The welcome screen can reopen all listed recent documents as tabs in one step.
 - Regular Windows launches place the normal Okular window at the top-left of the primary screen with screen-sized geometry, even after a prior window was moved or maximized. This also applies when another file joins an existing window. Explicit full-screen mode remains available.
 

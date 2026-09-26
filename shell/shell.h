@@ -76,6 +76,7 @@ public:
     bool isValid() const;
 
     bool openDocument(const QUrl &url, const QString &serializedOptions);
+    bool openDocumentInTab(const QUrl &url, const QString &serializedOptions);
     bool restoreOpenDocumentSession();
 
 public Q_SLOTS:
