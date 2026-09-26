@@ -16,9 +16,17 @@
 #include <KLocalizedString>
 #include <KWindowSystem>
 #include <QApplication>
+#include <QByteArray>
+#include <QDataStream>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QLockFile>
+#include <QLocalSocket>
 #include <QMimeData>
+#include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QTextStream>
+#include <QThread>
 
 #include "config-okular.h"
 #if HAVE_X11
@@ -31,6 +39,137 @@
 #endif // HAVE_DBUS
 
 #include <iostream>
+#include <memory>
+
+#if defined(Q_OS_WIN)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
+
+static QString WindowsTabOpenServerName()
+{
+    return QStringLiteral("okular-private-tab-open-v1");
+}
+
+static QString WindowsTabOpenStartupLockPath()
+{
+    return QDir::temp().filePath(QStringLiteral("okular-private-tab-open-v1.lock"));
+}
+
+static std::unique_ptr<QLockFile> s_windowsTabOpenStartupLock;
+static HANDLE s_windowsTabOpenPrimaryMutex = nullptr;
+static bool s_windowsTabOpenPrimaryMutexOwned = false;
+
+static bool tryBecomeWindowsTabOpenPrimary()
+{
+    if (s_windowsTabOpenPrimaryMutexOwned) {
+        return true;
+    }
+
+    if (!s_windowsTabOpenPrimaryMutex) {
+        s_windowsTabOpenPrimaryMutex = CreateMutexW(nullptr, FALSE, L"Local\\okular-private-tab-open-v1-primary");
+    }
+
+    if (!s_windowsTabOpenPrimaryMutex) {
+        return true;
+    }
+
+    const DWORD waitResult = WaitForSingleObject(s_windowsTabOpenPrimaryMutex, 0);
+    s_windowsTabOpenPrimaryMutexOwned = waitResult == WAIT_OBJECT_0 || waitResult == WAIT_ABANDONED;
+    return s_windowsTabOpenPrimaryMutexOwned;
+}
+
+static bool shouldAttachExistingWindowsInstance(const QStringList &paths, const QString &serializedOptions)
+{
+    return !QStandardPaths::isTestModeEnabled() && !paths.isEmpty() && !ShellUtils::unique(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions)
+        && ShellUtils::editorCmd(serializedOptions).isEmpty();
+}
+
+static bool shouldHoldWindowsStartupLock(const QStringList &paths, const QString &serializedOptions)
+{
+    return !QStandardPaths::isTestModeEnabled() && paths.isEmpty() && !ShellUtils::unique(serializedOptions) && !ShellUtils::noRaise(serializedOptions)
+        && !ShellUtils::startInPresentation(serializedOptions)
+        && !ShellUtils::showPrintDialog(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::page(serializedOptions).isEmpty()
+        && ShellUtils::find(serializedOptions).isEmpty() && ShellUtils::editorCmd(serializedOptions).isEmpty();
+}
+
+static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &serializedOptions, int timeoutMs)
+{
+    if (!ShellUtils::noRaise(serializedOptions)) {
+        AllowSetForegroundWindow(ASFW_ANY);
+    }
+
+    QLocalSocket socket;
+    socket.connectToServer(WindowsTabOpenServerName(), QIODevice::WriteOnly);
+    if (!socket.waitForConnected(timeoutMs)) {
+        return false;
+    }
+
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << WINDOWS_TAB_OPEN_MAGIC << serializedOptions << paths;
+
+    if (socket.write(payload) != payload.size() || !socket.waitForBytesWritten(1000)) {
+        return false;
+    }
+
+    socket.disconnectFromServer();
+    return true;
+}
+
+static bool waitForExistingWindowsInstance(const QStringList &paths, const QString &serializedOptions, int timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+
+    while (timer.elapsed() < timeoutMs) {
+        if (sendWindowsTabOpenRequest(paths, serializedOptions, 250)) {
+            return true;
+        }
+        QThread::msleep(50);
+    }
+
+    return false;
+}
+
+static bool attachExistingWindowsInstance(const QStringList &paths, const QString &serializedOptions)
+{
+    if (!shouldAttachExistingWindowsInstance(paths, serializedOptions)) {
+        return false;
+    }
+
+    if (sendWindowsTabOpenRequest(paths, serializedOptions, 500)) {
+        return true;
+    }
+
+    auto startupLock = std::make_unique<QLockFile>(WindowsTabOpenStartupLockPath());
+    startupLock->setStaleLockTime(10000);
+    if (tryBecomeWindowsTabOpenPrimary()) {
+        if (waitForExistingWindowsInstance(paths, serializedOptions, 1500)) {
+            return true;
+        }
+        if (startupLock->tryLock(0)) {
+            s_windowsTabOpenStartupLock = std::move(startupLock);
+        }
+        return false;
+    }
+
+    if (waitForExistingWindowsInstance(paths, serializedOptions, 60000)) {
+        return true;
+    }
+
+    if (tryBecomeWindowsTabOpenPrimary() && startupLock->tryLock(0)) {
+        s_windowsTabOpenStartupLock = std::move(startupLock);
+        return false;
+    }
+
+    return true;
+}
+#endif
 
 #if HAVE_DBUS
 static QString startupId()
@@ -183,6 +322,13 @@ static bool attachExistingInstance(const QStringList &paths, const QString &seri
 #endif // HAVE_DBUS
 }
 
+static bool shouldRestoreOpenDocumentSession(const QStringList &paths, const QString &serializedOptions)
+{
+    return paths.isEmpty() && !ShellUtils::unique(serializedOptions) && !ShellUtils::noRaise(serializedOptions) && !ShellUtils::startInPresentation(serializedOptions)
+        && !ShellUtils::showPrintDialog(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::page(serializedOptions).isEmpty()
+        && ShellUtils::find(serializedOptions).isEmpty() && ShellUtils::editorCmd(serializedOptions).isEmpty();
+}
+
 namespace Okular
 {
 Status main(const QStringList &paths, const QString &serializedOptions)
@@ -218,9 +364,23 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     }
 
     // try to attach to existing session, unique or not
-    if (attachUniqueInstance(paths, serializedOptions) || attachExistingInstance(paths, serializedOptions)) {
+    if (attachUniqueInstance(paths, serializedOptions)
+#if defined(Q_OS_WIN)
+        || attachExistingWindowsInstance(paths, serializedOptions)
+#endif
+        || attachExistingInstance(paths, serializedOptions)) {
         return AttachedOtherProcess;
     }
+
+#if defined(Q_OS_WIN)
+    std::unique_ptr<QLockFile> windowsStartupLock;
+    if (shouldHoldWindowsStartupLock(paths, serializedOptions)) {
+        tryBecomeWindowsTabOpenPrimary();
+        windowsStartupLock = std::make_unique<QLockFile>(WindowsTabOpenStartupLockPath());
+        windowsStartupLock->setStaleLockTime(10000);
+        windowsStartupLock->tryLock(0);
+    }
+#endif
 
     Shell *shell = new Shell(serializedOptions);
     if (!shell->isValid()) {
@@ -228,6 +388,14 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     }
 
     shell->show();
+    if (shouldRestoreOpenDocumentSession(paths, serializedOptions)) {
+        shell->restoreOpenDocumentSession();
+    }
+
+#if defined(Q_OS_WIN)
+    windowsStartupLock.reset();
+#endif
+
     for (int i = 0; i < paths.count();) {
         // Page only makes sense if we are opening one file
         const QString page = ShellUtils::page(serializedOptions);

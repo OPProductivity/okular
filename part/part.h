@@ -196,6 +196,7 @@ Q_SIGNALS:
     void urlsDropped(const QList<QUrl> &urls);
     void fitWindowToPage(const QSize pageViewPortSize, const QSize pageSize);
     void maxRecentItemsChanged(const int);
+    void documentSaveFinished(const QUrl &url);
     /**
      * Request to open a newly signed file
      * \param path file to open

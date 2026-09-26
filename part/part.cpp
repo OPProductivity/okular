@@ -2985,6 +2985,8 @@ bool Part::saveAs(const QUrl &saveUrl, SaveAsFlags flags)
         setFileToWatch(localFilePath());
     }
 
+    Q_EMIT documentSaveFinished(realUrl());
+
     return true;
 }
 

@@ -37,14 +37,25 @@
 #include <KUrlMimeData>
 #include <KWindowSystem>
 #include <KXMLGUIFactory>
+#include <QAbstractSocket>
 #include <QApplication>
+#include <QDebug>
 #if HAVE_DBUS
 #include <QDBusConnection>
 #endif // HAVE_DBUS
 #include <QDockWidget>
 #include <QDragMoveEvent>
+#include <QFile>
 #include <QFileDialog>
+#include <QFont>
+#include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QJsonArray>
+#if defined(Q_OS_WIN)
+#include <QDataStream>
+#include <QLocalServer>
+#include <QLocalSocket>
+#endif
 #include <QMenuBar>
 #include <QMimeData>
 #include <QObject>
@@ -53,17 +64,34 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QToolButton>
+#include <QWindow>
 
 // local includes
 #include "../interfaces/viewerinterface.h"
 #include "kdocumentviewer.h"
 #include "shellutils.h"
 
+#include <algorithm>
+
+#if defined(Q_OS_WIN)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 static const char *shouldShowMenuBarComingFromFullScreen = "shouldShowMenuBarComingFromFullScreen";
 static const char *shouldShowToolBarComingFromFullScreen = "shouldShowToolBarComingFromFullScreen";
 
 static const char *const SESSION_URL_KEY = "Urls";
 static const char *const SESSION_TAB_KEY = "ActiveTab";
+static const char *const SESSION_ACTIVE_URL_KEY = "ActiveUrl";
+static const char *const SHELL_RESTORE_OPEN_DOCUMENTS_KEY = "ShellRestoreOpenDocuments";
+static constexpr int OPEN_DOCUMENT_SESSION_SAVE_DELAY_MS = 2000;
+#if defined(Q_OS_WIN)
+static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
+#endif
 
 static constexpr char SIDEBAR_LOCKED_KEY[] = "LockSidebar";
 static constexpr char SIDEBAR_VISIBLE_KEY[] = "ShowSidebar";
@@ -79,6 +107,16 @@ static inline QString RecentFilesGroupKey()
 static inline QString GeneralGroupKey()
 {
     return QStringLiteral("General");
+}
+#if defined(Q_OS_WIN)
+static inline QString WindowsTabOpenServerName()
+{
+    return QStringLiteral("okular-private-tab-open-v1");
+}
+#endif
+static inline QString OpenDocumentSessionGroupKey()
+{
+    return QStringLiteral("Shell Open Documents Session");
 }
 
 class ResizableStackedWidget : public QStackedWidget
@@ -228,11 +266,59 @@ Shell::Shell(const QString &serializedOptions)
         m_tabWidget = new QTabWidget(this);
         m_tabWidget->setTabsClosable(true);
         m_tabWidget->setElideMode(Qt::ElideRight);
-        m_tabWidget->tabBar()->hide();
+        m_tabWidget->tabBar()->setExpanding(false);
+        m_tabWidget->tabBar()->setUsesScrollButtons(true);
+        m_tabWidget->tabBar()->setStyleSheet(QStringLiteral("QTabBar::tab { min-width: 128px; max-width: 260px; }"
+                                                             "QTabBar QToolButton { background: palette(window); border: 1px solid transparent; border-radius: 2px; padding: 0px; margin: 0px; }"
+                                                             "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: #3daee9; border: 1px solid #3daee9; }"
+                                                             "QTabBar QToolButton:pressed { color: #3daee9; border: 1px solid #3daee9; background-color: rgba(61, 174, 233, 35); }"));
+        m_tabWidget->setStyleSheet(QStringLiteral("QTabWidget::right-corner { background: palette(window); border: 0px; }"));
         m_tabWidget->setDocumentMode(true);
         m_tabWidget->setMovable(true);
 
+        QWidget *const tabCornerWidget = new QWidget(m_tabWidget);
+        tabCornerWidget->setObjectName(QStringLiteral("tabCornerWidget"));
+        QHBoxLayout *const tabCornerLayout = new QHBoxLayout(tabCornerWidget);
+        tabCornerLayout->setContentsMargins(0, 0, 1, 0);
+        tabCornerLayout->setSpacing(1);
+
+        const QString tabCornerButtonStyle = QStringLiteral("QToolButton { border: 1px solid transparent; border-radius: 2px; padding: 0px 0px 2px 0px; }"
+                                                            "QToolButton:hover, QToolButton:focus { color: #3daee9; border: 1px solid #3daee9; }"
+                                                            "QToolButton:pressed { color: #3daee9; border: 1px solid #3daee9; background-color: rgba(61, 174, 233, 35); }");
+
+        m_centerActiveTabButton = new QToolButton(m_tabWidget->tabBar());
+        m_centerActiveTabButton->setText(QStringLiteral("o"));
+        m_centerActiveTabButton->setToolTip(i18n("Show Active Tab"));
+        m_centerActiveTabButton->setAccessibleName(i18n("Show Active Tab"));
+        QFont centerActiveTabButtonFont = m_centerActiveTabButton->font();
+        centerActiveTabButtonFont.setPixelSize(13);
+        centerActiveTabButtonFont.setBold(false);
+        m_centerActiveTabButton->setFont(centerActiveTabButtonFont);
+        m_centerActiveTabButton->setFixedSize(16, 26);
+        m_centerActiveTabButton->setStyleSheet(tabCornerButtonStyle);
+        m_centerActiveTabButton->setAutoRaise(false);
+        m_centerActiveTabButton->hide();
+        connect(m_centerActiveTabButton, &QToolButton::clicked, this, &Shell::scrollTabBarToCurrentTab);
+
+        m_openTabButton = new QToolButton(tabCornerWidget);
+        m_openTabButton->setText(QStringLiteral("+"));
+        m_openTabButton->setToolTip(i18n("Open Document"));
+        m_openTabButton->setAccessibleName(i18n("Open Document"));
+        QFont openTabButtonFont = m_openTabButton->font();
+        openTabButtonFont.setPixelSize(20);
+        openTabButtonFont.setBold(true);
+        m_openTabButton->setFont(openTabButtonFont);
+        m_openTabButton->setFixedSize(20, 26);
+        m_openTabButton->setStyleSheet(tabCornerButtonStyle);
+        m_openTabButton->setAutoRaise(false);
+        connect(m_openTabButton, &QToolButton::clicked, this, &Shell::fileOpen);
+        tabCornerLayout->addWidget(m_openTabButton);
+        tabCornerWidget->setFixedWidth(m_openTabButton->width() + 2);
+        m_tabWidget->setCornerWidget(tabCornerWidget, Qt::TopRightCorner);
+
         m_tabWidget->setAcceptDrops(true);
+        m_centralStackedWidget->installEventFilter(this);
+        m_tabWidget->installEventFilter(this);
         m_tabWidget->tabBar()->installEventFilter(this);
 
         m_centralStackedWidget->addWidget(m_tabWidget);
@@ -240,6 +326,10 @@ Shell::Shell(const QString &serializedOptions)
         connect(m_tabWidget, &QTabWidget::currentChanged, this, &Shell::setActiveTab);
         connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &Shell::closeTab);
         connect(m_tabWidget->tabBar(), &QTabBar::tabMoved, this, &Shell::moveTabData);
+
+        m_openDocumentSessionSaveTimer = new QTimer(this);
+        m_openDocumentSessionSaveTimer->setSingleShot(true);
+        connect(m_openDocumentSessionSaveTimer, &QTimer::timeout, this, &Shell::saveOpenDocumentSession);
 
         m_sidebar = new Sidebar;
         m_sidebar->setObjectName(QStringLiteral("okular_sidebar"));
@@ -256,11 +346,14 @@ Shell::Shell(const QString &serializedOptions)
                 // so try a bit more to actually hide it.
                 m_sidebar->hide();
             }
+            scheduleOpenTabButtonGeometryUpdate();
         });
+        m_sidebar->installEventFilter(this);
         addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
 
         // then, setup our actions
         setupActions();
+        connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &Shell::saveOpenDocumentSession);
         connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &QObject::deleteLater);
         // and integrate the part's GUI with the shell's
         setupGUI(Keys | ToolBar | Save);
@@ -270,6 +363,7 @@ Shell::Shell(const QString &serializedOptions)
 
         m_tabs.append(TabState(firstPart));
         m_tabWidget->addTab(firstPart->widget(), QString()); // triggers setActiveTab that calls createGUI( part )
+        updateOpenTabButtonGeometry();
 
         connectPart(firstPart);
 
@@ -305,8 +399,13 @@ Shell::Shell(const QString &serializedOptions)
         QDBusConnection::sessionBus().registerObject(QStringLiteral("/okularshell"), this, QDBusConnection::ExportScriptableSlots);
 #endif // HAVE_DBUS
 
+#if defined(Q_OS_WIN)
+        startWindowsTabOpenServer();
+#endif
+
         // Make sure that the welcome scren is visible on startup.
         showWelcomeScreen();
+        m_openDocumentSessionReady = true;
     } else {
         m_isValid = false;
         KMessageBox::error(this, i18n("Unable to find the Okular component."));
@@ -346,8 +445,15 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
         return true;
     }
 
-    // Handle middle button click events on the tab bar
-    if (obj == m_tabWidget->tabBar() && event->type() == QEvent::MouseButtonRelease) {
+    const bool tabLayoutObject = (m_centralStackedWidget && obj == m_centralStackedWidget) || (m_tabWidget && (obj == m_tabWidget || obj == m_tabWidget->tabBar()))
+        || (m_sidebar && obj == m_sidebar);
+    const bool tabLayoutEvent = event->type() == QEvent::Resize || event->type() == QEvent::Show || event->type() == QEvent::Hide
+        || event->type() == QEvent::LayoutRequest || event->type() == QEvent::Move;
+    if (tabLayoutObject && tabLayoutEvent) {
+        scheduleOpenTabButtonGeometryUpdate();
+    }
+
+    if (m_tabWidget && obj == m_tabWidget->tabBar() && event->type() == QEvent::MouseButtonRelease) {
         QMouseEvent *mEvent = static_cast<QMouseEvent *>(event);
         if (mEvent->button() == Qt::MiddleButton) {
             int tabIndex = m_tabWidget->tabBar()->tabAt(mEvent->pos());
@@ -400,11 +506,6 @@ bool Shell::openDocument(const QUrl &url, const QString &serializedOptions)
 
     KParts::ReadWritePart *const part = m_tabs[0].part;
 
-    // Return false if we can't open new tabs and the only part is occupied
-    if (!qobject_cast<Okular::ViewerInterface *>(part)->openNewFilesInTabs() && !part->url().isEmpty() && !ShellUtils::unique(serializedOptions)) {
-        return false;
-    }
-
     openUrl(url, serializedOptions);
 
     return true;
@@ -414,6 +515,153 @@ bool Shell::openDocument(const QString &urlString, const QString &serializedOpti
 {
     return openDocument(QUrl(urlString), serializedOptions);
 }
+
+#if defined(Q_OS_WIN)
+void Shell::startWindowsTabOpenServer()
+{
+    if (m_unique || m_windowsTabOpenServer) {
+        return;
+    }
+
+    m_windowsTabOpenServer = new QLocalServer(this);
+    connect(m_windowsTabOpenServer, &QLocalServer::newConnection, this, &Shell::handleWindowsTabOpenConnection);
+
+    if (m_windowsTabOpenServer->listen(WindowsTabOpenServerName())) {
+        return;
+    }
+
+    if (m_windowsTabOpenServer->serverError() == QAbstractSocket::AddressInUseError) {
+        QLocalSocket probeSocket;
+        probeSocket.connectToServer(WindowsTabOpenServerName(), QIODevice::WriteOnly);
+        if (probeSocket.waitForConnected(250)) {
+            // Another private Okular shell already owns the forwarding endpoint.
+            // Do not steal it; otherwise future file opens can target the wrong window.
+            probeSocket.disconnectFromServer();
+            m_windowsTabOpenServer->deleteLater();
+            m_windowsTabOpenServer = nullptr;
+            return;
+        }
+
+        QLocalServer::removeServer(WindowsTabOpenServerName());
+        if (m_windowsTabOpenServer->listen(WindowsTabOpenServerName())) {
+            return;
+        }
+    }
+
+    m_windowsTabOpenServer->deleteLater();
+    m_windowsTabOpenServer = nullptr;
+}
+
+void Shell::handleWindowsTabOpenConnection()
+{
+    while (m_windowsTabOpenServer && m_windowsTabOpenServer->hasPendingConnections()) {
+        QLocalSocket *socket = m_windowsTabOpenServer->nextPendingConnection();
+        socket->setParent(this);
+        connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+
+        const auto readRequest = [this, socket]() {
+            QDataStream stream(socket);
+            stream.setVersion(QDataStream::Qt_6_0);
+            stream.startTransaction();
+
+            quint32 magic = 0;
+            QString serializedOptions;
+            QStringList paths;
+            stream >> magic >> serializedOptions >> paths;
+
+            if (!stream.commitTransaction()) {
+                return;
+            }
+
+            if (magic == WINDOWS_TAB_OPEN_MAGIC) {
+                const QString page = ShellUtils::page(serializedOptions);
+                for (const QString &path : std::as_const(paths)) {
+                    if (path == QLatin1String("-")) {
+                        continue;
+                    }
+                    openDocument(ShellUtils::urlFromArg(path, ShellUtils::qfileExistFunc(), page), serializedOptions);
+                }
+
+                if (!ShellUtils::noRaise(serializedOptions)) {
+                    raisePrivateWindowsShell();
+                    QTimer::singleShot(150, this, &Shell::raisePrivateWindowsShell);
+                }
+            }
+
+            socket->disconnectFromServer();
+            socket->deleteLater();
+        };
+
+        connect(socket, &QLocalSocket::readyRead, this, readRequest);
+        if (socket->bytesAvailable() > 0) {
+            readRequest();
+        }
+    }
+}
+
+void Shell::raisePrivateWindowsShell()
+{
+    if (isMinimized()) {
+        showNormal();
+    } else {
+        show();
+    }
+
+    raise();
+    activateWindow();
+
+    QWindow *window = windowHandle();
+    if (!window) {
+        return;
+    }
+
+    KWindowSystem::activateWindow(window);
+
+    const HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (!hwnd) {
+        return;
+    }
+
+    ShowWindow(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOW);
+
+    const DWORD currentThread = GetCurrentThreadId();
+    const HWND foregroundWindow = GetForegroundWindow();
+    const DWORD foregroundThread = foregroundWindow ? GetWindowThreadProcessId(foregroundWindow, nullptr) : 0;
+    const bool attached = foregroundThread && foregroundThread != currentThread && AttachThreadInput(currentThread, foregroundThread, TRUE);
+
+    INPUT input[2] = {};
+    input[0].type = INPUT_KEYBOARD;
+    input[0].ki.wVk = VK_MENU;
+    input[1].type = INPUT_KEYBOARD;
+    input[1].ki.wVk = VK_MENU;
+    input[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, input, sizeof(INPUT));
+
+    BringWindowToTop(hwnd);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetForegroundWindow(hwnd);
+    SetActiveWindow(hwnd);
+    SwitchToThisWindow(hwnd, TRUE);
+
+    if (attached) {
+        AttachThreadInput(currentThread, foregroundThread, FALSE);
+    }
+
+    // Forwarded file opens reuse this window, so the startup placement in
+    // showEvent() will not run again. Bring an off-screen normal window back
+    // onto its screen without disturbing deliberate on-screen placement.
+    if (!isMaximized() && !isFullScreen()) {
+        QScreen *targetScreen = screen();
+        if (!targetScreen) {
+            targetScreen = QGuiApplication::primaryScreen();
+        }
+        if (targetScreen && !targetScreen->geometry().contains(geometry())) {
+            applyPrivateWindowsStartupGeometry();
+        }
+    }
+}
+#endif
 
 void Shell::openNewlySignedFile(const QString &path, int pageNumber)
 {
@@ -438,13 +686,6 @@ bool Shell::canOpenDocs(int numDocs, int desktop)
         return false;
     }
 
-    KParts::ReadWritePart *const part = m_tabs[0].part;
-    const bool allowTabs = qobject_cast<Okular::ViewerInterface *>(part)->openNewFilesInTabs();
-
-    if (!allowTabs && (numDocs > 1 || !part->url().isEmpty())) {
-        return false;
-    }
-
 #if !defined(Q_OS_WIN) && !defined(Q_OS_OSX) && !defined(Q_OS_HAIKU)
     const KWindowInfo winfo(window()->effectiveWinId(), NET::WMDesktop);
     if (winfo.desktop() != desktop) {
@@ -466,26 +707,25 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
     if (!activePart->url().isEmpty()) {
         if (m_unique) {
             applyOptionsToPart(activePart, serializedOptions);
-            activePart->openUrl(url);
-        } else {
-            if (qobject_cast<Okular::ViewerInterface *>(activePart)->openNewFilesInTabs()) {
-                openNewTab(url, serializedOptions);
-            } else {
-                Shell *newShell = new Shell(serializedOptions);
-                newShell->show();
-                newShell->openUrl(url, serializedOptions);
+            if (activePart->openUrl(url)) {
+                scheduleOpenDocumentSessionSave();
             }
+        } else {
+            openNewTab(url, serializedOptions);
         }
     } else {
         m_tabWidget->setTabText(activeTab, url.fileName());
         m_tabWidget->setTabToolTip(activeTab, url.fileName());
+        updateOpenTabButtonGeometry();
 
         applyOptionsToPart(activePart, serializedOptions);
         bool openOk = activePart->openUrl(url);
         const bool isstdin = url.fileName() == QLatin1String("-") || url.scheme() == QLatin1String("fd");
         if (!isstdin) {
             if (openOk) {
+                setActiveTab(activeTab);
                 m_recent->addUrl(url);
+                scheduleOpenDocumentSessionSave();
             } else {
                 m_recent->removeUrl(url);
                 closeTab(activeTab);
@@ -630,13 +870,7 @@ void Shell::saveProperties(KConfigGroup &group)
         return;
     }
 
-    // Gather lists of settings to preserve
-    QStringList urls;
-    for (const TabState &tab : std::as_const(m_tabs)) {
-        urls.append(tab.part->url().url());
-    }
-    group.writePathEntry(SESSION_URL_KEY, urls);
-    group.writeEntry(SESSION_TAB_KEY, m_tabWidget->currentIndex());
+    writeOpenDocumentSession(group);
 }
 
 void Shell::readProperties(const KConfigGroup &group)
@@ -652,6 +886,123 @@ void Shell::readProperties(const KConfigGroup &group)
     if (desiredTab < m_tabs.size()) {
         setActiveTab(desiredTab);
     }
+}
+
+bool Shell::openDocumentSessionRestoreEnabled() const
+{
+    const KConfigGroup group = KSharedConfig::openConfig()->group(GeneralGroupKey());
+    return group.readEntry(SHELL_RESTORE_OPEN_DOCUMENTS_KEY, true);
+}
+
+void Shell::writeOpenDocumentSession(KConfigGroup &group) const
+{
+    QStringList urls;
+    int activeTab = 0;
+    QUrl activeUrl;
+    const int currentTab = m_tabWidget->currentIndex();
+
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        const QUrl url = m_tabs[i].part->url();
+        if (url.isEmpty()) {
+            continue;
+        }
+
+        if (i == currentTab) {
+            activeTab = urls.size();
+            activeUrl = url;
+        }
+        urls.append(url.url());
+    }
+
+    if (activeUrl.isEmpty() && !urls.isEmpty()) {
+        activeUrl = QUrl(urls.value(activeTab));
+    }
+
+    group.writePathEntry(SESSION_URL_KEY, urls);
+    group.writeEntry(SESSION_TAB_KEY, activeTab);
+    group.writePathEntry(SESSION_ACTIVE_URL_KEY, activeUrl.url());
+}
+
+void Shell::scheduleOpenDocumentSessionSave()
+{
+    if (!m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
+        return;
+    }
+
+    m_openDocumentSessionSaveTimer->start(OPEN_DOCUMENT_SESSION_SAVE_DELAY_MS);
+}
+
+void Shell::saveOpenDocumentSession()
+{
+    if (!m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
+        return;
+    }
+
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup group = config->group(OpenDocumentSessionGroupKey());
+    writeOpenDocumentSession(group);
+    config->sync();
+}
+
+bool Shell::restoreOpenDocumentSession()
+{
+    if (!m_isValid || !openDocumentSessionRestoreEnabled()) {
+        return false;
+    }
+
+    const KConfigGroup group = KSharedConfig::openConfig()->group(OpenDocumentSessionGroupKey());
+    const QStringList urls = group.readPathEntry(SESSION_URL_KEY, QStringList());
+    if (urls.isEmpty()) {
+        return false;
+    }
+
+    const int desiredTab = group.readEntry<int>(SESSION_TAB_KEY, 0);
+    const QUrl desiredUrl(group.readPathEntry(SESSION_ACTIVE_URL_KEY, QString()));
+
+    bool restoredAny = false;
+    int targetTab = -1;
+
+    m_restoringOpenDocumentSession = true;
+    for (int oldIndex = 0; oldIndex < urls.size(); ++oldIndex) {
+        const QUrl url(urls.at(oldIndex));
+        if (!url.isValid() || url.isEmpty()) {
+            qWarning() << "Skipping invalid Okular open document session URL:" << urls.at(oldIndex);
+            continue;
+        }
+
+        if (!url.isLocalFile()) {
+            qWarning() << "Skipping non-local Okular open document session URL for v1:" << url;
+            continue;
+        }
+
+        if (!QFile::exists(url.toLocalFile())) {
+            qWarning() << "Skipping missing Okular open document session file:" << url.toLocalFile();
+            continue;
+        }
+
+        openUrl(url);
+        const int openedTab = findTabIndex(url);
+        if (openedTab < 0) {
+            qWarning() << "Failed to restore Okular open document session URL:" << url;
+            continue;
+        }
+
+        restoredAny = true;
+        if (oldIndex == desiredTab || (!desiredUrl.isEmpty() && url == desiredUrl)) {
+            targetTab = openedTab;
+        }
+    }
+    m_restoringOpenDocumentSession = false;
+
+    if (restoredAny) {
+        if (targetTab < 0 || targetTab >= m_tabs.size()) {
+            targetTab = 0;
+        }
+        setActiveTab(targetTab);
+    }
+
+    saveOpenDocumentSession();
+    return restoredAny;
 }
 
 void Shell::fileOpen()
@@ -790,7 +1141,51 @@ void Shell::showEvent(QShowEvent *e)
     }
 
     KParts::MainWindow::showEvent(e);
+
+#if defined(Q_OS_WIN)
+    if (!m_privateWindowsStartupGeometryApplied && !isFullScreen()) {
+        m_privateWindowsStartupGeometryApplied = true;
+        QTimer::singleShot(0, this, &Shell::applyPrivateWindowsStartupGeometry);
+    }
+#endif
 }
+
+void Shell::resizeEvent(QResizeEvent *e)
+{
+    KParts::MainWindow::resizeEvent(e);
+    scheduleOpenTabButtonGeometryUpdate();
+}
+
+#if defined(Q_OS_WIN)
+void Shell::applyPrivateWindowsStartupGeometry()
+{
+    if (isFullScreen()) {
+        return;
+    }
+
+    QScreen *targetScreen = screen();
+    if (!targetScreen) {
+        targetScreen = QGuiApplication::primaryScreen();
+    }
+    if (!targetScreen) {
+        return;
+    }
+
+    const QRect screenGeometry = targetScreen->geometry();
+    const QRect frame = frameGeometry();
+    const QRect client = geometry();
+
+    const int leftFrame = client.left() - frame.left();
+    const int topFrame = client.top() - frame.top();
+    const int rightFrame = frame.right() - client.right();
+    const int bottomFrame = frame.bottom() - client.bottom();
+
+    const int width = std::max(640, screenGeometry.width() - leftFrame - rightFrame);
+    const int height = std::max(480, screenGeometry.height() - topFrame - bottomFrame);
+
+    setGeometry(screenGeometry.left() + leftFrame, screenGeometry.top() + topFrame, width, height);
+}
+#endif
 
 void Shell::slotUpdateFullScreen()
 {
@@ -882,6 +1277,10 @@ bool Shell::queryClose()
 
 void Shell::setActiveTab(int tab)
 {
+    if (tab < 0 || tab >= m_tabs.size()) {
+        return;
+    }
+
     if (m_showSidebarAction) {
         m_showSidebarAction->disconnect(m_sidebar);
     }
@@ -905,6 +1304,14 @@ void Shell::setActiveTab(int tab)
         }
     }
     m_sidebar->setCurrentWidget(sideContainer);
+    if (m_sidebar->isVisible()) {
+        QTimer::singleShot(0, this, [this]() {
+            if (m_sidebar && m_sidebar->isVisible() && m_sidebar->width() < 180) {
+                resizeDocks({m_sidebar}, {220}, Qt::Horizontal);
+            }
+            scheduleOpenTabButtonGeometryUpdate();
+        });
+    }
 
     m_showSidebarAction = m_tabs[tab].part->actionCollection()->action(QStringLiteral("show_leftpanel"));
     Q_ASSERT(m_showSidebarAction);
@@ -914,6 +1321,12 @@ void Shell::setActiveTab(int tab)
 
     m_printAction->setEnabled(m_tabs[tab].printEnabled);
     m_closeAction->setEnabled(m_tabs[tab].closeEnabled);
+    if (tab == 0) {
+        QTimer::singleShot(0, this, &Shell::resetTabBarScrollToStart);
+    } else {
+        QTimer::singleShot(0, this, &Shell::updateOpenTabButtonGeometry);
+    }
+    scheduleOpenDocumentSessionSave();
 }
 
 void Shell::closeTab(int tab)
@@ -936,11 +1349,11 @@ void Shell::closeTab(int tab)
         part->deleteLater();
         m_tabs.removeAt(tab);
         m_tabWidget->removeTab(tab);
+        updateOpenTabButtonGeometry();
         m_undoCloseTab->setEnabled(true);
         m_closedTabUrls.append(url);
 
         if (m_tabWidget->count() == 1) {
-            m_tabWidget->tabBar()->hide();
             m_nextTabAction->setEnabled(false);
             m_prevTabAction->setEnabled(false);
         }
@@ -948,6 +1361,10 @@ void Shell::closeTab(int tab)
         // Show welcome screen when the last tab is closed.
 
         showWelcomeScreen();
+    }
+
+    if (closeSuccess) {
+        scheduleOpenDocumentSessionSave();
     }
 }
 
@@ -971,9 +1388,7 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
         }
     }
 
-    // Tabs are hidden when there's only one, so show it
     if (m_tabs.size() == 1) {
-        m_tabWidget->tabBar()->show();
         m_nextTabAction->setEnabled(true);
         m_prevTabAction->setEnabled(true);
     }
@@ -988,6 +1403,7 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
     KParts::ReadWritePart *const part = m_tabs[newIndex].part;
     m_tabWidget->addTab(part->widget(), url.fileName());
     m_tabWidget->setTabToolTip(newIndex, url.fileName());
+    updateOpenTabButtonGeometry();
 
     applyOptionsToPart(part, serializedOptions);
 
@@ -995,6 +1411,7 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
 
     if (part->openUrl(url)) {
         m_recent->addUrl(url);
+        scheduleOpenDocumentSessionSave();
     } else {
         setActiveTab(previousActiveTab);
         closeTab(m_tabs.size() - 1);
@@ -1030,6 +1447,7 @@ void Shell::connectPart(const KParts::ReadWritePart *part)
     connect(part, SIGNAL(mimeTypeChanged(QMimeType)), this, SLOT(setTabIcon(QMimeType)));
     connect(part, SIGNAL(urlsDropped(QList<QUrl>)), this, SLOT(handleDroppedUrls(QList<QUrl>)));
     connect(part, SIGNAL(maxRecentItemsChanged(int)), this, SLOT(triggerUpdateRecentItems(int)));
+    connect(part, SIGNAL(documentSaveFinished(QUrl)), this, SLOT(scheduleOpenDocumentSessionSave()));
 
     // clang-format off
     // Formatting disabled to keep signature normalized
@@ -1139,6 +1557,123 @@ void Shell::handleDroppedUrls(const QList<QUrl> &urls)
 void Shell::moveTabData(int from, int to)
 {
     m_tabs.move(from, to);
+    updateOpenTabButtonGeometry();
+    scheduleOpenDocumentSessionSave();
+}
+
+void Shell::resetTabBarScrollToStart()
+{
+    if (!m_tabWidget || m_tabWidget->currentIndex() != 0) {
+        return;
+    }
+
+    QTabBar *const tabBar = m_tabWidget->tabBar();
+    const bool usesScrollButtons = tabBar->usesScrollButtons();
+    tabBar->setUpdatesEnabled(false);
+    tabBar->setUsesScrollButtons(false);
+    tabBar->setUsesScrollButtons(usesScrollButtons);
+    tabBar->setCurrentIndex(0);
+    tabBar->setUpdatesEnabled(true);
+    tabBar->updateGeometry();
+    tabBar->update();
+    updateOpenTabButtonGeometry();
+}
+
+void Shell::scrollTabBarToCurrentTab()
+{
+    if (!m_tabWidget || m_tabWidget->currentIndex() < 0) {
+        return;
+    }
+
+    QTabBar *const tabBar = m_tabWidget->tabBar();
+    const int currentIndex = m_tabWidget->currentIndex();
+    tabBar->setCurrentIndex(currentIndex);
+
+    QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
+    scrollButtons.erase(std::remove(scrollButtons.begin(), scrollButtons.end(), m_centerActiveTabButton), scrollButtons.end());
+    scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
+                            return !button || !button->isVisible() || button->geometry().isEmpty();
+                        }),
+                        scrollButtons.end());
+    std::sort(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *a, const QToolButton *b) {
+        return a->geometry().x() < b->geometry().x();
+    });
+
+    if (scrollButtons.size() >= 2) {
+        QToolButton *const leftScrollButton = scrollButtons.at(scrollButtons.size() - 2);
+        QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
+        const int visibleLeft = tabBar->rect().left();
+        const int visibleRight = leftScrollButton->geometry().left() - 1;
+
+        for (int i = 0; i < tabBar->count(); ++i) {
+            const QRect currentRect = tabBar->tabRect(currentIndex);
+            if (currentRect.left() >= visibleLeft && currentRect.right() <= visibleRight) {
+                break;
+            }
+
+            if (currentRect.left() < visibleLeft) {
+                leftScrollButton->click();
+            } else {
+                rightScrollButton->click();
+            }
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        }
+    }
+
+    updateOpenTabButtonGeometry();
+}
+
+void Shell::scheduleOpenTabButtonGeometryUpdate()
+{
+    QTimer::singleShot(0, this, &Shell::updateOpenTabButtonGeometry);
+    QTimer::singleShot(50, this, &Shell::updateOpenTabButtonGeometry);
+    QTimer::singleShot(150, this, &Shell::updateOpenTabButtonGeometry);
+}
+
+void Shell::updateOpenTabButtonGeometry()
+{
+    if (!m_openTabButton || !m_centerActiveTabButton || !m_tabWidget) {
+        return;
+    }
+
+    QTabBar *const tabBar = m_tabWidget->tabBar();
+    if (tabBar->maximumWidth() != QWIDGETSIZE_MAX) {
+        tabBar->setMaximumWidth(QWIDGETSIZE_MAX);
+        m_tabWidget->updateGeometry();
+        scheduleOpenTabButtonGeometryUpdate();
+        return;
+    }
+
+    QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
+    scrollButtons.erase(std::remove(scrollButtons.begin(), scrollButtons.end(), m_centerActiveTabButton), scrollButtons.end());
+    scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
+                            return !button || !button->isVisible() || button->geometry().isEmpty();
+                        }),
+                        scrollButtons.end());
+    std::sort(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *a, const QToolButton *b) {
+        return a->geometry().x() < b->geometry().x();
+    });
+
+    if (scrollButtons.size() >= 2) {
+        QToolButton *const leftScrollButton = scrollButtons.at(scrollButtons.size() - 2);
+        QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
+        const QRect leftRect = leftScrollButton->geometry();
+        const QRect rightRect = rightScrollButton->geometry();
+        const int centerX = std::max(0, rightRect.x() - m_centerActiveTabButton->width());
+        const int leftX = std::max(0, centerX - leftRect.width());
+
+        leftScrollButton->setGeometry(leftX, rightRect.y(), leftRect.width(), rightRect.height());
+        m_centerActiveTabButton->setGeometry(centerX, rightRect.y(), m_centerActiveTabButton->width(), rightRect.height());
+        rightScrollButton->setGeometry(rightRect);
+        m_centerActiveTabButton->show();
+        leftScrollButton->raise();
+        m_centerActiveTabButton->raise();
+        rightScrollButton->raise();
+    } else {
+        m_centerActiveTabButton->hide();
+    }
+
+    m_openTabButton->show();
 }
 
 void Shell::slotFitWindowToPage(const QSize pageViewSize, const QSize pageSize)

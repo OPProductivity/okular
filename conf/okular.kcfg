@@ -189,6 +189,9 @@
   <entry key="SwitchToTabIfOpen" type="Bool">
     <default>true</default>
   </entry>
+  <entry key="ShellRestoreOpenDocuments" type="Bool">
+    <default>true</default>
+  </entry>
   <entry key="ShowOSD" type="Bool" >
     <default>true</default>
   </entry>

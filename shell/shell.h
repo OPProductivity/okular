@@ -32,8 +32,14 @@
 class Sidebar;
 class KRecentFilesAction;
 class KToggleAction;
+class QResizeEvent;
 class QTabWidget;
+class QTimer;
+class QToolButton;
 class KPluginFactory;
+#if defined(Q_OS_WIN)
+class QLocalServer;
+#endif
 
 /**
  * This is the application "Shell".  It has a menubar and a toolbar
@@ -70,6 +76,7 @@ public:
     bool isValid() const;
 
     bool openDocument(const QUrl &url, const QString &serializedOptions);
+    bool restoreOpenDocumentSession();
 
 public Q_SLOTS:
     Q_SCRIPTABLE Q_NOREPLY void tryRaise(const QString &startupId);
@@ -100,6 +107,7 @@ protected:
     bool queryClose() override;
 
     void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *) override;
 
 private Q_SLOTS:
@@ -138,6 +146,8 @@ private Q_SLOTS:
     void activatePrevTab();
     void undoCloseTab();
     void moveTabData(int from, int to);
+    void scheduleOpenDocumentSessionSave();
+    void saveOpenDocumentSession();
 
     void slotFitWindowToPage(const QSize pageViewSize, const QSize pageSize);
 
@@ -160,6 +170,18 @@ private:
     int findTabIndex(QObject *sender) const;
     int findTabIndex(const QUrl &url) const;
     void readRecentFilesSettings();
+    bool openDocumentSessionRestoreEnabled() const;
+    void writeOpenDocumentSession(KConfigGroup &group) const;
+    void resetTabBarScrollToStart();
+    void scrollTabBarToCurrentTab();
+    void scheduleOpenTabButtonGeometryUpdate();
+    void updateOpenTabButtonGeometry();
+#if defined(Q_OS_WIN)
+    void startWindowsTabOpenServer();
+    void handleWindowsTabOpenConnection();
+    void raisePrivateWindowsShell();
+    void applyPrivateWindowsStartupGeometry();
+#endif
 
 private:
     void reloadAllXML();
@@ -176,6 +198,8 @@ private:
     bool m_menuBarWasShown, m_toolBarWasShown;
     bool m_unique;
     QTabWidget *m_tabWidget;
+    QToolButton *m_centerActiveTabButton = nullptr;
+    QToolButton *m_openTabButton = nullptr;
     KToggleAction *m_openInTab;
     WelcomeScreen *m_welcomeScreen;
     QStackedWidget *m_centralStackedWidget;
@@ -199,6 +223,13 @@ private:
     QAction *m_undoCloseTab;
     QAction *m_showSidebarAction = nullptr;
     QAction *m_lockSidebarAction = nullptr;
+    QTimer *m_openDocumentSessionSaveTimer = nullptr;
+#if defined(Q_OS_WIN)
+    QLocalServer *m_windowsTabOpenServer = nullptr;
+    bool m_privateWindowsStartupGeometryApplied = false;
+#endif
+    bool m_openDocumentSessionReady = false;
+    bool m_restoringOpenDocumentSession = false;
 
     bool m_isValid;
 };
