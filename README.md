@@ -27,6 +27,10 @@ To check the result, open two local PDFs in the built Okular and confirm that th
 
 Craft's installation directory is chosen on your machine; this source does not depend on the maintainer's Windows paths. This fork currently provides source code and build instructions, not a prebuilt Windows installer. A clean clone of this public fork compiled fully with the maintainer's existing Craft dependencies (Windows, MSVC 2022 x64), and focused tab and session tests passed. A fresh installation of Craft on another Windows machine has not yet been tested.
 
+## License
+
+This fork retains Okular's file-level copyright and SPDX license notices. The repository contains files under multiple licenses; consult each file's `SPDX-License-Identifier` where present and the corresponding texts in [LICENSES](LICENSES/) for its terms. The Windows changes are distributed as part of those source files under their respective licenses.
+
 ## Upstream Okular (reference)
 
 The following is upstream project information. Its KDE download and clone links produce upstream Okular, without this fork's Windows changes. Use the Windows instructions above to build this fork.
