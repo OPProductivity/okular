@@ -290,6 +290,9 @@ void MainShellTest::testForwardedWindowReturnsFromOffscreen()
 #if defined(Q_OS_WIN)
 void MainShellTest::testForwardedFileOpensInExistingTabs()
 {
+    // Windows file launches use the single-window tab path even when the
+    // optional tab preference has not been enabled in a fresh profile.
+    Okular::Settings::self()->setShellOpenFileInTabs(false);
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *shell = findShell();
