@@ -11,17 +11,25 @@
 
 These are changes to the application source. A build on another computer uses that computer's own document paths and settings. No personal documents, local build directories, or Windows installation files are part of this fork.
 
-### Building on Windows
+### Build and use this fork on Windows
 
-Follow KDE's [Craft setup guide](https://develop.kde.org/docs/getting-started/building/craft/) to install the compiler and dependencies. In a Craft PowerShell environment, change to your clone of this repository and build that checkout:
+Follow KDE's [Craft setup guide](https://develop.kde.org/docs/getting-started/building/craft/) to install Craft and its Windows compiler and dependencies. In a Craft PowerShell environment, clone **this fork** and build that checkout:
 
 ```powershell
+git clone https://github.com/OPProductivity/okular.git
+Set-Location .\okular
 craft --ignoreInstalled --options "kde/applications/okular.srcDir=$((Get-Location).Path)" kde/applications/okular
 ```
 
-Craft's installation directory is chosen on the builder's machine; the source code does not depend on the maintainer's Windows paths. Check the executable produced by your build before changing file associations or shortcuts.
+Run `bin\okular.exe` in your Craft installation (for example, `C:\CraftRoot\bin\okular.exe` when Craft is installed at `C:\CraftRoot`). In **Settings > Configure Okular > General**, enable **Open new files in tabs**. Also enable **Restore previously open documents on launch** if you want session restore. The tab setting is off by default in a fresh Okular configuration; the restore setting is on by default. These are per-user settings and are not copied from the maintainer's computer.
 
-## Upstream Okular
+To check the result, open two local PDFs in the built Okular and confirm that they appear as tabs in one window. Close Okular, launch it again without a filename, and confirm that the same two files return. Then, if you want File Explorer to use this build, set its `okular.exe` as the Windows PDF default app and repeat the two-file check from Explorer. Existing shortcuts or pinned taskbar entries may still point to another Okular installation, so check their targets too.
+
+Craft's installation directory is chosen on your machine; this source does not depend on the maintainer's Windows paths. This fork currently provides source code and build instructions, not a prebuilt Windows installer. The Windows build and runtime checks above were exercised in the maintainer's existing Craft environment; a fresh-machine build has not yet been verified.
+
+## Upstream Okular (reference)
+
+The following is upstream project information. Its KDE download and clone links produce upstream Okular, without this fork's Windows changes. Use the Windows instructions above to build this fork.
 
 Okular can view and annotate documents of various formats, including PDF, Postscript, Comic Book, and various image formats.
 It supports native PDF annotations.
