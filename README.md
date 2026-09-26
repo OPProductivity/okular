@@ -25,7 +25,7 @@ Run `bin\okular.exe` in your Craft installation (for example, `C:\CraftRoot\bin\
 
 To check the result, open two local PDFs in the built Okular and confirm that they appear as tabs in one window. Close Okular, launch it again without a filename, and confirm that the same two files return. To use this build from File Explorer, right-click a PDF, choose **Open with > Choose another app > Choose an app on your PC**, select the built `okular.exe`, and choose **Always** for PDF files ([Windows Open with guidance](https://support.microsoft.com/en-us/windows/experience/storage-filemanagement/common-file-name-extensions-in-windows)). Repeat the two-file check from Explorer. Existing shortcuts or pinned taskbar entries may still point to another Okular installation, so check their targets too.
 
-Craft's installation directory is chosen on your machine; this source does not depend on the maintainer's Windows paths. This fork currently provides source code and build instructions, not a prebuilt Windows installer. The Windows build and runtime checks above were exercised in the maintainer's existing Craft environment; a fresh-machine build has not yet been verified.
+Craft's installation directory is chosen on your machine; this source does not depend on the maintainer's Windows paths. This fork currently provides source code and build instructions, not a prebuilt Windows installer. A clean clone of this public fork compiled fully with the maintainer's existing Craft dependencies (Windows, MSVC 2022 x64), and focused tab and session tests passed. A fresh installation of Craft on another Windows machine has not yet been tested.
 
 ## Upstream Okular (reference)
 
