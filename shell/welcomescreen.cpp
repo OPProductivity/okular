@@ -9,6 +9,7 @@
 #include <KConfigGroup>
 #include <KIO/OpenFileManagerWindowJob>
 #include <KIconLoader>
+#include <KMessageBox>
 #include <KSharedConfig>
 
 #include <QAction>
@@ -16,6 +17,7 @@
 #include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QMap>
@@ -88,12 +90,20 @@ public:
 
                 QAction *showDirectoryAction = new QAction(i18np("&Open Containing Folder", "&Open Containing Folders", urls.size()));
                 showDirectoryAction->setIcon(QIcon::fromTheme(QStringLiteral("document-open-folder")));
-                connect(showDirectoryAction, &QAction::triggered, this, [urls]() {
+                connect(showDirectoryAction, &QAction::triggered, this, [this, urls]() {
                     QMap<QString, QList<QUrl>> filesByFolder;
                     for (const QUrl &url : urls) {
                         if (url.isLocalFile()) {
                             filesByFolder[QFileInfo(url.toLocalFile()).absolutePath()].append(url);
                         }
+                    }
+                    constexpr int maxFoldersPerAction = 5;
+                    if (filesByFolder.size() > maxFoldersPerAction) {
+                        KMessageBox::information(welcomeScreen(),
+                                                 i18n("The selected files are in %1 different folders. Select files from at most %2 folders and try again.",
+                                                      filesByFolder.size(),
+                                                      maxFoldersPerAction));
+                        return;
                     }
                     for (const QList<QUrl> &files : filesByFolder) {
                         KIO::highlightInFileManager(files);
@@ -143,7 +153,37 @@ WelcomeScreen::WelcomeScreen(QWidget *parent)
         openSelectedRecentsButton->setEnabled(recentsListView->selectionModel()->hasSelection());
     });
 
-    connect(m_recentsModel, &RecentItemsModel::layoutChanged, this, &WelcomeScreen::recentListChanged);
+    m_recentPagesWidget = new QWidget(recentsArea);
+    auto *pageLayout = new QHBoxLayout(m_recentPagesWidget);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->setSpacing(4);
+    pageLayout->addStretch();
+    m_previousRecentPageButton = new QToolButton(m_recentPagesWidget);
+    m_previousRecentPageButton->setObjectName(QStringLiteral("previousRecentPageButton"));
+    m_previousRecentPageButton->setArrowType(Qt::LeftArrow);
+    m_previousRecentPageButton->setToolTip(i18n("Previous recent documents page"));
+    pageLayout->addWidget(m_previousRecentPageButton);
+    connect(m_previousRecentPageButton, &QToolButton::clicked, this, [this]() { m_recentsModel->setPage(m_recentsModel->currentPage() - 1); });
+    for (int page = 0; page < 5; ++page) {
+        auto *button = new QToolButton(m_recentPagesWidget);
+        button->setObjectName(QStringLiteral("recentPageButton%1").arg(page + 1));
+        button->setText(QString::number(page + 1));
+        button->setCheckable(true);
+        pageLayout->addWidget(button);
+        m_recentPageButtons.append(button);
+        connect(button, &QToolButton::clicked, this, [this, page]() { m_recentsModel->setPage(page); });
+    }
+    m_nextRecentPageButton = new QToolButton(m_recentPagesWidget);
+    m_nextRecentPageButton->setObjectName(QStringLiteral("nextRecentPageButton"));
+    m_nextRecentPageButton->setArrowType(Qt::RightArrow);
+    m_nextRecentPageButton->setToolTip(i18n("Next recent documents page"));
+    pageLayout->addWidget(m_nextRecentPageButton);
+    connect(m_nextRecentPageButton, &QToolButton::clicked, this, [this]() { m_recentsModel->setPage(m_recentsModel->currentPage() + 1); });
+    pageLayout->addStretch();
+    recentsArea->layout()->addWidget(m_recentPagesWidget);
+    m_recentPagesWidget->hide();
+
+    connect(m_recentsModel, &RecentItemsModel::modelReset, this, &WelcomeScreen::recentListChanged);
 
     QVBoxLayout *noRecentsLayout = new QVBoxLayout(recentsListView);
     recentsListView->setLayout(noRecentsLayout);
@@ -195,7 +235,21 @@ void WelcomeScreen::setMaxRecentItems(const int maxItems)
 
 int WelcomeScreen::recentsCount()
 {
-    return m_recentsModel->rowCount();
+    return m_recentsModel->totalItems();
+}
+
+void WelcomeScreen::updateRecentPages()
+{
+    const int pages = m_recentsModel->pageCount();
+    const int currentPage = m_recentsModel->currentPage();
+    m_recentPagesWidget->setVisible(pages > 1);
+    m_previousRecentPageButton->setEnabled(currentPage > 0);
+    m_nextRecentPageButton->setEnabled(currentPage + 1 < pages);
+    for (int page = 0; page < m_recentPageButtons.size(); ++page) {
+        m_recentPageButtons.at(page)->setVisible(page < pages);
+        m_recentPageButtons.at(page)->setChecked(page == currentPage);
+    }
+    recentsListView->scrollToTop();
 }
 
 QList<QUrl> WelcomeScreen::recentUrlsForContextMenu(const QModelIndex &clickedIndex)
@@ -230,6 +284,7 @@ void WelcomeScreen::recentsItemActivated(const QModelIndex &index)
 
 void WelcomeScreen::recentListChanged()
 {
+    updateRecentPages();
     openAllRecentsButton->setEnabled(recentsCount() > 0);
     openSelectedRecentsButton->setEnabled(recentsListView->selectionModel()->hasSelection());
     if (recentsCount() == 0) {
@@ -265,11 +320,13 @@ void WelcomeScreen::openAllRecentsClicked()
     QList<QUrl> urls;
     // The model displays the newest item first. Open it last so it remains active.
     for (int row = recentsCount() - 1; row >= 0; --row) {
-        const RecentItemsModel::RecentItem *item = m_recentsModel->getItem(row);
+        const RecentItemsModel::RecentItem *item = m_recentsModel->getItemAtAbsoluteRow(row);
         if (item) {
             urls.append(item->url);
         }
     }
+    // Open All is independent of any Ctrl/Shift selection still in the list.
+    recentsListView->clearSelection();
     Q_EMIT openRecentDocuments(urls);
 }
 

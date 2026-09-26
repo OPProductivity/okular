@@ -13,6 +13,8 @@
 
 #include <KConfigGroup>
 
+#include <algorithm>
+
 RecentItemsModel::RecentItemsModel()
 {
 }
@@ -23,7 +25,9 @@ RecentItemsModel::~RecentItemsModel()
 
 void RecentItemsModel::loadEntries(const KConfigGroup &cg)
 {
-    clearEntries();
+    beginResetModel();
+    m_recentItems.clear();
+    m_currentPage = 0;
 
     // Based on implementation of KRecentFilesAction::loadEntries.
 
@@ -40,14 +44,15 @@ void RecentItemsModel::loadEntries(const KConfigGroup &cg)
         m_recentItems.append(RecentItem {nameValue, url});
     }
 
-    Q_EMIT layoutChanged();
+    endResetModel();
 }
 
 void RecentItemsModel::clearEntries()
 {
+    beginResetModel();
     m_recentItems.clear();
-
-    Q_EMIT layoutChanged();
+    m_currentPage = 0;
+    endResetModel();
 }
 
 QHash<int, QByteArray> RecentItemsModel::roleNames() const
@@ -65,7 +70,7 @@ int RecentItemsModel::rowCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
 
-    return m_recentItems.size();
+    return std::max(0, std::min(pageSize, static_cast<int>(m_recentItems.size()) - m_currentPage * pageSize));
 }
 
 QVariant RecentItemsModel::data(const QModelIndex &index, int role) const
@@ -121,12 +126,12 @@ QVariant RecentItemsModel::data(const QModelIndex &index, int role) const
 
 RecentItemsModel::RecentItem const *RecentItemsModel::getItem(int index) const
 {
-    if (m_recentItems.size() > index && index >= 0) {
-        // We reverse the order of items.
-        return &m_recentItems[m_recentItems.size() - index - 1];
-    } else {
-        return nullptr;
-    }
+    return index >= 0 && index < rowCount() ? getItemAtAbsoluteRow(m_currentPage * pageSize + index) : nullptr;
+}
+
+RecentItemsModel::RecentItem const *RecentItemsModel::getItemAtAbsoluteRow(int row) const
+{
+    return row >= 0 && row < m_recentItems.size() ? &m_recentItems[m_recentItems.size() - row - 1] : nullptr;
 }
 
 RecentItemsModel::RecentItem const *RecentItemsModel::getItem(const QModelIndex &index) const
@@ -142,6 +147,31 @@ int RecentItemsModel::maxItems()
 void RecentItemsModel::setMaxItems(const int maxItems)
 {
     m_maxItems = maxItems;
+}
+
+int RecentItemsModel::totalItems() const
+{
+    return static_cast<int>(m_recentItems.size());
+}
+
+int RecentItemsModel::pageCount() const
+{
+    return (totalItems() + pageSize - 1) / pageSize;
+}
+
+int RecentItemsModel::currentPage() const
+{
+    return m_currentPage;
+}
+
+void RecentItemsModel::setPage(int page)
+{
+    if (page < 0 || page >= pageCount() || page == m_currentPage) {
+        return;
+    }
+    beginResetModel();
+    m_currentPage = page;
+    endResetModel();
 }
 
 #include "moc_recentitemsmodel.cpp"

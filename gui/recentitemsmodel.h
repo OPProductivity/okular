@@ -44,9 +44,14 @@ public:
     void clearEntries();
     int maxItems();
     void setMaxItems(const int maxItems);
+    int totalItems() const;
+    int pageCount() const;
+    int currentPage() const;
+    void setPage(int page);
 
     RecentItemsModel::RecentItem const *getItem(const QModelIndex &) const;
     RecentItemsModel::RecentItem const *getItem(int index) const;
+    RecentItemsModel::RecentItem const *getItemAtAbsoluteRow(int row) const;
 
     // Model implementation:
     QHash<int, QByteArray> roleNames() const override;
@@ -55,8 +60,9 @@ public:
 
 private:
     QList<RecentItemsModel::RecentItem> m_recentItems;
-    // m_maxItems only affects the recentListsView on the welcome screen. The no. of recent files in the File menu are not affected.
-    int m_maxItems = 20;
+    static constexpr int pageSize = 10;
+    int m_maxItems = 50;
+    int m_currentPage = 0;
     QFileIconProvider m_iconProvider;
 };
 

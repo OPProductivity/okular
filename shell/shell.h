@@ -165,6 +165,8 @@ Q_SIGNALS:
 
 private:
     void saveRecents();
+    void addRecentUrl(const QUrl &url);
+    void pruneRecentFiles();
     void setupAccel();
     void setupActions();
     void openNewTab(const QUrl &url, const QString &serializedOptions);
@@ -202,8 +204,7 @@ private:
     bool m_unique;
     QTabWidget *m_tabWidget;
     QToolButton *m_centerActiveTabButton = nullptr;
-    QToolButton *m_previousTabButton = nullptr;
-    QToolButton *m_nextTabButton = nullptr;
+    bool m_centeringActiveTab = false;
     QToolButton *m_openTabButton = nullptr;
     KToggleAction *m_openInTab;
     WelcomeScreen *m_welcomeScreen;

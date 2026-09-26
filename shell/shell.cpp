@@ -39,6 +39,8 @@
 #include <KXMLGUIFactory>
 #include <QAbstractSocket>
 #include <QApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDebug>
 #if HAVE_DBUS
 #include <QDBusConnection>
@@ -61,6 +63,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QScreen>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
@@ -91,6 +94,8 @@ static const char *const SESSION_URL_KEY = "Urls";
 static const char *const SESSION_TAB_KEY = "ActiveTab";
 static const char *const SESSION_ACTIVE_URL_KEY = "ActiveUrl";
 static constexpr int OPEN_DOCUMENT_SESSION_SAVE_DELAY_MS = 2000;
+static constexpr qint64 RECENT_FILE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60;
+static constexpr int MAX_RECENT_FILES = 50;
 #if defined(Q_OS_WIN)
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
 #endif
@@ -105,6 +110,14 @@ static inline QString DesktopEntryGroupKey()
 static inline QString RecentFilesGroupKey()
 {
     return QStringLiteral("Recent Files");
+}
+static inline QString RecentOpenTimesGroupKey()
+{
+    return QStringLiteral("Recent File Open Times");
+}
+static QByteArray recentOpenTimeKey(const QUrl &url)
+{
+    return QCryptographicHash::hash(url.toString(QUrl::FullyEncoded).toUtf8(), QCryptographicHash::Sha256).toHex();
 }
 static inline QString GeneralGroupKey()
 {
@@ -297,30 +310,6 @@ Shell::Shell(const QString &serializedOptions)
         m_centerActiveTabButton->setAutoRaise(false);
         m_centerActiveTabButton->hide();
         connect(m_centerActiveTabButton, &QToolButton::clicked, this, &Shell::centerActiveTabInTabBar);
-
-        m_previousTabButton = new QToolButton(m_tabWidget->tabBar());
-        m_previousTabButton->setObjectName(QStringLiteral("previousTabButton"));
-        m_previousTabButton->setArrowType(Qt::LeftArrow);
-        m_previousTabButton->setToolTip(i18n("Previous Tab"));
-        m_previousTabButton->setAccessibleName(i18n("Previous Tab"));
-        m_previousTabButton->setStyleSheet(tabCornerButtonStyle);
-        m_previousTabButton->hide();
-        connect(m_previousTabButton, &QToolButton::clicked, this, [this]() {
-            setActiveTab(m_tabWidget->currentIndex() - 1);
-            updateOpenTabButtonGeometry();
-        });
-
-        m_nextTabButton = new QToolButton(m_tabWidget->tabBar());
-        m_nextTabButton->setObjectName(QStringLiteral("nextTabButton"));
-        m_nextTabButton->setArrowType(Qt::RightArrow);
-        m_nextTabButton->setToolTip(i18n("Next Tab"));
-        m_nextTabButton->setAccessibleName(i18n("Next Tab"));
-        m_nextTabButton->setStyleSheet(tabCornerButtonStyle);
-        m_nextTabButton->hide();
-        connect(m_nextTabButton, &QToolButton::clicked, this, [this]() {
-            setActiveTab(m_tabWidget->currentIndex() + 1);
-            updateOpenTabButtonGeometry();
-        });
 
         m_openTabButton = new QToolButton(tabCornerWidget);
         m_openTabButton->setText(QStringLiteral("+"));
@@ -756,6 +745,7 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
         if (m_unique) {
             applyOptionsToPart(activePart, serializedOptions);
             if (activePart->openUrl(url)) {
+                addRecentUrl(url);
                 scheduleOpenDocumentSessionSave();
             }
         } else {
@@ -782,7 +772,7 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
         if (!isstdin) {
             if (openOk) {
                 setActiveTab(activeTab);
-                m_recent->addUrl(url);
+                addRecentUrl(url);
                 scheduleOpenDocumentSessionSave();
             } else {
                 m_recent->removeUrl(url);
@@ -800,6 +790,7 @@ void Shell::openRecentDocuments(const QList<QUrl> &urls)
             continue;
         }
         int tab = findTabIndex(url);
+        const bool alreadyOpen = tab >= 0;
         if (tab < 0) {
             if (m_tabs[m_tabWidget->currentIndex()].part->url().isEmpty()) {
                 openUrl(url);
@@ -809,6 +800,9 @@ void Shell::openRecentDocuments(const QList<QUrl> &urls)
             tab = findTabIndex(url);
         }
         if (tab >= 0) {
+            if (alreadyOpen) {
+                addRecentUrl(url);
+            }
             mostRecentTab = tab;
         }
     }
@@ -876,7 +870,37 @@ void Shell::writeSettings()
 
 void Shell::saveRecents()
 {
+    pruneRecentFiles();
     m_recent->saveEntries(KSharedConfig::openConfig()->group(RecentFilesGroupKey()));
+}
+
+void Shell::addRecentUrl(const QUrl &url)
+{
+    m_recent->addUrl(url);
+    if (m_recent->urls().contains(url)) {
+        KSharedConfig::openConfig()->group(RecentOpenTimesGroupKey()).writeEntry(recentOpenTimeKey(url).constData(), QDateTime::currentSecsSinceEpoch());
+    }
+}
+
+void Shell::pruneRecentFiles()
+{
+    KConfigGroup times = KSharedConfig::openConfig()->group(RecentOpenTimesGroupKey());
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QSet<QByteArray> retainedKeys;
+    for (const QUrl &url : m_recent->urls()) {
+        const QByteArray key = recentOpenTimeKey(url);
+        const qint64 openedAt = times.readEntry(key.constData(), qint64(0));
+        if (openedAt <= 0 || openedAt > now || now - openedAt > RECENT_FILE_MAX_AGE_SECONDS) {
+            m_recent->removeUrl(url);
+        } else {
+            retainedKeys.insert(key);
+        }
+    }
+    for (const QString &key : times.keyList()) {
+        if (!retainedKeys.contains(key.toLatin1())) {
+            times.deleteEntry(key);
+        }
+    }
 }
 
 void Shell::setupActions()
@@ -885,6 +909,7 @@ void Shell::setupActions()
     m_recent = KStandardAction::openRecent(this, SLOT(openUrl(QUrl)), actionCollection());
     m_recent->setToolBarMode(KRecentFilesAction::MenuMode);
     connect(m_recent, &QAction::triggered, this, &Shell::showOpenRecentMenu);
+    connect(m_recent->menu(), &QMenu::aboutToShow, this, &Shell::saveRecents);
     connect(m_recent, &KRecentFilesAction::recentListCleared, this, &Shell::refreshRecentsOnWelcomeScreen);
     connect(m_welcomeScreen, &WelcomeScreen::forgetAllRecents, m_recent, &KRecentFilesAction::clear);
     m_recent->setToolTip(i18n("Click to open a file\nClick and hold to open a recent file"));
@@ -1024,6 +1049,7 @@ void Shell::saveOpenDocumentSession()
     KSharedConfigPtr config = KSharedConfig::openConfig();
     KConfigGroup group = config->group(OpenDocumentSessionGroupKey());
     writeOpenDocumentSession(group);
+    saveRecents();
     config->sync();
 }
 
@@ -1513,7 +1539,7 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
 
         if (tabIndex >= 0) {
             setActiveTab(tabIndex);
-            m_recent->addUrl(url);
+            addRecentUrl(url);
             return;
         }
     }
@@ -1540,7 +1566,7 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
     setActiveTab(m_tabs.size() - 1);
 
     if (part->openUrl(url)) {
-        m_recent->addUrl(url);
+        addRecentUrl(url);
         scheduleOpenDocumentSessionSave();
     } else {
         setActiveTab(previousActiveTab);
@@ -1721,8 +1747,6 @@ void Shell::centerActiveTabInTabBar()
 
     QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
     scrollButtons.removeAll(m_centerActiveTabButton);
-    scrollButtons.removeAll(m_previousTabButton);
-    scrollButtons.removeAll(m_nextTabButton);
     scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
                             return !button || !button->isVisible() || button->geometry().isEmpty();
                         }),
@@ -1732,6 +1756,7 @@ void Shell::centerActiveTabInTabBar()
     });
 
     if (scrollButtons.size() >= 2) {
+        m_centeringActiveTab = true;
         QToolButton *const leftScrollButton = scrollButtons.at(scrollButtons.size() - 2);
         QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
         const int visibleLeft = tabBar->rect().left();
@@ -1763,6 +1788,7 @@ void Shell::centerActiveTabInTabBar()
                 break;
             }
         }
+        m_centeringActiveTab = false;
     }
 
     updateOpenTabButtonGeometry();
@@ -1777,7 +1803,7 @@ void Shell::scheduleOpenTabButtonGeometryUpdate()
 
 void Shell::updateOpenTabButtonGeometry()
 {
-    if (!m_openTabButton || !m_centerActiveTabButton || !m_previousTabButton || !m_nextTabButton || !m_tabWidget) {
+    if (!m_openTabButton || !m_centerActiveTabButton || !m_tabWidget) {
         return;
     }
 
@@ -1791,8 +1817,6 @@ void Shell::updateOpenTabButtonGeometry()
 
     QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
     scrollButtons.removeAll(m_centerActiveTabButton);
-    scrollButtons.removeAll(m_previousTabButton);
-    scrollButtons.removeAll(m_nextTabButton);
     scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
                             return !button || !button->isVisible() || button->geometry().isEmpty();
                         }),
@@ -1804,6 +1828,24 @@ void Shell::updateOpenTabButtonGeometry()
     if (scrollButtons.size() >= 2) {
         QToolButton *const leftScrollButton = scrollButtons.at(scrollButtons.size() - 2);
         QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
+        if (!leftScrollButton->property("okularSelectsTab").toBool()) {
+            leftScrollButton->setProperty("okularSelectsTab", true);
+            connect(leftScrollButton, &QToolButton::clicked, this, [this]() {
+                if (!m_centeringActiveTab) {
+                    setActiveTab(m_tabWidget->currentIndex() - 1);
+                    updateOpenTabButtonGeometry();
+                }
+            });
+        }
+        if (!rightScrollButton->property("okularSelectsTab").toBool()) {
+            rightScrollButton->setProperty("okularSelectsTab", true);
+            connect(rightScrollButton, &QToolButton::clicked, this, [this]() {
+                if (!m_centeringActiveTab) {
+                    setActiveTab(m_tabWidget->currentIndex() + 1);
+                    updateOpenTabButtonGeometry();
+                }
+            });
+        }
         const QRect leftRect = leftScrollButton->geometry();
         const QRect rightRect = rightScrollButton->geometry();
         const int centerX = std::max(0, rightRect.x() - m_centerActiveTabButton->width());
@@ -1812,22 +1854,14 @@ void Shell::updateOpenTabButtonGeometry()
         leftScrollButton->setGeometry(leftX, rightRect.y(), leftRect.width(), rightRect.height());
         m_centerActiveTabButton->setGeometry(centerX, rightRect.y(), m_centerActiveTabButton->width(), rightRect.height());
         rightScrollButton->setGeometry(rightRect);
-        m_previousTabButton->setGeometry(leftScrollButton->geometry());
-        m_nextTabButton->setGeometry(rightScrollButton->geometry());
-        m_previousTabButton->setEnabled(m_tabWidget->currentIndex() > 0);
-        m_nextTabButton->setEnabled(m_tabWidget->currentIndex() < m_tabWidget->count() - 1);
+        leftScrollButton->setEnabled(m_tabWidget->currentIndex() > 0);
+        rightScrollButton->setEnabled(m_tabWidget->currentIndex() < m_tabWidget->count() - 1);
         m_centerActiveTabButton->show();
-        m_previousTabButton->show();
-        m_nextTabButton->show();
         leftScrollButton->raise();
         m_centerActiveTabButton->raise();
         rightScrollButton->raise();
-        m_previousTabButton->raise();
-        m_nextTabButton->raise();
     } else {
         m_centerActiveTabButton->hide();
-        m_previousTabButton->hide();
-        m_nextTabButton->hide();
     }
 
     m_openTabButton->show();
@@ -1885,7 +1919,7 @@ void Shell::forgetRecentItems(const QList<QUrl> &urls)
 
 void Shell::triggerUpdateRecentItems(const int maxItems)
 {
-    m_recent->setMaxItems(maxItems);
+    m_recent->setMaxItems(std::clamp(maxItems, 0, MAX_RECENT_FILES));
     m_welcomeScreen->setMaxRecentItems(m_recent->maxItems());
     // saveRecents() dumps the recent files in correct order to KConfigGroup, respecting the allowed no. of recent items, discarding older items if needed
     refreshRecentsOnWelcomeScreen();
@@ -1897,12 +1931,13 @@ void Shell::readRecentFilesSettings()
     // Read no. of max. recent items from okularpartrc, populate File->Open Recent menu-item as well as recentsListView on welcome screen
     QString configFilePath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1Char('/') + QLatin1String("okularpartrc");
     const KConfigGroup confgrp = KSharedConfig::openConfig(configFilePath).data()->group(QStringLiteral("General"));
-    const int defaultMaxRecentItems = 10;
+    const int defaultMaxRecentItems = MAX_RECENT_FILES;
     int maxRecentItems = confgrp.readEntry<int>("MaxRecentItems", defaultMaxRecentItems);
-    m_recent->setMaxItems(maxRecentItems);
+    m_recent->setMaxItems(std::clamp(maxRecentItems, 0, MAX_RECENT_FILES));
     m_welcomeScreen->setMaxRecentItems(m_recent->maxItems());
     m_welcomeScreen->loadRecents();
     m_recent->loadEntries(KSharedConfig::openConfig()->group(RecentFilesGroupKey()));
+    pruneRecentFiles();
 }
 
 #include "moc_shell.cpp"
