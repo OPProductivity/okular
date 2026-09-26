@@ -147,6 +147,17 @@ public:
 class ThreeButtonTabBarStyle : public QProxyStyle
 {
 public:
+    void drawControl(ControlElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget = nullptr) const override
+    {
+        if (element == CE_TabBarTabShape && option && (option->state & State_Selected) && qobject_cast<const QTabBar *>(widget)
+            && baseStyle()->name() == QLatin1String("windows11")) {
+            // Proxying the Windows 11 tab shape drops its accent edge and changes its background.
+            QApplication::style()->drawControl(element, option, painter, widget);
+            return;
+        }
+        QProxyStyle::drawControl(element, option, painter, widget);
+    }
+
     int pixelMetric(PixelMetric metric, const QStyleOption *option, const QWidget *widget) const override
     {
         if (metric == PM_TabBarScrollButtonWidth && qobject_cast<const QTabBar *>(widget)) {
