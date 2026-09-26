@@ -141,6 +141,7 @@ WelcomeScreen::WelcomeScreen(QWidget *parent)
     m_noRecentsLabel->setGraphicsEffect(effect);
 
     connect(forgetAllButton, &QToolButton::clicked, this, &WelcomeScreen::forgetAllRecents);
+    connect(openAllRecentsButton, &QToolButton::clicked, this, &WelcomeScreen::openAllRecentsClicked);
 }
 
 WelcomeScreen::~WelcomeScreen()
@@ -183,6 +184,7 @@ void WelcomeScreen::recentsItemActivated(const QModelIndex &index)
 
 void WelcomeScreen::recentListChanged()
 {
+    openAllRecentsButton->setEnabled(recentsCount() > 0);
     if (recentsCount() == 0) {
         m_noRecentsLabel->show();
         forgetAllButton->setEnabled(false);
@@ -190,6 +192,19 @@ void WelcomeScreen::recentListChanged()
         m_noRecentsLabel->hide();
         forgetAllButton->setEnabled(true);
     }
+}
+
+void WelcomeScreen::openAllRecentsClicked()
+{
+    QList<QUrl> urls;
+    // The model displays the newest item first. Open it last so it remains active.
+    for (int row = recentsCount() - 1; row >= 0; --row) {
+        const RecentItemsModel::RecentItem *item = m_recentsModel->getItem(row);
+        if (item) {
+            urls.append(item->url);
+        }
+    }
+    Q_EMIT openAllRecents(urls);
 }
 
 #include "moc_welcomescreen.cpp"

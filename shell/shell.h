@@ -117,6 +117,7 @@ private Q_SLOTS:
     void slotShowMenubar();
 
     void openUrl(const QUrl &url, const QString &serializedOptions = QString());
+    void openRecentDocuments(const QList<QUrl> &urls);
     void showOpenRecentMenu();
     void closeUrl();
     void print();

@@ -10,6 +10,7 @@
 #include "shell/ui_welcomescreen.h"
 
 #include <QFrame>
+#include <QList>
 #include <QUrl>
 
 class KRecentFilesAction;
@@ -31,6 +32,7 @@ Q_SIGNALS:
     void openClicked();
     void closeClicked();
     void recentItemClicked(QUrl const &url);
+    void openAllRecents(QList<QUrl> const &urls);
     void forgetAllRecents();
     void forgetRecentItem(QUrl const &url);
 
@@ -40,6 +42,7 @@ protected:
 private Q_SLOTS:
     void recentsItemActivated(QModelIndex const &index);
     void recentListChanged();
+    void openAllRecentsClicked();
 
 private:
     int recentsCount();

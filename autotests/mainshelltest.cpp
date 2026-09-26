@@ -125,6 +125,7 @@ private Q_SLOTS:
     void testForwardedFileOpensInExistingTabs();
 #endif
     void testOpenDocumentSessionRestoresTabs();
+    void testOpenAllRecentDocumentsAsTabs();
     void testTabControlsRemainAvailable();
 
 private:
@@ -355,6 +356,44 @@ void MainShellTest::testOpenDocumentSessionRestoresTabs()
     delete restored;
     session.deleteGroup();
     config->sync();
+}
+
+void MainShellTest::testOpenAllRecentDocumentsAsTabs()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl missingUrl = QUrl::fromLocalFile(QDir::tempPath() + QStringLiteral("/okular-missing-recent-document.pdf"));
+    QVERIFY(!QFile::exists(missingUrl.toLocalFile()));
+    shell->m_recent->clear();
+    shell->m_recent->addUrl(firstUrl);
+    shell->m_recent->addUrl(secondUrl);
+    shell->m_recent->addUrl(missingUrl);
+    shell->refreshRecentsOnWelcomeScreen();
+
+    QToolButton *openAllButton = shell->m_welcomeScreen->findChild<QToolButton *>(QStringLiteral("openAllRecentsButton"));
+    QVERIFY(openAllButton);
+    QVERIFY(openAllButton->isEnabled());
+    shell->openUrl(firstUrl);
+    QCOMPARE(shell->m_tabs.size(), 1);
+
+    openAllButton->click();
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(shell->m_tabs.at(0).part->url(), firstUrl);
+    QCOMPARE(shell->m_tabs.at(1).part->url(), secondUrl);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
+
+    shell->m_tabWidget->setCurrentIndex(0);
+    openAllButton->click();
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 1);
+    shell->m_recent->clear();
+    shell->refreshRecentsOnWelcomeScreen();
+    QVERIFY(!openAllButton->isEnabled());
 }
 
 void MainShellTest::testTabControlsRemainAvailable()

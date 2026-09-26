@@ -262,6 +262,7 @@ Shell::Shell(const QString &serializedOptions)
         connect(m_welcomeScreen, &WelcomeScreen::openClicked, this, &Shell::fileOpen);
         connect(m_welcomeScreen, &WelcomeScreen::closeClicked, this, &Shell::hideWelcomeScreen);
         connect(m_welcomeScreen, &WelcomeScreen::recentItemClicked, this, [this](const QUrl &url) { openUrl(url); });
+        connect(m_welcomeScreen, &WelcomeScreen::openAllRecents, this, &Shell::openRecentDocuments);
         connect(m_welcomeScreen, &WelcomeScreen::forgetRecentItem, this, &Shell::forgetRecentItem);
         m_centralStackedWidget->addWidget(m_welcomeScreen);
 
@@ -750,6 +751,31 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
                 closeTab(activeTab);
             }
         }
+    }
+}
+
+void Shell::openRecentDocuments(const QList<QUrl> &urls)
+{
+    int mostRecentTab = -1;
+    for (const QUrl &url : urls) {
+        if (!url.isValid() || url.isEmpty() || (url.isLocalFile() && !QFile::exists(url.toLocalFile()))) {
+            continue;
+        }
+        int tab = findTabIndex(url);
+        if (tab < 0) {
+            if (m_tabs[m_tabWidget->currentIndex()].part->url().isEmpty()) {
+                openUrl(url);
+            } else {
+                openNewTab(url, QString());
+            }
+            tab = findTabIndex(url);
+        }
+        if (tab >= 0) {
+            mostRecentTab = tab;
+        }
+    }
+    if (mostRecentTab >= 0) {
+        setActiveTab(mostRecentTab);
     }
 }
 

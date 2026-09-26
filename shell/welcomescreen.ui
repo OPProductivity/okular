@@ -387,6 +387,22 @@ SPDX-License-Identifier: GPL-2.0-or-later
              </widget>
             </item>
             <item>
+             <widget class="QToolButton" name="openAllRecentsButton">
+              <property name="text">
+               <string comment="on welcome screen (recent document list)">Open All as Tabs</string>
+              </property>
+              <property name="icon">
+               <iconset theme="document-open"/>
+              </property>
+              <property name="toolButtonStyle">
+               <enum>Qt::ToolButtonTextBesideIcon</enum>
+              </property>
+              <property name="autoRaise">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QToolButton" name="forgetAllButton">
               <property name="text">
                <string comment="on welcome screen (recent document list)">Forget All</string>
