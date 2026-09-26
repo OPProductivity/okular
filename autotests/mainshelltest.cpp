@@ -39,6 +39,7 @@
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTabBar>
+#include <QStyleOption>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -154,9 +155,10 @@ private Q_SLOTS:
     void testRecentContextMenuCopiesSelectedPaths();
     void testTabControlsRemainAvailable();
     void testOverflowArrowsSelectEveryTab();
+    void testRtlOverflowControlsStayInsideTabBar();
     void testCenterButtonFramesActiveTab();
     void testFileLaunchShowsDocumentViewFirst();
-    void testWelcomeClearedBeforeDocumentLoad();
+    void testWelcomeHiddenBeforeDocumentLoad();
 
 private:
 };
@@ -918,6 +920,27 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     QVERIFY(scrollButtons.size() >= 2);
     QToolButton *const previousTabButton = scrollButtons.at(scrollButtons.size() - 2);
     QToolButton *const nextTabButton = scrollButtons.last();
+    const QRect previousRect = previousTabButton->geometry();
+    const QRect centerRect = shell->m_centerActiveTabButton->geometry();
+    const QRect nextRect = nextTabButton->geometry();
+    QCOMPARE(previousRect.width(), 20);
+    QCOMPARE(centerRect.width(), 20);
+    QCOMPARE(nextRect.width(), 20);
+    QCOMPARE(previousRect.right() + 1, centerRect.left());
+    QCOMPARE(centerRect.right() + 1, nextRect.left());
+    QCOMPARE(previousRect.top(), centerRect.top());
+    QCOMPARE(centerRect.top(), nextRect.top());
+    QCOMPARE(previousRect.height(), centerRect.height());
+    QCOMPARE(centerRect.height(), nextRect.height());
+    QCOMPARE(tabBar->style()->pixelMetric(QStyle::PM_TabBarScrollButtonWidth, nullptr, tabBar), 30);
+    QStyleOption styleOption;
+    styleOption.initFrom(tabBar);
+    const QRect reservedLeft = tabBar->style()->subElementRect(QStyle::SE_TabBarScrollLeftButton, &styleOption, tabBar);
+    const QRect reservedRight = tabBar->style()->subElementRect(QStyle::SE_TabBarScrollRightButton, &styleOption, tabBar);
+    QCOMPARE(previousRect.left(), reservedLeft.left());
+    QCOMPARE(nextRect.right(), reservedRight.right());
+    QCOMPARE(reservedLeft.right() + 1, reservedRight.left());
+    QVERIFY(previousRect.left() > tabBar->width() / 2);
 
     for (int expected = 7; expected >= 0; --expected) {
         QVERIFY(previousTabButton->isEnabled());
@@ -933,6 +956,53 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
         QCOMPARE(shell->m_tabWidget->currentIndex(), expected);
     }
     QVERIFY(!nextTabButton->isEnabled());
+    delete shell;
+}
+
+void MainShellTest::testRtlOverflowControlsStayInsideTabBar()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->resize(500, 520);
+
+    const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
+    for (int i = 0; i < 9; ++i) {
+        const QString path = directory.filePath(QStringLiteral("rtl-tab-%1.pdf").arg(i));
+        QVERIFY(QFile::copy(sourcePath, path));
+        shell->openUrl(QUrl::fromLocalFile(path));
+    }
+    QTabBar *tabBar = shell->m_tabWidget->tabBar();
+    tabBar->setLayoutDirection(Qt::RightToLeft);
+    shell->setActiveTab(4);
+    QCoreApplication::processEvents();
+    shell->updateOpenTabButtonGeometry();
+
+    QList<QToolButton *> buttons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
+    buttons.removeAll(shell->m_centerActiveTabButton);
+    buttons.erase(std::remove_if(buttons.begin(), buttons.end(), [](QToolButton *button) { return !button->isVisible(); }), buttons.end());
+    std::sort(buttons.begin(), buttons.end(), [](QToolButton *a, QToolButton *b) { return a->x() < b->x(); });
+    QVERIFY(buttons.size() >= 2);
+    const QRect firstRect = buttons.at(buttons.size() - 2)->geometry();
+    const QRect centerRect = shell->m_centerActiveTabButton->geometry();
+    const QRect lastRect = buttons.last()->geometry();
+    QCOMPARE(firstRect.left(), 0);
+    QCOMPARE(firstRect.width(), 20);
+    QCOMPARE(firstRect.right() + 1, centerRect.left());
+    QCOMPARE(centerRect.right() + 1, lastRect.left());
+    QCOMPARE(lastRect.right(), 59);
+    QCOMPARE(firstRect.top(), centerRect.top());
+    QCOMPARE(centerRect.top(), lastRect.top());
+    QCOMPARE(firstRect.height(), centerRect.height());
+    QCOMPARE(centerRect.height(), lastRect.height());
+
+    buttons.at(buttons.size() - 2)->click();
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 3);
+    buttons.last()->click();
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 4);
     delete shell;
 }
 
@@ -1006,29 +1076,16 @@ void MainShellTest::testFileLaunchShowsDocumentViewFirst()
     QVERIFY(probe.showedDocumentView);
 }
 
-void MainShellTest::testWelcomeClearedBeforeDocumentLoad()
+void MainShellTest::testWelcomeHiddenBeforeDocumentLoad()
 {
-    class PaintProbe : public QObject
-    {
-    public:
-        bool painted = false;
-        bool eventFilter(QObject *, QEvent *event) override
-        {
-            painted |= event->type() == QEvent::Paint;
-            return false;
-        }
-    } probe;
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *shell = findShell();
     QVERIFY(shell);
     QCOMPARE(shell->m_centralStackedWidget->currentWidget(), static_cast<QWidget *>(shell->m_welcomeScreen));
-    shell->m_tabWidget->installEventFilter(&probe);
     shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
-    shell->m_tabWidget->removeEventFilter(&probe);
     QCOMPARE(shell->m_centralStackedWidget->currentWidget(), static_cast<QWidget *>(shell->m_tabWidget));
     QVERIFY(!shell->m_welcomeScreen->isVisible());
-    QVERIFY(probe.painted);
 }
 
 void MainShellTest::testShell_data()
