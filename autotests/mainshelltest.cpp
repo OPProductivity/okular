@@ -699,6 +699,7 @@ void MainShellTest::testOpenAllRecentDocumentsFromScrolledList()
     QCOMPARE(shell->m_tabs.size(), 11);
     QCOMPARE(shell->m_tabs.first().part->url(), urls.first());
     QCOMPARE(shell->m_tabs.last().part->url(), urls.last());
+    delete shell;
 }
 
 void MainShellTest::testRecentFilesLimitedToFifty()
@@ -728,6 +729,7 @@ void MainShellTest::testRecentFilesLimitedToFifty()
     QTRY_VERIFY(view->verticalScrollBar()->maximum() > 0);
     view->scrollTo(view->model()->index(49, 0));
     QVERIFY(view->visualRect(view->model()->index(49, 0)).intersects(view->viewport()->rect()));
+    delete shell;
 }
 
 void MainShellTest::testSelectRecentDocumentsAcrossScrollRange()
@@ -765,6 +767,7 @@ void MainShellTest::testSelectRecentDocumentsAcrossScrollRange()
     QCOMPARE(shell->m_tabs.size(), 2);
     QCOMPARE(shell->m_tabs.first().part->url(), urls.first());
     QCOMPARE(shell->m_tabs.last().part->url(), urls.last());
+    delete shell;
 }
 
 void MainShellTest::testSelectRecentDocumentsWithCtrlClick()
