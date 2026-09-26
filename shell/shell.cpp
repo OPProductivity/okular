@@ -331,7 +331,7 @@ Shell::Shell(const QString &serializedOptions)
         QWidget *const tabCornerWidget = new QWidget(m_tabWidget);
         tabCornerWidget->setObjectName(QStringLiteral("tabCornerWidget"));
         QHBoxLayout *const tabCornerLayout = new QHBoxLayout(tabCornerWidget);
-        constexpr int openButtonGap = 8;
+        constexpr int openButtonGap = 3;
         tabCornerLayout->setContentsMargins(openButtonGap, 0, 1, 0);
         tabCornerLayout->setSpacing(1);
 
