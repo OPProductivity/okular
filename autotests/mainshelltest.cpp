@@ -135,6 +135,7 @@ private Q_SLOTS:
     void testOpenInvalidFiles();
     void testOpenTheSameFileSeveralTimes();
 #if defined(Q_OS_WIN)
+    void testEpubAtLongWindowsPath();
     void testForwardedWindowReturnsFromOffscreen();
     void testForwardedFileOpensInExistingTabs();
     void testShortcutLaunchReusesExistingWindow();
@@ -265,6 +266,36 @@ static QRect visibleWindowsFrame(QWidget *widget)
         FreeLibrary(dwm);
     }
     return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+}
+
+void MainShellTest::testEpubAtLongWindowsPath()
+{
+#if !defined(OKULAR_TEST_EPUB_LONG_PATH)
+    QSKIP("EPUB generator is not built");
+#else
+    DWORD longPaths = 0;
+    DWORD size = sizeof(longPaths);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\FileSystem", L"LongPathsEnabled", RRF_RT_REG_DWORD, nullptr, &longPaths, &size) != ERROR_SUCCESS || !longPaths) {
+        QSKIP("Windows long-path policy is disabled");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QString nested = directory.path();
+    while (nested.size() < 300) {
+        nested += QLatin1Char('/') + QString(40, QLatin1Char('x'));
+    }
+    QVERIFY(QDir().mkpath(nested));
+    const QString path = nested + QStringLiteral("/book-\u00e9.epub");
+    QVERIFY(path.size() > MAX_PATH);
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "../generators/epub/autotests/data/test.epub"), path));
+    Shell shell;
+    shell.openUrl(QUrl::fromLocalFile(path));
+    QCOMPARE(shell.m_tabs.size(), 1);
+    const auto *document = partDocument(qobject_cast<Okular::Part *>(shell.m_tabs.at(0).part));
+    QVERIFY(document);
+    QCOMPARE(document->pages(), 3U);
+    QCOMPARE(shell.m_tabs.at(0).part->url().toLocalFile(), path);
+#endif
 }
 
 void MainShellTest::testForwardedWindowReturnsFromOffscreen()

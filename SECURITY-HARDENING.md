@@ -145,3 +145,19 @@ helper. Both active and inactive tab labels were visually checked in the dark
 theme; native Windows painting now supplies their readable text colors while
 preserving the selected-tab accent. Original session tabs and reading position
 were retained, and temporary test tabs were closed.
+
+## Windows EPUB long paths
+
+The Windows executable now declares `longPathAware` in its embedded manifest.
+This lets native EPUB-library file opens use the Windows long-path policy, as
+Qt's own file access already does. Normal user privileges remain `asInvoker`;
+no system policy is changed. The Windows `LongPathsEnabled` policy must also be
+enabled for this opt-in to take effect.
+
+A regression opens a fixture EPUB beyond 300 path characters with an accented
+filename. It and five adjacent session/tab tests passed (eight QtTest cases
+including setup/cleanup). The locally installed viewer also opened and rendered
+all three previously rejected EPUBs at their unchanged original locations,
+including a 347-character path, when launched together into an existing session.
+The original 16 tabs and active article were restored after closing the test
+tabs. MinGW resource embedding is provided but was not built in this MSVC setup.

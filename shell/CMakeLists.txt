@@ -26,6 +26,18 @@ ecm_add_app_icon(okular_SRCS ICONS ${ICONS_SRCS})
 
 add_executable(okular ${okular_SRCS})
 
+if(WIN32)
+    # Qt handles long paths itself, but native EPUB library file opens also
+    # need the executable to opt in to Windows long-path support.
+    if(MSVC)
+        target_sources(okular PRIVATE okular.manifest)
+    else()
+        set(OKULAR_MANIFEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/okular.manifest")
+        configure_file(okular_manifest.rc.in okular_manifest.rc @ONLY)
+        target_sources(okular PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/okular_manifest.rc)
+    endif()
+endif()
+
 target_link_libraries(okular KF6::I18n KF6::Parts KF6::WindowSystem KF6::Crash KF6::IconThemes KF6::KIOGui)
 if (TARGET Qt6::DBus)
     target_link_libraries(okular Qt6::DBus)
