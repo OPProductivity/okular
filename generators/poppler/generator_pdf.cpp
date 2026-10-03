@@ -919,7 +919,7 @@ void PDFGenerator::loadPages(QList<Okular::Page *> &pagesVector, int rotation, b
             }
             tmplink = p->action(Poppler::Page::Closing);
             if (tmplink) {
-                page->setPageAction(Okular::Page::Closing, createLinkFromPopplerLink(tmplink.get()));
+                page->setPageAction(Okular::Page::Closing, createLinkFromPopplerLink(std::move(tmplink)));
             }
             page->setDuration(p->duration());
             page->setLabel(p->label());
@@ -1390,12 +1390,14 @@ void PDFGenerator::resolveMediaLinkReference(Okular::Action *action)
         return;
     }
 
-    if ((action->actionType() != Okular::Action::Movie) && (action->actionType() != Okular::Action::Rendition)) {
+    if (!action->nativeHandle()) {
         return;
     }
-
-    resolveMediaLinks<Poppler::LinkMovie, Okular::MovieAction, Poppler::MovieAnnotation, Okular::MovieAnnotation>(action, Okular::Annotation::AMovie, annotationsOnOpenHash);
-    resolveMediaLinks<Poppler::LinkRendition, Okular::RenditionAction, Poppler::ScreenAnnotation, Okular::ScreenAnnotation>(action, Okular::Annotation::AScreen, annotationsOnOpenHash);
+    if (action->actionType() == Okular::Action::Movie) {
+        resolveMediaLinks<Poppler::LinkMovie, Okular::MovieAction, Poppler::MovieAnnotation, Okular::MovieAnnotation>(action, Okular::Annotation::AMovie, annotationsOnOpenHash);
+    } else if (action->actionType() == Okular::Action::Rendition) {
+        resolveMediaLinks<Poppler::LinkRendition, Okular::RenditionAction, Poppler::ScreenAnnotation, Okular::ScreenAnnotation>(action, Okular::Annotation::AScreen, annotationsOnOpenHash);
+    }
 }
 
 void PDFGenerator::resolveMediaLinkReferences(Okular::Page *page)

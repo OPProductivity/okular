@@ -13,7 +13,6 @@
 
 #include <unrarflavours.h>
 
-class QEventLoop;
 class QTemporaryDir;
 
 class Unrar : public QObject
@@ -54,17 +53,9 @@ public:
     static bool isAvailable();
     static bool isSuitableVersionAvailable();
 
-private Q_SLOTS:
-    void readFromStdout();
-    void readFromStderr();
-    void finished(int exitCode, QProcess::ExitStatus exitStatus);
-
 private:
     int startSyncProcess(const ProcessArgs &args);
-    void writeToProcess(const QByteArray &data);
 
-    QProcess *mProcess;
-    QEventLoop *mLoop;
     QString mFileName;
     QByteArray mStdOutData;
     QByteArray mStdErrData;

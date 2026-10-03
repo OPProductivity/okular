@@ -329,7 +329,10 @@ void dviRenderer::draw_part(double current_dimconv, bool is_vfmacro)
                     word_boundary_encountered = true;
                     line_boundary_encountered = true;
                 }
-                command_pointer += 11 * 4;
+                if (!skipBytes(11 * 4)) {
+                    errorMsg = i18n("The DVI file is truncated.");
+                    return;
+                }
                 currinf.data.dvi_h = 1200 << 16; // Reminder: DVI-coordinates start at (1",1") from top of page
                 currinf.data.dvi_v = 1200;
                 currinf.data.pxl_v = int(currinf.data.dvi_v / shrinkfactor);
@@ -528,11 +531,17 @@ void dviRenderer::draw_part(double current_dimconv, bool is_vfmacro)
             case FNTDEF2:
             case FNTDEF3:
             case FNTDEF4:
-                command_pointer += 12 + ch - FNTDEF1 + 1;
+                if (!skipBytes(12 + ch - FNTDEF1 + 1)) {
+                    errorMsg = i18n("The DVI file is truncated.");
+                    return;
+                }
                 {
                     quint8 tempa = readUINT8();
                     quint8 tempb = readUINT8();
-                    command_pointer += tempa + tempb;
+                    if (!skipBytes(tempa + tempb)) {
+                        errorMsg = i18n("The DVI file is truncated.");
+                        return;
+                    }
                 }
                 break;
 

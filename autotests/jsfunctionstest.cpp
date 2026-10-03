@@ -86,6 +86,8 @@ class JSFunctionsTest : public QObject
 private Q_SLOTS:
     void initTestCase();
     void testNthFieldName();
+    void testNegativeFieldIndex();
+    void testTimerQuotaAndCleanup();
     void testDisplay();
     void testSetClearInterval();
     void testSetClearTimeOut();
@@ -131,6 +133,29 @@ void JSFunctionsTest::testNthFieldName()
         m_fields[QStringLiteral("0.%1").arg(i)]->setVisible(false);
         delete action;
     }
+}
+
+void JSFunctionsTest::testNegativeFieldIndex()
+{
+    Okular::ScriptAction action(Okular::JavaScript, QStringLiteral("Doc.getField('0.0').display = Doc.getNthFieldName(-1) === undefined ? display.visible : display.hidden;"));
+    m_document->processAction(&action);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
+}
+
+void JSFunctionsTest::testTimerQuotaAndCleanup()
+{
+    Okular::ScriptAction action(Okular::JavaScript,
+                                QStringLiteral("var quotaTimers = []; for (var i=0; i<32; ++i) quotaTimers.push(app.setInterval('', 60000)); Doc.getField('0.0').display = app.setInterval('', 60000) === undefined ? display.visible : "
+                                               "display.hidden; for (var i=0; i<quotaTimers.length; ++i) app.clearInterval(quotaTimers[i]);"));
+    m_document->processAction(&action);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
+    Okular::ScriptAction oneShots(Okular::JavaScript, QStringLiteral("for (var i=0; i<32; ++i) app.setTimeOut('', 0);"));
+    m_document->processAction(&oneShots);
+    QTest::qWait(100);
+    Okular::ScriptAction verify(Okular::JavaScript,
+                                QStringLiteral("var afterCleanup = app.setInterval('', 60000); Doc.getField('0.0').display = afterCleanup !== undefined ? display.visible : display.hidden; app.clearInterval(afterCleanup);"));
+    m_document->processAction(&verify);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
 }
 
 void JSFunctionsTest::testDisplay()

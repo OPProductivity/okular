@@ -6,7 +6,11 @@
 
 #include "document.h"
 
+#include <QBuffer>
 #include <QFile>
+#include <QXmlStreamReader>
+#include <core/documentlimits_p.h>
+#include <memory>
 
 #include <KLocalizedString>
 #include <kzip.h>
@@ -21,6 +25,7 @@ Document::Document(const QString &fileName)
 bool Document::open()
 {
     QIODevice *device;
+    std::unique_ptr<QIODevice> archiveDevice;
 
     QFile file(mFileName);
     KZip zip(mFileName);
@@ -47,7 +52,8 @@ bool Document::open()
 
         QString documentFile;
         for (int i = 0; i < entries.count(); ++i) {
-            if (entries[i].endsWith(QLatin1String(".fb2"))) {
+            const KArchiveEntry *candidate = directory->entry(entries[i]);
+            if (candidate && candidate->isFile() && entries[i].endsWith(QLatin1String(".fb2"))) {
                 documentFile = entries[i];
                 break;
             }
@@ -59,12 +65,38 @@ bool Document::open()
         }
 
         const KArchiveFile *entry = static_cast<const KArchiveFile *>(directory->entry(documentFile));
-        // FIXME delete 'deviceì somewhen
-        device = entry->createDevice();
+        archiveDevice.reset(entry->createDevice());
+        device = archiveDevice.get();
+        if (!device) {
+            setError(i18n("Unable to open document"));
+            return false;
+        }
     }
 
+    QByteArray xml;
+    QBuffer buffer(&xml);
+    buffer.open(QIODevice::WriteOnly);
+    if (!Okular::copyBoundedDocument(device, &buffer, 64LL * 1024 * 1024)) {
+        setError(i18n("Document exceeds safe conversion limits"));
+        return false;
+    }
+    // Check the XML before constructing a DOM or entering recursive converters.
+    QXmlStreamReader reader(xml);
+    int depth = 0;
+    int nodes = 0;
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (reader.isStartElement()) {
+            if (++depth > Okular::MaxDocumentNesting || ++nodes > 1000000) {
+                setError(i18n("Document exceeds safe conversion limits"));
+                return false;
+            }
+        } else if (reader.isEndElement()) {
+            --depth;
+        }
+    }
     QString errorMsg;
-    if (!mDocument.setContent(device, true, &errorMsg)) {
+    if (reader.hasError() || !mDocument.setContent(xml, true, &errorMsg)) {
         setError(i18n("Invalid XML document: %1", errorMsg));
         return false;
     }

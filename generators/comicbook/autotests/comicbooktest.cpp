@@ -4,6 +4,9 @@
     SPDX-License-Identifier: GPL-2.0-or-later
 */
 
+#include "../unrarflavours.h"
+#include <KZip>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include "core/document.h"
@@ -22,6 +25,8 @@ class ComicBookGeneratorTest : public QObject
 private Q_SLOTS:
     void initTestCase();
     void testRotatedImage();
+    void testEmptyRarListing();
+    void testDeepArchive();
     void cleanupTestCase();
 };
 
@@ -48,6 +53,29 @@ void ComicBookGeneratorTest::testRotatedImage()
 
     const QImage image = document.pageImage(0);
     QVERIFY(image.height() > image.width());
+}
+
+void ComicBookGeneratorTest::testEmptyRarListing()
+{
+    UnarFlavour flavour;
+    QVERIFY(flavour.processListing({}).isEmpty());
+    QVERIFY(flavour.processListing({QStringLiteral("header")}).isEmpty());
+}
+
+void ComicBookGeneratorTest::testDeepArchive()
+{
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("deep.cbz"));
+    KZip zip(file);
+    QVERIFY(zip.open(QIODevice::WriteOnly));
+    QString path;
+    for (int i = 0; i < 140; ++i) {
+        path += QStringLiteral("d/");
+    }
+    QVERIFY(zip.writeFile(path + QStringLiteral("image.png"), QByteArray("test")));
+    QVERIFY(zip.close());
+    ComicBook::Document document;
+    QVERIFY(!document.open(file));
 }
 
 QTEST_MAIN(ComicBookGeneratorTest)

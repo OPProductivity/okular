@@ -698,7 +698,10 @@ void dviRenderer::prescan(parseSpecials specialParser)
             break;
 
         case BOP:
-            command_pointer += 11 * 4;
+            if (!skipBytes(11 * 4)) {
+                errorMsg = i18n("The DVI file is truncated.");
+                return;
+            }
             currinf.data.dvi_h = 1200 << 16; // Reminder: DVI-coordinates start at (1",1") from top of page
             currinf.data.dvi_v = 1200;
             currinf.data.pxl_v = int(currinf.data.dvi_v / shrinkfactor);
@@ -815,8 +818,14 @@ void dviRenderer::prescan(parseSpecials specialParser)
         case FNTDEF2:
         case FNTDEF3:
         case FNTDEF4:
-            command_pointer += 12 + ch - FNTDEF1 + 1;
-            command_pointer += readUINT8() + readUINT8();
+            if (!skipBytes(12 + ch - FNTDEF1 + 1)) {
+                errorMsg = i18n("The DVI file is truncated.");
+                return;
+            }
+            if (!skipBytes(readUINT8() + readUINT8())) {
+                errorMsg = i18n("The DVI file is truncated.");
+                return;
+            }
             break;
 
         default:

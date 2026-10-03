@@ -31,7 +31,7 @@ public:
     }
 
     DocumentPrivate *m_doc;
-    bool isDigitallySigned = false;
+    bool hasSignatureField = false;
 #if HAVE_JS
     QScopedPointer<ExecutorJS> m_js;
 #endif
@@ -44,11 +44,11 @@ Scripter::Scripter(DocumentPrivate *doc)
         const QList<Okular::FormField *> formFields = page->formFields();
         for (const Okular::FormField *f : formFields) {
             if (f->type() == Okular::FormField::FormSignature) {
-                d->isDigitallySigned = true;
+                d->hasSignatureField = true;
                 break;
             }
         }
-        if (d->isDigitallySigned) {
+        if (d->hasSignatureField) {
             break;
         }
     }
@@ -72,7 +72,7 @@ void Scripter::execute(const std::shared_ptr<Event> &event, ScriptType type, con
 {
     qCDebug(OkularCoreDebug) << "executing the script:" << script;
 #if HAVE_JS
-    if (d->isDigitallySigned && event->eventType() == Event::DocOpen) {
+    if (d->hasSignatureField && event && event->eventType() == Event::DocOpen) {
         qWarning(OkularCoreDebug) << "Not executing DocOpen script on signed document";
         return;
     }

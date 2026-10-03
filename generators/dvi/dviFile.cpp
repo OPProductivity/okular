@@ -77,9 +77,18 @@ dvifile::dvifile(const dvifile *old, fontPool *fp)
 
     tn_table.clear();
     process_preamble();
-    find_postamble();
-    read_postamble();
-    prepare_pages();
+    if (errorMsg.isEmpty()) {
+        find_postamble();
+    }
+    if (errorMsg.isEmpty()) {
+        read_postamble();
+    }
+    if (errorMsg.isEmpty()) {
+        prepare_pages();
+    }
+    if (readFailed && errorMsg.isEmpty()) {
+        errorMsg = i18n("The DVI file is truncated.");
+    }
 }
 
 void dvifile::process_preamble()
@@ -108,6 +117,10 @@ void dvifile::process_preamble()
     quint32 denominator = readUINT32();
     _magnification = readUINT32();
 
+    if (readFailed || denominator == 0 || _magnification == 0) {
+        errorMsg = i18n("The DVI preamble is invalid.");
+        return;
+    }
     cmPerDVIunit = (double(numerator) / double(denominator)) * (double(_magnification) / 1000.0) * (1.0 / 1e5);
 
     // Read the generatorString (such as "TeX output …" from the
@@ -115,7 +128,11 @@ void dvifile::process_preamble()
     // string.
     char job_id[300];
     magic_number = readUINT8();
-    strncpy(job_id, reinterpret_cast<const char *>(command_pointer), magic_number);
+    if (!hasBytes(magic_number)) {
+        errorMsg = i18n("The DVI file is truncated.");
+        return;
+    }
+    memcpy(job_id, command_pointer, magic_number);
     job_id[magic_number] = '\0';
     generatorString = QString::fromLocal8Bit(job_id);
 }
@@ -125,12 +142,16 @@ void dvifile::process_preamble()
 
 void dvifile::find_postamble()
 {
+    if (size_of_file < 6) {
+        errorMsg = i18n("The DVI file is truncated.");
+        return;
+    }
     // Move backwards through the TRAILER bytes
     command_pointer = dvi_Data() + size_of_file - 1;
     while ((*command_pointer == TRAILER) && (command_pointer > dvi_Data())) {
         command_pointer--;
     }
-    if (command_pointer == dvi_Data()) {
+    if (command_pointer - dvi_Data() < 5) {
         errorMsg = i18n("The DVI file is badly corrupted. Okular was not able to find the postamble.");
         return;
     }
@@ -138,6 +159,10 @@ void dvifile::find_postamble()
     // And this is finally the pointer to the beginning of the postamble
     command_pointer -= 4;
     beginning_of_postamble = readUINT32();
+    if (beginning_of_postamble >= quint64(size_of_file) || quint64(size_of_file) - beginning_of_postamble < 29) {
+        errorMsg = i18n("The DVI postamble offset is invalid.");
+        return;
+    }
     command_pointer = dvi_Data() + beginning_of_postamble;
 }
 
@@ -153,7 +178,10 @@ void dvifile::read_postamble()
     // Skip the numerator, denominator and magnification, the largest
     // box height and width and the maximal depth of the stack. These
     // are not used at the moment.
-    command_pointer += 4 + 4 + 4 + 4 + 4 + 2;
+    if (!skipBytes(4 + 4 + 4 + 4 + 4 + 2)) {
+        errorMsg = i18n("The DVI file is truncated.");
+        return;
+    }
 
     // The number of pages is more interesting for us.
     total_pages = readUINT16();
@@ -170,6 +198,10 @@ void dvifile::read_postamble()
         quint32 scale = readUINT32();
         quint32 design = readUINT32();
         quint16 len = readUINT8() + readUINT8(); // Length of the font name, including the directory name
+        if (readFailed || !hasBytes(len) || design == 0) {
+            errorMsg = i18n("The DVI font definition is invalid.");
+            return;
+        }
         QByteArray fontname(reinterpret_cast<const char *>(command_pointer), len);
         command_pointer += len;
 
@@ -229,22 +261,28 @@ void dvifile::prepare_pages()
     }
 
     page_offset[int(total_pages)] = beginning_of_postamble;
-    int j = total_pages - 1;
-    page_offset[j] = last_page_offset;
-
-    // Follow back pointers through pages in the DVI file, storing the
-    // offsets in the page_offset table.
-    while (j > 0) {
-        command_pointer = dvi_Data() + page_offset[j--];
-        if (readUINT8() != BOP) {
-            errorMsg = i18n("The page %1 does not start with the BOP command.", j + 1);
+    quint32 offset = last_page_offset;
+    quint32 nextOffset = beginning_of_postamble;
+    for (int j = total_pages - 1; j >= 0; --j) {
+        // Validate even a one-page document before constructing any pointer.
+        if (offset >= nextOffset || nextOffset - offset < 45 || offset >= quint64(size_of_file)) {
+            errorMsg = i18n("The DVI page offset is invalid.");
+            page_offset.clear();
             return;
         }
-        command_pointer += 10 * 4;
-        page_offset[j] = readUINT32();
-        if ((dvi_Data() + page_offset[j] < dvi_Data()) || (dvi_Data() + page_offset[j] > dvi_Data() + size_of_file)) {
-            break;
+        command_pointer = dvi_Data() + offset;
+        if (readUINT8() != BOP || !skipBytes(10 * 4)) {
+            errorMsg = i18n("The page %1 does not start with the BOP command.", j + 1);
+            page_offset.clear();
+            return;
         }
+        page_offset[j] = offset;
+        nextOffset = offset;
+        offset = readUINT32();
+    }
+    if (offset != 0xffffffffU) {
+        errorMsg = i18n("The DVI page chain is invalid.");
+        page_offset.clear();
     }
 }
 
@@ -264,13 +302,21 @@ dvifile::dvifile(const QString &fname, fontPool *pool)
     sourceSpecialMarker = true;
     have_complainedAboutMissingPDF2PS = false;
 
+    total_pages = 0;
+    size_of_file = 0;
     QFile file(fname);
     filename = file.fileName();
     if (!file.open(QIODevice::ReadOnly)) {
+        errorMsg = i18n("Unable to open the DVI file.");
         qCCritical(OkularDviDebug) << "Failed opening file";
         return;
     }
     size_of_file = file.size();
+    if (size_of_file < 15) {
+        errorMsg = i18n("The DVI file is truncated.");
+        total_pages = 0;
+        return;
+    }
     dviData.resize(size_of_file);
     // Sets the end pointer for the bigEndianByteReader so that the
     // whole memory buffer is readable
@@ -290,9 +336,18 @@ dvifile::dvifile(const QString &fname, fontPool *pool)
 
     total_pages = 0;
     process_preamble();
-    find_postamble();
-    read_postamble();
-    prepare_pages();
+    if (errorMsg.isEmpty()) {
+        find_postamble();
+    }
+    if (errorMsg.isEmpty()) {
+        read_postamble();
+    }
+    if (errorMsg.isEmpty()) {
+        prepare_pages();
+    }
+    if (readFailed && errorMsg.isEmpty()) {
+        errorMsg = i18n("The DVI file is truncated.");
+    }
 
     return;
 }
@@ -322,26 +377,20 @@ void dvifile::renumber()
 {
     dviData.detach();
 
-    // Write the page number to the file, taking good care of byte
-    // orderings.
-    bool bigEndian = (QSysInfo::ByteOrder == QSysInfo::BigEndian);
-
-    for (int i = 1; i <= total_pages; i++) {
-        quint8 *ptr = dviData.data() + page_offset[i - 1] + 1;
-        const quint8 *num = reinterpret_cast<quint8 *>(&i);
-        for (quint8 j = 0; j < 4; j++) {
-            if (bigEndian) {
-                *(ptr++) = num[0];
-                *(ptr++) = num[1];
-                *(ptr++) = num[2];
-                *(ptr++) = num[3];
-            } else {
-                *(ptr++) = num[3];
-                *(ptr++) = num[2];
-                *(ptr++) = num[1];
-                *(ptr++) = num[0];
-            }
+    end_pointer = dviData.data() + dviData.size();
+    if (!errorMsg.isEmpty() || page_offset.size() != total_pages + 1) {
+        return;
+    }
+    for (int i = 0; i < total_pages; ++i) {
+        const quint32 offset = page_offset[i];
+        if (offset >= quint64(dviData.size()) || quint64(dviData.size()) - offset < 45 || dviData[offset] != BOP) {
+            errorMsg = i18n("The DVI page offset is invalid.");
+            return;
         }
+    }
+    for (int i = 1; i <= total_pages; ++i) {
+        command_pointer = dviData.data() + page_offset[i - 1] + 1;
+        writeUINT32(i);
     }
 }
 

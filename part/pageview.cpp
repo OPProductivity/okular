@@ -1615,7 +1615,7 @@ void PageView::notifyCurrentPageChanged(int previous, int current)
         for (Okular::Annotation *annotation : annotations) {
             if (annotation->subType() == Okular::Annotation::AWidget) {
                 Okular::WidgetAnnotation *widgetAnnotation = static_cast<Okular::WidgetAnnotation *>(annotation);
-                d->document->processAction(widgetAnnotation->additionalAction(Okular::Annotation::PageClosing));
+                d->document->processAction(widgetAnnotation->additionalAction(Okular::Annotation::PageClosing), false);
             }
         }
     }
@@ -1640,7 +1640,7 @@ void PageView::notifyCurrentPageChanged(int previous, int current)
         for (Okular::Annotation *annotation : annotations) {
             if (annotation->subType() == Okular::Annotation::AWidget) {
                 Okular::WidgetAnnotation *widgetAnnotation = static_cast<Okular::WidgetAnnotation *>(annotation);
-                d->document->processAction(widgetAnnotation->additionalAction(Okular::Annotation::PageOpening));
+                d->document->processAction(widgetAnnotation->additionalAction(Okular::Annotation::PageOpening), false);
             }
         }
     }

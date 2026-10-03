@@ -186,6 +186,10 @@ DVIExportToPS::DVIExportToPS(dviRenderer &parent, const QString &output_name, co
 
         // Renumber pages
         newFile.renumber();
+        if (!newFile.errorMsg.isEmpty()) {
+            parent.errorMsg = newFile.errorMsg;
+            return;
+        }
 
         const quint16 saved_current_page = parent.current_page;
         dvifile *saved_dvi = parent.dviFile;

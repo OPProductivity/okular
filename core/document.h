@@ -668,6 +668,11 @@ public:
      */
     void processAction(const Action *action);
 
+    /** Process a page lifecycle action without allowing external launches or media fetches.
+     * The userInitiated flag is preserved throughout chained actions.
+     */
+    void processAction(const Action *action, bool userInitiated);
+
     /**
      * Processes the given format @p action on @p fft.
      *

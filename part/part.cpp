@@ -82,6 +82,7 @@
 #include <KToggleAction>
 #include <KToggleFullScreenAction>
 #include <KToolBar>
+#include <core/documentlimits_p.h>
 #if HAVE_KWALLET
 #include <KWallet>
 #endif
@@ -3816,16 +3817,7 @@ bool Part::handleCompressed(QString &destpath, const QString &path, KCompression
         return false;
     }
 
-    char buf[65536];
-    int read = 0;
-
-    while ((read = dev.read(buf, sizeof(buf))) > 0) {
-        int wrtn = newtempfile->write(buf, read);
-        if (read != wrtn) {
-            break;
-        }
-    }
-    if ((read != 0) || (newtempfile->size() == 0)) {
+    if (!Okular::copyBoundedDocument(&dev, newtempfile, Okular::expansionLimit(QFileInfo(path).size())) || newtempfile->size() == 0) {
         KMessageBox::detailedError(widget(),
                                    i18n("<qt><strong>File Error!</strong> Could not uncompress "
                                         "the file <nobr><strong>%1</strong></nobr>. "

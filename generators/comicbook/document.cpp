@@ -7,6 +7,7 @@
 #include "document.h"
 
 #include <QBuffer>
+#include <QFileInfo>
 #include <QImage>
 #include <QImageReader>
 #include <QScopedPointer>
@@ -22,6 +23,7 @@
 
 #include <memory>
 
+#include <core/documentlimits_p.h>
 #include <core/page.h>
 
 #include "debug_comicbook.h"
@@ -31,17 +33,30 @@
 
 using namespace ComicBook;
 
-static void imagesInArchive(const QString &prefix, const KArchiveDirectory *dir, QStringList *entries)
+static bool imagesInArchive(const QString &prefix, const KArchiveDirectory *dir, QStringList *entries, qint64 &bytes, int &count, qint64 limit, int depth = 0)
 {
-    const QStringList entryList = dir->entries();
-    for (const QString &file : entryList) {
+    if (!dir || depth > Okular::MaxDocumentNesting) {
+        return false;
+    }
+    for (const QString &file : dir->entries()) {
         const KArchiveEntry *e = dir->entry(file);
+        if (!e || ++count > Okular::MaxArchiveEntries) {
+            return false;
+        }
         if (e->isDirectory()) {
-            imagesInArchive(prefix + file + QLatin1Char('/'), static_cast<const KArchiveDirectory *>(e), entries);
+            if (!imagesInArchive(prefix + file + QLatin1Char('/'), static_cast<const KArchiveDirectory *>(e), entries, bytes, count, limit, depth + 1)) {
+                return false;
+            }
         } else if (e->isFile()) {
+            const qint64 size = static_cast<const KArchiveFile *>(e)->size();
+            if (size < 0 || size > limit - bytes) {
+                return false;
+            }
+            bytes += size;
             entries->append(prefix + file);
         }
     }
+    return true;
 }
 
 Document::Document()
@@ -172,7 +187,13 @@ bool Document::processArchive()
 
     mArchiveDir = directory;
 
-    imagesInArchive(QString(), mArchiveDir, &mEntries);
+    qint64 bytes = 0;
+    int count = 0;
+    if (!imagesInArchive(QString(), mArchiveDir, &mEntries, bytes, count, Okular::expansionLimit(QFileInfo(mArchive->fileName()).size()))) {
+        mEntries.clear();
+        mLastErrorString = i18n("Archive exceeds safe extraction limits");
+        return false;
+    }
 
     return true;
 }

@@ -22,14 +22,34 @@ class bigEndianByteReader
 public:
     /** Set this pointer to the location where the number resides which
         you want to read. */
-    quint8 *command_pointer;
+    quint8 *command_pointer = nullptr;
 
     /** This pointer marks the end of the memory area where bytes can be
         read. It should point to the first byte which CANNOT be
         read. The idea is to have a safety net which protects us against
         SEGFAULTs. This is also used in virtual fonts, where the macro
         does not have an EOP command at the end of the macro. */
-    quint8 *end_pointer;
+    quint8 *end_pointer = nullptr;
+    bool readFailed = false;
+
+    bool hasBytes(quint32 size)
+    {
+        if (!command_pointer || !end_pointer || command_pointer > end_pointer || size > quint64(end_pointer - command_pointer)) {
+            readFailed = true;
+            command_pointer = end_pointer;
+            return false;
+        }
+        return true;
+    }
+
+    bool skipBytes(quint32 size)
+    {
+        if (!hasBytes(size)) {
+            return false;
+        }
+        command_pointer += size;
+        return true;
+    }
 
     /** If command_pointer >= end_pointer, this method return EOP (=140)
         and exists. Otherwise, the method returns the unsigned byte

@@ -28,6 +28,7 @@
 
 // qt/kde/system includes
 #include <QApplication>
+#include <QBuffer>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -71,6 +72,7 @@
 #include "bookmarkmanager.h"
 #include "chooseenginedialog_p.h"
 #include "debug_p.h"
+#include "documentlimits_p.h"
 #include "form.h"
 #include "generator_p.h"
 #include "interfaces/configinterface.h"
@@ -85,6 +87,7 @@
 #include "script/event_p.h"
 #include "scripter.h"
 #include "settings_core.h"
+#include "sound.h"
 #include "sourcereference.h"
 #include "sourcereference_p.h"
 #include "texteditors_p.h"
@@ -4057,8 +4060,21 @@ private:
 
 void Document::processAction(const Action *action)
 {
+    processAction(action, true);
+}
+
+void Document::processAction(const Action *action, bool userInitiated)
+{
     if (!action) {
         return;
+    }
+
+    if (!userInitiated) {
+        const bool externalSound = action->actionType() == Action::Sound && static_cast<const SoundAction *>(action)->sound() && static_cast<const SoundAction *>(action)->sound()->soundType() == Sound::External;
+        if (action->actionType() == Action::Browse || action->actionType() == Action::Execute || externalSound) {
+            qCWarning(OkularCoreDebug) << "Blocked automatic external document action";
+            return;
+        }
     }
 
     // Don't execute next actions if the action itself caused the closing of the document
@@ -4195,6 +4211,11 @@ void Document::processAction(const Action *action)
 
     case Action::Browse: {
         const BrowseAction *browse = static_cast<const BrowseAction *>(action);
+        const QString scheme = browse->url().scheme().toLower();
+        if (!scheme.isEmpty() && scheme != QLatin1String("http") && scheme != QLatin1String("https") && scheme != QLatin1String("mailto") && scheme != QLatin1String("file") && !extractLilyPondSourceReference(browse->url())) {
+            Q_EMIT error(i18n("This document link uses an unsupported URL scheme."), -1);
+            break;
+        }
         // if the url is a mailto one, invoke mailer
         if (browse->url().scheme() == QLatin1String("mailto")) {
             QDesktopServices::openUrl(browse->url());
@@ -4217,6 +4238,17 @@ void Document::processAction(const Action *action)
                 realUrl = url;
             }
             if (realUrl.isValid()) {
+                if (realUrl.isLocalFile()) {
+                    if (!realUrl.host().isEmpty() || realUrl.toLocalFile().startsWith(QLatin1String("//"))) {
+                        Q_EMIT error(i18n("This document link points to a network share."), -1);
+                        break;
+                    }
+                    const QMimeType mime = QMimeDatabase().mimeTypeForUrl(realUrl);
+                    if (KIO::OpenUrlJob::isExecutableFile(realUrl, mime.name())) {
+                        Q_EMIT error(i18n("The document is trying to execute an external application and, for your safety, Okular does not allow that."), -1);
+                        break;
+                    }
+                }
                 auto *job = new KIO::OpenUrlJob(realUrl);
                 job->setUiDelegate(KIO::createDefaultJobUiDelegate(KJobUiDelegate::AutoHandlingEnabled, d->m_widget.data()));
                 job->start();
@@ -4269,7 +4301,7 @@ void Document::processAction(const Action *action)
     if (executeNextActionsHelper.shouldExecuteNextAction()) {
         const QList<Action *> nextActions = action->nextActions();
         for (const Action *a : nextActions) {
-            processAction(a);
+            processAction(a, userInitiated);
         }
     }
 }
@@ -5193,16 +5225,22 @@ ArchiveData *DocumentPrivate::unpackDocumentArchive(const QString &archivePath)
 
     const KArchiveDirectory *mainDir = okularArchive.directory();
 
-    // Check the archive doesn't have folders, we don't create them when saving the archive
-    // and folders mean paths and paths mean path traversal issues
-    const QStringList mainDirEntries = mainDir->entries();
-    for (const QString &entry : mainDirEntries) {
-        if (mainDir->entry(entry)->isDirectory()) {
-            qWarning() << "Warning: Found a directory inside" << archivePath << " - Okular does not create files like that so it is most probably forged.";
+    if (!mainDir || mainDir->entries().size() > MaxArchiveEntries) {
+        return nullptr;
+    }
+    qint64 expandedBytes = 0;
+    const qint64 limit = expansionLimit(QFileInfo(archivePath).size());
+    for (const QString &name : mainDir->entries()) {
+        const KArchiveEntry *entry = mainDir->entry(name);
+        if (!entry || !entry->isFile()) {
             return nullptr;
         }
+        const qint64 size = static_cast<const KArchiveFile *>(entry)->size();
+        if (size < 0 || size > limit - expandedBytes) {
+            return nullptr;
+        }
+        expandedBytes += size;
     }
-
     const KArchiveEntry *mainEntry = mainDir->entry(QStringLiteral("content.xml"));
     if (!mainEntry || !mainEntry->isFile()) {
         return nullptr;
@@ -5210,7 +5248,10 @@ ArchiveData *DocumentPrivate::unpackDocumentArchive(const QString &archivePath)
 
     std::unique_ptr<QIODevice> mainEntryDevice(static_cast<const KZipFileEntry *>(mainEntry)->createDevice());
     QDomDocument doc;
-    if (!doc.setContent(mainEntryDevice.get())) {
+    QByteArray manifest;
+    QBuffer manifestBuffer(&manifest);
+    manifestBuffer.open(QIODevice::WriteOnly);
+    if (!copyBoundedDocument(mainEntryDevice.get(), &manifestBuffer, MaxDocumentMetadataBytes) || !doc.setContent(manifest)) {
         return nullptr;
     }
     mainEntryDevice.reset();
@@ -5257,7 +5298,9 @@ ArchiveData *DocumentPrivate::unpackDocumentArchive(const QString &archivePath)
 
     {
         std::unique_ptr<QIODevice> docEntryDevice(static_cast<const KZipFileEntry *>(docEntry)->createDevice());
-        copyQIODevice(docEntryDevice.get(), &archiveData->document);
+        if (!copyBoundedDocument(docEntryDevice.get(), &archiveData->document, limit)) {
+            return nullptr;
+        }
         archiveData->document.close();
     }
 
@@ -5266,7 +5309,9 @@ ArchiveData *DocumentPrivate::unpackDocumentArchive(const QString &archivePath)
         std::unique_ptr<QIODevice> metadataEntryDevice(static_cast<const KZipFileEntry *>(metadataEntry)->createDevice());
         archiveData->metadataFile.setFileTemplate(QDir::tempPath() + QLatin1String("/okular_XXXXXX.xml"));
         if (archiveData->metadataFile.open()) {
-            copyQIODevice(metadataEntryDevice.get(), &archiveData->metadataFile);
+            if (!copyBoundedDocument(metadataEntryDevice.get(), &archiveData->metadataFile, MaxDocumentMetadataBytes)) {
+                return nullptr;
+            }
             archiveData->metadataFile.close();
         }
     }

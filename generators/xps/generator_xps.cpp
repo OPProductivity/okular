@@ -77,6 +77,9 @@ static QColor hexToRgba(const QByteArray &name)
 static QRectF stringToRectF(QStringView data)
 {
     const QList<QStringView> numbers = data.split(QLatin1Char(','));
+    if (numbers.size() != 4) {
+        return {};
+    }
     QPointF origin(numbers.at(0).toDouble(), numbers.at(1).toDouble());
     QSizeF size(numbers.at(2).toDouble(), numbers.at(3).toDouble());
     return QRectF(origin, size);
@@ -471,13 +474,16 @@ static QString absolutePath(const QString &path, const QString &location)
 static QByteArray readFileOrDirectoryParts(const KArchiveEntry *entry, QString *pathOfFile = nullptr)
 {
     QByteArray data;
+    if (!entry) {
+        return data;
+    }
     if (entry->isDirectory()) {
         const KArchiveDirectory *relDir = static_cast<const KArchiveDirectory *>(entry);
         QStringList entries = relDir->entries();
         std::sort(entries.begin(), entries.end());
         for (const QString &entryElem : std::as_const(entries)) {
             const KArchiveEntry *relSubEntry = relDir->entry(entryElem);
-            if (!relSubEntry->isFile()) {
+            if (!relSubEntry || !relSubEntry->isFile()) {
                 continue;
             }
 
@@ -485,6 +491,9 @@ static QByteArray readFileOrDirectoryParts(const KArchiveEntry *entry, QString *
             data.append(relSubFile->data());
         }
     } else {
+        if (!entry->isFile()) {
+            return data;
+        }
         const KZipFileEntry *relFile = static_cast<const KZipFileEntry *>(entry);
         data.append(relFile->data());
         if (pathOfFile) {
@@ -500,6 +509,9 @@ static QByteArray readFileOrDirectoryParts(const KArchiveEntry *entry, QString *
 static const KArchiveEntry *loadEntry(KZip *archive, const QString &fileName, Qt::CaseSensitivity cs)
 {
     // first attempt: loading the entry straight as requested
+    if (!archive || !archive->directory() || fileName.isEmpty()) {
+        return nullptr;
+    }
     const KArchiveEntry *entry = archive->directory()->entry(fileName);
     // in case sensitive mode, or if we actually found something, return what we found
     if (cs == Qt::CaseSensitive || entry) {
@@ -517,7 +529,7 @@ static const KArchiveEntry *loadEntry(KZip *archive, const QString &fileName, Qt
         entryName = fileName;
     }
     const KArchiveEntry *newEntry = archive->directory()->entry(path);
-    if (newEntry->isDirectory()) {
+    if (newEntry && newEntry->isDirectory()) {
         const KArchiveDirectory *relDir = static_cast<const KArchiveDirectory *>(newEntry);
         QStringList relEntries = relDir->entries();
         std::sort(relEntries.begin(), relEntries.end());
@@ -1296,7 +1308,7 @@ XpsPage::XpsPage(XpsFile *file, const QString &fileName)
 
     // qCWarning(OkularXpsDebug) << "page file name: " << fileName;
 
-    const KZipFileEntry *pageFile = static_cast<const KZipFileEntry *>(m_file->xpsArchive()->directory()->entry(fileName));
+    const KArchiveEntry *pageFile = m_file->xpsArchive()->directory()->entry(fileName);
 
     QXmlStreamReader xml;
     xml.addData(readFileOrDirectoryParts(pageFile));
@@ -1345,7 +1357,7 @@ bool XpsPage::renderToImage(QImage *p)
 bool XpsPage::renderToPainter(QPainter *painter)
 {
     painter->setWorldTransform(QTransform().scale((qreal)painter->device()->width() / size().width(), (qreal)painter->device()->height() / size().height()));
-    const KZipFileEntry *pageFile = static_cast<const KZipFileEntry *>(m_file->xpsArchive()->directory()->entry(m_fileName));
+    const KArchiveEntry *pageFile = m_file->xpsArchive()->directory()->entry(m_fileName);
     QByteArray data = readFileOrDirectoryParts(pageFile);
     QXmlStreamReader reader(data);
 
@@ -1466,7 +1478,7 @@ QImage XpsPage::loadImageFromFile(const QString &fileName)
 {
     // qCWarning(OkularXpsDebug) << "image file name: " << fileName;
 
-    if (fileName.at(0) == QLatin1Char('{')) {
+    if (fileName.isEmpty() || fileName.at(0) == QLatin1Char('{')) {
         // for example: '{ColorConvertedBitmap /Resources/bla.wdp /Resources/foobar.icc}'
         // TODO: properly read a ColorConvertedBitmap
         return QImage();
@@ -1515,7 +1527,7 @@ Okular::TextPage *XpsPage::textPage()
 
     Okular::TextPage *textPage = new Okular::TextPage();
 
-    const KZipFileEntry *pageFile = static_cast<const KZipFileEntry *>(m_file->xpsArchive()->directory()->entry(m_fileName));
+    const KArchiveEntry *pageFile = m_file->xpsArchive()->directory()->entry(m_fileName);
     QXmlStreamReader xml;
     xml.addData(readFileOrDirectoryParts(pageFile));
 
@@ -1609,10 +1621,10 @@ void XpsDocument::parseDocumentStructure(const QString &documentStructureFileNam
     qCWarning(OkularXpsDebug) << "document structure file name: " << documentStructureFileName;
     m_haveDocumentStructure = false;
 
-    const KZipFileEntry *documentStructureFile = static_cast<const KZipFileEntry *>(m_file->xpsArchive()->directory()->entry(documentStructureFileName));
+    const KArchiveEntry *documentStructureFile = m_file->xpsArchive()->directory()->entry(documentStructureFileName);
 
     QXmlStreamReader xml;
-    xml.addData(documentStructureFile->data());
+    xml.addData(readFileOrDirectoryParts(documentStructureFile));
 
     while (!xml.atEnd()) {
         xml.readNext();
@@ -1725,7 +1737,7 @@ XpsDocument::XpsDocument(XpsFile *file, const QString &fileName)
     const int slashPosition = fileName.lastIndexOf(QLatin1Char('/'));
     const QString documentRelationshipFile = absolutePath(documentEntryPath, QStringLiteral("_rels/") + fileName.mid(slashPosition + 1) + QStringLiteral(".rels"));
 
-    const KZipFileEntry *relFile = static_cast<const KZipFileEntry *>(file->xpsArchive()->directory()->entry(documentRelationshipFile));
+    const KArchiveEntry *relFile = file->xpsArchive()->directory()->entry(documentRelationshipFile);
 
     QString documentStructureFile;
     if (relFile) {
@@ -1855,7 +1867,14 @@ bool XpsFile::loadDocument(const QString &filename)
             if (fixedRepXml.name() == QStringLiteral("DocumentReference")) {
                 const QString source = fixedRepXml.attributes().value(QStringLiteral("Source")).toString();
                 auto doc = std::make_unique<XpsDocument>(this, absolutePath(fixedRepresentationFilePath, source));
+                if (doc->numPages() == 0) {
+                    return false;
+                }
                 for (int lv = 0; lv < doc->numPages(); ++lv) {
+                    const QSizeF size = doc->page(lv)->size();
+                    if (size.width() <= 0 || size.height() <= 0 || !qIsFinite(size.width()) || !qIsFinite(size.height())) {
+                        return false;
+                    }
                     // our own copy of the pages list
                     m_pages.append(doc->page(lv));
                 }
@@ -1882,10 +1901,10 @@ Okular::DocumentInfo XpsFile::generateDocumentInfo() const
     docInfo.set(Okular::DocumentInfo::MimeType, QStringLiteral("application/oxps"));
 
     if (!m_corePropertiesFileName.isEmpty()) {
-        const KZipFileEntry *corepropsFile = static_cast<const KZipFileEntry *>(m_xpsArchive->directory()->entry(m_corePropertiesFileName));
+        const KArchiveEntry *corepropsFile = m_xpsArchive->directory()->entry(m_corePropertiesFileName);
 
         QXmlStreamReader xml;
-        xml.addData(corepropsFile->data());
+        xml.addData(readFileOrDirectoryParts(corepropsFile));
         while (!xml.atEnd()) {
             xml.readNext();
             if (xml.isEndElement()) {

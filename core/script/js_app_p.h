@@ -63,7 +63,7 @@ public:
 
 private:
     QJSValue wrapTimer(QTimer *timer) const;
-    static bool createPopUpMenuTree(int depth, QMenu *rootMenu, const QJSValue &arguments);
+    static bool createPopUpMenuTree(int depth, QMenu *rootMenu, const QJSValue &arguments, int &remainingItems);
 
     DocumentPrivate *m_doc = nullptr;
     QTimer *m_watchdogTimer = nullptr;

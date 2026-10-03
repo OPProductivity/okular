@@ -6,6 +6,7 @@
 */
 
 #include "js_field_p.h"
+#include <QSet>
 
 #include <QDebug>
 #include <QHash>
@@ -373,12 +374,25 @@ void JSField::setCurrentValueIndices(const QJSValue &value)
     if (m_field->type() == FormField::FormChoice) {
         FormFieldChoice *choice = static_cast<FormFieldChoice *>(m_field);
         QList<int> tempChoiceList;
+        const int choiceCount = choice->choices().size();
         if (value.isArray()) {
-            for (quint32 i = 0; i < value.property(QStringLiteral("length")).toUInt(); i++) {
-                tempChoiceList << value.property(i).toInt();
+            const quint32 length = value.property(QStringLiteral("length")).toUInt();
+            if (length > 10000) {
+                return;
+            }
+            QSet<int> seen;
+            for (quint32 i = 0; i < length; ++i) {
+                const int index = value.property(i).toInt();
+                if (index >= 0 && index < choiceCount && !seen.contains(index)) {
+                    seen.insert(index);
+                    tempChoiceList << index;
+                }
             }
         } else if (value.isNumber()) {
-            tempChoiceList << value.toInt();
+            const int index = value.toInt();
+            if (index >= 0 && index < choiceCount) {
+                tempChoiceList << index;
+            }
         }
         const QList<int> choiceList = tempChoiceList;
         choice->setCurrentChoices(choiceList);
@@ -447,6 +461,9 @@ QJSValue JSField::getItemAt(int nIdx, bool bExportValue)
     QJSValue result(QJSValue::UndefinedValue);
     if (m_field->type() == FormField::FormChoice) {
         const FormFieldChoice *choice = static_cast<const FormFieldChoice *>(m_field);
+        if (choice->choices().isEmpty()) {
+            return result;
+        }
         if (bExportValue) {
             if (nIdx < 0 || nIdx >= choice->choices().size()) {
                 result = choice->exportValueForChoice(choice->choices().at(choice->choices().size() - 1));

@@ -172,3 +172,18 @@ ecm_add_test(toggleactionmenutest.cpp ../part/toggleactionmenu.cpp
     TEST_NAME "toggleactionmenutest"
     LINK_LIBRARIES Qt6::Test KF6::WidgetsAddons
 )
+
+ecm_add_test(securitybudgettest.cpp
+    TEST_NAME "securitybudgettest"
+    LINK_LIBRARIES Qt6::Test
+)
+
+if(Poppler_Qt6_FOUND AND TARGET okularGenerator_fb AND TARGET okularGenerator_epub AND TARGET okularGenerator_xps)
+    ecm_add_test(securitydocumenttest.cpp ../generators/fictionbook/document.cpp ../generators/fictionbook/converter.cpp
+        TEST_NAME "securitydocumenttest"
+        LINK_LIBRARIES Qt6::Test okularcore KF6::Archive KF6::I18n Poppler::Qt6
+    )
+    add_dependencies(securitydocumenttest okularGenerator_poppler okularGenerator_fb okularGenerator_epub okularGenerator_xps)
+    set_tests_properties(securitydocumenttest PROPERTIES TIMEOUT 30)
+endif()
+set_tests_properties(securitybudgettest PROPERTIES TIMEOUT 30)

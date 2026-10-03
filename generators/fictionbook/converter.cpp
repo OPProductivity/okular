@@ -15,6 +15,7 @@
 #include <QTextFrame>
 #include <QTextTable>
 #include <QUrl>
+#include <memory>
 
 #include <KLocalizedString>
 
@@ -70,7 +71,8 @@ QTextDocument *Converter::convert(const QString &fileName)
         return nullptr;
     }
 
-    mTextDocument = new QTextDocument;
+    auto textDocument = std::make_unique<QTextDocument>();
+    mTextDocument = textDocument.get();
     mCursor = new QTextCursor(mTextDocument);
     mSectionCounter = 0;
     mLocalLinks.clear();
@@ -232,7 +234,7 @@ QTextDocument *Converter::convert(const QString &fileName)
 
     delete mCursor;
 
-    return mTextDocument;
+    return textDocument.release();
 }
 
 bool Converter::convertBody(const QDomElement &element)
@@ -1032,6 +1034,10 @@ bool Converter::convertTable(const QDomElement &element)
     while (!child.isNull()) {
         if (child.tagName() == QLatin1String("tr")) {
             if (table) {
+                if (qint64(table->rows() + 1) * table->columns() > 100000) {
+                    Q_EMIT error(i18n("Table exceeds safe conversion limits"), -1);
+                    return false;
+                }
                 table->appendRows(1);
             } else {
                 QTextTableFormat tableFormat;
@@ -1091,6 +1097,10 @@ bool Converter::convertTableCellHelper(const QDomElement &element, QTextTable &t
     int row = table.rows() - 1;
 
     int colspan = qMax(element.attribute(QStringLiteral("colspan")).toInt(), 1);
+    if (colspan > 1024 || column > 1024 - colspan || qint64(table.rows()) * qMax(table.columns(), column + colspan) > 100000) {
+        Q_EMIT error(i18n("Table exceeds safe conversion limits"), -1);
+        return false;
+    }
     // TODO: rowspan
     // int rowspan = qMax(element.attribute(QStringLiteral("rowspan")).toInt(), 1);
 

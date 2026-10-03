@@ -200,7 +200,7 @@ QJSValue JSDocument::getNthFieldName(int nIndex) const
     for (const Page *pIt : std::as_const(m_doc->m_pagesVector)) {
         const QList<Okular::FormField *> pageFields = pIt->formFields();
 
-        if (nIndex < pageFields.size()) {
+        if (nIndex >= 0 && nIndex < pageFields.size()) {
             const Okular::FormField *form = pageFields[nIndex];
 
             return form->fullyQualifiedName();
@@ -215,6 +215,10 @@ QJSValue JSDocument::getNthFieldName(int nIndex) const
 QJSValue JSDocument::getOCGs([[maybe_unused]] int nPage) const
 {
     QAbstractItemModel *model = m_doc->m_parent->layersModel();
+
+    if (!model) {
+        return QJSValue(QJSValue::NullValue);
+    }
 
     QJSValue array = qjsEngine(this)->newArray(model->rowCount());
 

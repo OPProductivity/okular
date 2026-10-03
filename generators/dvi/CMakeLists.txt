@@ -58,3 +58,15 @@ if (BUILD_MOBILE)
   install( PROGRAMS org.kde.mobile.okular_dvi.desktop DESTINATION ${KDE_INSTALL_APPDIR} )
 endif()
 install( FILES org.kde.okular-dvi.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR} )
+
+if(BUILD_TESTING)
+    set(dvi_security_sources ${okularGenerator_dvi_SRCS})
+    list(REMOVE_ITEM dvi_security_sources generator_dvi.cpp)
+    ecm_add_test(autotests/dvisecuritytest.cpp ${dvi_security_sources}
+        TEST_NAME "dvisecuritytest"
+        LINK_LIBRARIES Qt6::Test okularcore KF6::I18n
+    )
+    if(FREETYPE_FOUND)
+        target_link_libraries(dvisecuritytest Freetype::Freetype)
+    endif()
+endif()

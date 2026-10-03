@@ -286,11 +286,14 @@ void JSApp::goForward()
 // app.setInterval()
 QJSValue JSApp::setInterval(const QString &cExpr, int nMilliseconds)
 {
-    QTimer *timer = new QTimer();
+    if (g_timerCache->size() >= 128 || findChildren<QTimer *>(QString(), Qt::FindDirectChildrenOnly).size() >= 32) {
+        return QJSValue(QJSValue::UndefinedValue);
+    }
+    QTimer *timer = new QTimer(this);
 
     QObject::connect(timer, &QTimer::timeout, m_doc->m_parent, [=, this]() { m_doc->executeScript(cExpr); });
 
-    timer->start(nMilliseconds);
+    timer->start(qMax(nMilliseconds, 10));
 
     return JSApp::wrapTimer(timer);
 }
@@ -300,7 +303,7 @@ void JSApp::clearInterval(const QJSValue &oInterval)
 {
     const int timerId = oInterval.property(OKULAR_TIMERID).toInt();
     QTimer *timer = g_timerCache->value(timerId);
-    if (timer != nullptr) {
+    if (timer != nullptr && timer->parent() == this) {
         timer->stop();
         g_timerCache->remove(timerId);
         delete timer;
@@ -310,13 +313,19 @@ void JSApp::clearInterval(const QJSValue &oInterval)
 // app.setTimeOut()
 QJSValue JSApp::setTimeOut(const QString &cExpr, int nMilliseconds)
 {
-    QTimer *timer = new QTimer();
+    if (g_timerCache->size() >= 128 || findChildren<QTimer *>(QString(), Qt::FindDirectChildrenOnly).size() >= 32) {
+        return QJSValue(QJSValue::UndefinedValue);
+    }
+    QTimer *timer = new QTimer(this);
     timer->setSingleShot(true);
 
-    QObject::connect(timer, &QTimer::timeout, m_doc->m_parent, [=, this]() { m_doc->executeScript(cExpr); });
-
-    timer->start(nMilliseconds);
-
+    timer->start(qMax(nMilliseconds, 0));
+    const int id = timer->timerId();
+    QObject::connect(timer, &QTimer::timeout, m_doc->m_parent, [this, timer, id, cExpr]() {
+        g_timerCache->remove(id);
+        timer->deleteLater();
+        m_doc->executeScript(cExpr);
+    });
     return JSApp::wrapTimer(timer);
 }
 
@@ -326,7 +335,7 @@ void JSApp::clearTimeOut(const QJSValue &oTime)
     const int timerId = oTime.property(OKULAR_TIMERID).toInt();
     QTimer *timer = g_timerCache->value(timerId);
 
-    if (timer != nullptr) {
+    if (timer != nullptr && timer->parent() == this) {
         timer->stop();
         g_timerCache->remove(timerId);
         delete timer;
@@ -335,16 +344,21 @@ void JSApp::clearTimeOut(const QJSValue &oTime)
 
 // app.popUpMenuEx()
 
-bool JSApp::createPopUpMenuTree(int depth, QMenu *rootMenu, const QJSValue &arguments)
+bool JSApp::createPopUpMenuTree(int depth, QMenu *rootMenu, const QJSValue &arguments, int &remainingItems)
 {
-    const int nArgs = arguments.property(QStringLiteral("length")).toInt();
+    const quint32 nArgs = arguments.property(QStringLiteral("length")).toUInt();
 
     // If no menu to add or if we got too deep in recursion
+    if (nArgs > quint32(remainingItems)) {
+        remainingItems = -1;
+        return false;
+    }
     if (nArgs == 0 || depth > 20) {
         return false;
     }
 
-    for (int i = 0; i < nArgs; ++i) {
+    remainingItems -= nArgs;
+    for (quint32 i = 0; i < nArgs; ++i) {
         const QJSValue item = arguments.property(i);
         const QString cName = item.property(QStringLiteral("cName")).toString();
         const QJSValue cResultProperty = item.property(QStringLiteral("cResult"));
@@ -352,7 +366,10 @@ bool JSApp::createPopUpMenuTree(int depth, QMenu *rootMenu, const QJSValue &argu
 
         if (oSubMenu.isArray()) {
             QMenu *subMenu = rootMenu->addMenu(cName);
-            createPopUpMenuTree(depth + 1, subMenu, oSubMenu);
+            createPopUpMenuTree(depth + 1, subMenu, oSubMenu, remainingItems);
+            if (remainingItems < 0) {
+                return false;
+            }
         } else {
             QAction *a = rootMenu->addAction(cName);
             if (cResultProperty.isUndefined()) {
@@ -373,7 +390,8 @@ QJSValue JSApp::okular_popUpMenuEx(const QJSValue &arguments)
     // Object name is used for tests.
     m.setObjectName(QStringLiteral("popUpMenuEx"));
 
-    if (!createPopUpMenuTree(0, &m, arguments)) {
+    int remainingItems = 1000;
+    if (!createPopUpMenuTree(0, &m, arguments, remainingItems)) {
         return {};
     }
 
@@ -388,7 +406,16 @@ JSApp::JSApp(DocumentPrivate *doc, QTimer *watchdogTimer, QObject *parent)
 {
 }
 
-JSApp::~JSApp() = default;
+JSApp::~JSApp()
+{
+    for (auto it = g_timerCache->begin(); it != g_timerCache->end();) {
+        if (it.value()->parent() == this) {
+            it = g_timerCache->erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 QJSValue JSApp::wrapTimer(QTimer *timer) const
 {

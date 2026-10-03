@@ -6,12 +6,15 @@
 
 #include "unrar.h"
 
-#include <QEventLoop>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QGlobalStatic>
 #include <QLoggingCategory>
+#include <QStorageInfo>
 #include <QTemporaryDir>
+#include <core/documentlimits_p.h>
+#include <core/processbudget_p.h>
 
 #include "debug_comicbook.h"
 
@@ -37,11 +40,18 @@ static UnrarFlavour *detectUnrar(const QString &unrarPath, const QString &versio
 {
     UnrarFlavour *kind = nullptr;
     QProcess proc;
-    proc.start(unrarPath, {versionCommand});
-    bool ok = proc.waitForFinished(-1);
-    Q_UNUSED(ok)
+    if (unrarPath.isEmpty()) {
+        return nullptr;
+    }
+    proc.setProgram(unrarPath);
+    proc.setArguments({versionCommand});
+    QByteArray stdoutData;
+    QByteArray stderrData;
+    if (Okular::runBoundedHelper(proc, stdoutData, stderrData, 5000) < 0) {
+        return nullptr;
+    }
     static const QRegularExpression regex(QStringLiteral("[\r\n]"));
-    const QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+    const QString output = QString::fromLocal8Bit(stdoutData);
     const QList<QStringView> lines = QStringView(output).split(regex, Qt::SkipEmptyParts);
     if (!lines.isEmpty()) {
         if (lines.first().startsWith(QLatin1String("UNRAR "))) {
@@ -102,8 +112,6 @@ UnrarHelper::~UnrarHelper()
 
 Unrar::Unrar()
     : QObject(nullptr)
-    , mProcess(nullptr)
-    , mLoop(nullptr)
     , mTempDir(nullptr)
 {
 }
@@ -122,6 +130,9 @@ bool Unrar::open(const QString &fileName)
     delete mTempDir;
     mTempDir = new QTemporaryDir();
 
+    if (!mTempDir->isValid()) {
+        return false;
+    }
     mFileName = fileName;
 
     /**
@@ -131,9 +142,12 @@ bool Unrar::open(const QString &fileName)
     mStdErrData.clear();
 
     const int ret = startSyncProcess(helper->kind->processOpenArchiveArgs(mFileName, mTempDir->path()));
-    bool ok = ret == 0;
-
-    return ok;
+    if (ret != 0) {
+        delete mTempDir;
+        mTempDir = nullptr;
+        return false;
+    }
+    return true;
 }
 
 QStringList Unrar::list()
@@ -145,14 +159,16 @@ QStringList Unrar::list()
         return QStringList();
     }
 
-    startSyncProcess(helper->kind->processListArgs(mFileName));
+    if (!mTempDir || startSyncProcess(helper->kind->processListArgs(mFileName)) != 0) {
+        return {};
+    }
 
     static const QRegularExpression regex(QStringLiteral("[\r\n]"));
     QStringList listFiles = helper->kind->processListing(QString::fromLocal8Bit(mStdOutData).split(regex, Qt::SkipEmptyParts));
 
     QString subDir;
 
-    if (listFiles.last().endsWith(QLatin1Char('/')) && helper->kind->name() == QLatin1String("unar")) {
+    if (!listFiles.isEmpty() && listFiles.last().endsWith(QLatin1Char('/')) && helper->kind->name() == QLatin1String("unar")) {
         // Subfolder detected. The unarchiver is unable to extract all files into a single folder
         subDir = listFiles.last();
         listFiles.removeLast();
@@ -216,69 +232,40 @@ bool Unrar::isSuitableVersionAvailable()
     }
 }
 
-void Unrar::readFromStdout()
-{
-    if (!mProcess) {
-        return;
-    }
-
-    mStdOutData += mProcess->readAllStandardOutput();
-}
-
-void Unrar::readFromStderr()
-{
-    if (!mProcess) {
-        return;
-    }
-
-    mStdErrData += mProcess->readAllStandardError();
-    if (!mStdErrData.isEmpty()) {
-        mProcess->kill();
-        return;
-    }
-}
-
-void Unrar::finished(int exitCode, QProcess::ExitStatus exitStatus)
-{
-    Q_UNUSED(exitCode)
-    if (mLoop) {
-        mLoop->exit(exitStatus == QProcess::CrashExit ? 1 : 0);
-    }
-}
-
 int Unrar::startSyncProcess(const ProcessArgs &args)
 {
-    int ret = 0;
-
-    mProcess = new QProcess(this);
-    connect(mProcess, &QProcess::readyReadStandardOutput, this, &Unrar::readFromStdout);
-    connect(mProcess, &QProcess::readyReadStandardError, this, &Unrar::readFromStderr);
-    connect(mProcess, &QProcess::finished, this, &Unrar::finished);
-
-    if (helper->kind->name() == QLatin1String("unar") && args.useLsar) {
-        mProcess->start(helper->lsarPath, args.appArgs, QIODevice::ReadWrite | QIODevice::Unbuffered);
-    } else {
-        mProcess->start(helper->unrarPath, args.appArgs, QIODevice::ReadWrite | QIODevice::Unbuffered);
-    }
-
-    QEventLoop loop;
-    mLoop = &loop;
-    ret = loop.exec(QEventLoop::WaitForMoreEvents | QEventLoop::ExcludeUserInputEvents);
-    mLoop = nullptr;
-
-    delete mProcess;
-    mProcess = nullptr;
-
-    return ret;
-}
-
-void Unrar::writeToProcess(const QByteArray &data)
-{
-    if (!mProcess || data.isNull()) {
-        return;
-    }
-
-    mProcess->write(data);
+    QProcess process;
+    process.setProgram(helper->kind->name() == QLatin1String("unar") && args.useLsar ? helper->lsarPath : helper->unrarPath);
+    process.setArguments(args.appArgs);
+    QElapsedTimer monitorClock;
+    monitorClock.start();
+    auto withinBudget = [&]() {
+        if (!mTempDir) {
+            return true;
+        }
+        // Do not rescan the output directory for every pipe chunk.
+        if (monitorClock.elapsed() < 250 && process.state() != QProcess::NotRunning) {
+            return true;
+        }
+        monitorClock.restart();
+        qint64 bytes = 0;
+        int entries = 0;
+        const qint64 limit = Okular::expansionLimit(QFileInfo(mFileName).size());
+        QDirIterator it(mTempDir->path(), QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            const QFileInfo info = it.fileInfo();
+            if (++entries > Okular::MaxArchiveEntries || info.isSymLink() || info.size() > limit - bytes) {
+                return false;
+            }
+            if (info.isFile()) {
+                bytes += info.size();
+            }
+        }
+        const QStorageInfo storage(mTempDir->path());
+        return !storage.isValid() || storage.bytesAvailable() > 16LL * 1024 * 1024;
+    };
+    return Okular::runBoundedHelper(process, mStdOutData, mStdErrData, Okular::MaxDocumentWorkMs, withinBudget);
 }
 
 #include "moc_unrar.cpp"

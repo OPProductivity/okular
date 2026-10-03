@@ -417,7 +417,7 @@ void PresentationWidget::notifyCurrentPageChanged(int previousPage, int currentP
 
         // perform the page closing action, if any
         if (m_document->page(previousPage)->pageAction(Okular::Page::Closing)) {
-            m_document->processAction(m_document->page(previousPage)->pageAction(Okular::Page::Closing));
+            m_document->processAction(m_document->page(previousPage)->pageAction(Okular::Page::Closing), false);
         }
 
         // perform the additional actions of the page's annotations, if any
@@ -432,7 +432,7 @@ void PresentationWidget::notifyCurrentPageChanged(int previousPage, int currentP
             }
 
             if (action) {
-                m_document->processAction(action);
+                m_document->processAction(action, false);
             }
         }
     }
@@ -461,7 +461,7 @@ void PresentationWidget::notifyCurrentPageChanged(int previousPage, int currentP
 
         // perform the page opening action, if any
         if (m_document->page(m_frameIndex)->pageAction(Okular::Page::Opening)) {
-            m_document->processAction(m_document->page(m_frameIndex)->pageAction(Okular::Page::Opening));
+            m_document->processAction(m_document->page(m_frameIndex)->pageAction(Okular::Page::Opening), false);
         }
 
         // perform the additional actions of the page's annotations, if any
@@ -476,7 +476,7 @@ void PresentationWidget::notifyCurrentPageChanged(int previousPage, int currentP
             }
 
             if (action) {
-                m_document->processAction(action);
+                m_document->processAction(action, false);
             }
         }
 

@@ -80,7 +80,7 @@ void Converter::_handle_anchors(const QTextBlock &start, const QString &name)
 
                 // remove ./ or ../
                 // making it easier to compare, with links
-                while (!hrefString.isNull() && (hrefString.at(0) == QLatin1Char('.') || hrefString.at(0) == QLatin1Char('/'))) {
+                while (!hrefString.isEmpty() && (hrefString.at(0) == QLatin1Char('.') || hrefString.at(0) == QLatin1Char('/'))) {
                     hrefString.remove(0, 1);
                 }
 
@@ -220,13 +220,15 @@ QTextDocument *Converter::convert(const QString &fileName)
         if (dom.setContent(htmlContent)) {
             QDomNodeList svgs = dom.elementsByTagName(QStringLiteral("svg"));
             if (!svgs.isEmpty()) {
-                QList<QDomNode> imgNodes;
-                for (int i = 0; i < svgs.length(); ++i) {
-                    QDomNodeList images = svgs.at(i).toElement().elementsByTagName(QStringLiteral("image"));
+                while (!svgs.isEmpty()) {
+                    const QDomNode svg = svgs.at(0);
+                    const QDomNodeList images = svg.toElement().elementsByTagName(QStringLiteral("image"));
+                    QDomDocumentFragment replacements = dom.createDocumentFragment();
                     for (int j = 0; j < images.length(); ++j) {
-                        QString lnk = images.at(i).toElement().attribute(QStringLiteral("xlink:href"));
-                        int ht = images.at(i).toElement().attribute(QStringLiteral("height")).toInt();
-                        int wd = images.at(i).toElement().attribute(QStringLiteral("width")).toInt();
+                        const QDomElement image = images.at(j).toElement();
+                        const QString lnk = image.attribute(QStringLiteral("xlink:href"));
+                        int ht = image.attribute(QStringLiteral("height")).toInt();
+                        int wd = image.attribute(QStringLiteral("width")).toInt();
                         QImage img = mTextDocument->loadResource(QTextDocument::ImageResource, QUrl(lnk)).value<QImage>();
                         if (ht == 0) {
                             ht = img.height();
@@ -234,19 +236,20 @@ QTextDocument *Converter::convert(const QString &fileName)
                         if (wd == 0) {
                             wd = img.width();
                         }
-                        if (ht > maxHeight) {
-                            ht = maxHeight;
-                        }
-                        if (wd > maxWidth) {
-                            wd = maxWidth;
-                        }
+                        ht = qBound(0, ht, maxHeight);
+                        wd = qBound(0, wd, maxWidth);
                         mTextDocument->addResource(QTextDocument::ImageResource, QUrl(lnk), img);
-                        QDomDocument newDoc;
-                        newDoc.setContent(QStringLiteral("<img src=\"%1\" height=\"%2\" width=\"%3\" />").arg(lnk).arg(ht).arg(wd));
-                        imgNodes.append(newDoc.documentElement());
+                        QDomElement replacement = dom.createElement(QStringLiteral("img"));
+                        replacement.setAttribute(QStringLiteral("src"), lnk);
+                        replacement.setAttribute(QStringLiteral("height"), ht);
+                        replacement.setAttribute(QStringLiteral("width"), wd);
+                        replacements.appendChild(replacement);
                     }
-                    for (const QDomNode &nd : std::as_const(imgNodes)) {
-                        svgs.at(i).parentNode().replaceChild(nd, svgs.at(i));
+                    // Replacing an empty SVG must also advance the live list.
+                    if (replacements.hasChildNodes()) {
+                        svg.parentNode().replaceChild(replacements, svg);
+                    } else {
+                        svg.parentNode().removeChild(svg);
                     }
                 }
             }
@@ -269,6 +272,10 @@ QTextDocument *Converter::convert(const QString &fileName)
                     QDomDocument tempDoc;
                     tempDoc.setContent(QStringLiteral("<pre>&lt;video&gt;&lt;/video&gt;</pre>"));
                     videoTags.at(0).parentNode().replaceChild(tempDoc.documentElement(), videoTags.at(0));
+                } else {
+                    // Unsupported video must still make progress through the live node list.
+                    const QDomNode video = videoTags.at(0);
+                    video.parentNode().removeChild(video);
                 }
             }
 
@@ -304,7 +311,7 @@ QTextDocument *Converter::convert(const QString &fileName)
         QTextCursor csr(before); // a temporary cursor pointing at the begin of the last inserted block
         int index = 0;
 
-        while (!movieAnnots.isEmpty() && !(csr = mTextDocument->find(QStringLiteral("<video></video>"), csr)).isNull()) {
+        while (index < movieAnnots.size() && !(csr = mTextDocument->find(QStringLiteral("<video></video>"), csr)).isNull()) {
             const int posStart = csr.position();
             const QPoint startPoint = calculateXYPosition(mTextDocument, posStart);
             QImage img(QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("okular/pics/okular-epub-movie.png")));
@@ -320,7 +327,7 @@ QTextDocument *Converter::convert(const QString &fileName)
         csr = QTextCursor(before);
         index = 0;
         const QString keyToSearch(QStringLiteral("<audio></audio>"));
-        while (!soundActions.isEmpty() && !(csr = mTextDocument->find(keyToSearch, csr)).isNull()) {
+        while (index < soundActions.size() && !(csr = mTextDocument->find(keyToSearch, csr)).isNull()) {
             const int posStart = csr.position() - keyToSearch.size();
             const QImage img(QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("okular/pics/okular-epub-sound-icon.png")));
             csr.insertImage(img);

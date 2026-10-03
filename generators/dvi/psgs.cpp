@@ -17,8 +17,11 @@
 
 #include <KLocalizedString>
 #include <KProcess>
+#include <QFileInfo>
 #include <QTemporaryFile>
 #include <QUrl>
+#include <core/documentlimits_p.h>
+#include <core/processbudget_p.h>
 
 #include <QDir>
 #include <QLoggingCategory>
@@ -254,9 +257,12 @@ void ghostscript_interface::gs_generate_graphics_file(const quint16 page, const 
 #endif
 
     proc << argus;
-    int res = proc.execute();
+    QByteArray output;
+    QByteArray errors;
+    const int res = Okular::runBoundedHelper(proc, output, errors, 120000, [&]() { return QFileInfo(filename).size() <= Okular::MaxExpandedDocumentBytes; });
 
     if (res) {
+        QFile::remove(filename);
         // Starting ghostscript did not work.
         // TODO: Issue error message, switch PS support off.
         qCCritical(OkularDviDebug) << "ghostview could not be started";
@@ -270,9 +276,9 @@ void ghostscript_interface::gs_generate_graphics_file(const quint16 page, const 
 
         // No. Check is the reason is that the device is not compiled into
         // ghostscript. If so, try again with another device.
-        proc.setReadChannel(QProcess::StandardOutput);
-        while (proc.canReadLine()) {
-            QString GSoutput = QString::fromLocal8Bit(proc.readLine());
+        const QList<QByteArray> lines = output.split('\n');
+        for (const QByteArray &line : lines) {
+            QString GSoutput = QString::fromLocal8Bit(line);
             if (GSoutput.contains(QStringLiteral("Unknown device"))) {
                 qCDebug(OkularDviDebug) << QString::fromLatin1(
                                                "The version of ghostview installed on this computer does not support "

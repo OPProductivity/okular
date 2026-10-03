@@ -105,7 +105,9 @@ QStringList UnarFlavour::processListing(const QStringList &data)
 {
     QStringList newdata = data;
 
-    newdata.removeFirst();
+    if (!newdata.isEmpty()) {
+        newdata.removeFirst();
+    }
 
     return newdata;
 }

@@ -19,6 +19,7 @@
 #if HAVE_MULTIMEDIA
 #include <QMediaPlayer>
 #endif
+#include <QMessageBox>
 #include <QRandomGenerator>
 
 // local includes
@@ -55,6 +56,7 @@ public:
     QHash<int, PlayData *> m_playing;
     QList<QBuffer *> m_buffers; // Buffers to delete when we stop playings.
     QUrl m_currentDocument;
+    quint64 m_documentGeneration = 0;
     AudioPlayer::State m_state;
 };
 }
@@ -251,6 +253,22 @@ void AudioPlayer::playSound(const Sound *sound, const SoundAction *linksound)
         return;
     }
 
+    if (sound->soundType() == Sound::External) {
+        const quint64 documentGeneration = d->m_documentGeneration;
+        const QUrl destination = QUrl::fromUserInput(sound->url(), d->m_currentDocument.adjusted(QUrl::RemoveFilename).toLocalFile());
+        const QString scheme = destination.scheme().toLower();
+        if (!destination.isValid() || (scheme != QLatin1String("https") && scheme != QLatin1String("http") && scheme != QLatin1String("file")) ||
+            (destination.isLocalFile() && (!destination.host().isEmpty() || destination.toLocalFile().startsWith(QLatin1String("//"))))) {
+            return;
+        }
+        QMessageBox consent(QMessageBox::Question, i18n("External Audio"), i18n("This document wants to load audio from:\n%1\nAllow this request?", destination.toDisplayString()), QMessageBox::Yes | QMessageBox::No);
+        consent.setTextFormat(Qt::PlainText);
+        consent.setDefaultButton(QMessageBox::No);
+        if (consent.exec() != QMessageBox::Yes || documentGeneration != d->m_documentGeneration) {
+            return;
+        }
+    }
+
     qCDebug(OkularCoreDebug);
     SoundInfo si(sound, linksound);
 
@@ -275,12 +293,14 @@ AudioPlayer::State AudioPlayer::state() const
 
 void AudioPlayer::resetDocument()
 {
+    ++d->m_documentGeneration;
     d->m_currentDocument = {};
 }
 
 void AudioPlayer::setDocument(const QUrl &url, Okular::Document *document)
 {
     Q_UNUSED(document);
+    ++d->m_documentGeneration;
     d->m_currentDocument = url;
 }
 
