@@ -133,3 +133,15 @@ bounded streaming helper itself is tested. Linux/macOS process-group handling
 is implemented but has not been run on those systems. This round does not claim
 ASan coverage, a complete upstream test-suite pass, a formal performance
 benchmark, or a fresh clean cloud scan.
+
+## Follow-up local regression check
+
+After repairing Windows 11 tab-label painting, the selected security, helper,
+JavaScript, form-event, EPUB/comic, and fork-shell runs reported 89 passing
+QtTest cases, no failures, and the same two archive MIME skips. Shell coverage
+also included the tab controls and right-to-left overflow layout. The installed
+app rendered ordinary PDF, EPUB text/images, and PostScript through the new
+helper. Both active and inactive tab labels were visually checked in the dark
+theme; native Windows painting now supplies their readable text colors while
+preserving the selected-tab accent. Original session tabs and reading position
+were retained, and temporary test tabs were closed.

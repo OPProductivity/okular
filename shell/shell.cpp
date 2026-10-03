@@ -152,9 +152,9 @@ class ThreeButtonTabBarStyle : public QProxyStyle
 public:
     void drawControl(ControlElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget = nullptr) const override
     {
-        if (element == CE_TabBarTabShape && option && (option->state & State_Selected) && qobject_cast<const QTabBar *>(widget)
-            && baseStyle()->name() == QLatin1String("windows11")) {
-            // Proxying the Windows 11 tab shape drops its accent edge and changes its background.
+        if (option && qobject_cast<const QTabBar *>(widget) && baseStyle()->name() == QLatin1String("windows11") && (element == CE_TabBarTabLabel || (element == CE_TabBarTabShape && (option->state & State_Selected)))) {
+            // The Windows 11 proxy loses native dark-theme label colors and the
+            // selected tab's accent edge. Keep native painting for both.
             QApplication::style()->drawControl(element, option, painter, widget);
             return;
         }
