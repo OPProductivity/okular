@@ -175,15 +175,28 @@ ecm_add_test(toggleactionmenutest.cpp ../part/toggleactionmenu.cpp
 
 ecm_add_test(securitybudgettest.cpp
     TEST_NAME "securitybudgettest"
-    LINK_LIBRARIES Qt6::Test
+    LINK_LIBRARIES Qt6::Test KF6::Archive
 )
 
 if(Poppler_Qt6_FOUND AND TARGET okularGenerator_fb AND TARGET okularGenerator_epub AND TARGET okularGenerator_xps)
-    ecm_add_test(securitydocumenttest.cpp ../generators/fictionbook/document.cpp ../generators/fictionbook/converter.cpp
+    ecm_add_test(securitydocumenttest.cpp ../generators/fictionbook/document.cpp ../generators/fictionbook/converter.cpp ../part/latexrenderer.cpp ../gui/debug_ui.cpp
         TEST_NAME "securitydocumenttest"
-        LINK_LIBRARIES Qt6::Test okularcore KF6::Archive KF6::I18n Poppler::Qt6
+        LINK_LIBRARIES Qt6::Test okularcore KF6::Archive KF6::I18n KF6::CoreAddons Poppler::Qt6
     )
     add_dependencies(securitydocumenttest okularGenerator_poppler okularGenerator_fb okularGenerator_epub okularGenerator_xps)
+    if(TARGET okularGenerator_tiff)
+        add_dependencies(securitydocumenttest okularGenerator_tiff)
+        target_compile_definitions(securitydocumenttest PRIVATE OKULAR_SECURITY_TIFF)
+    endif()
+    if(TARGET okularGenerator_ghostview)
+        add_dependencies(securitydocumenttest okularGenerator_ghostview)
+        target_compile_definitions(securitydocumenttest PRIVATE OKULAR_SECURITY_SPECTRE)
+    endif()
     set_tests_properties(securitydocumenttest PROPERTIES TIMEOUT 30)
 endif()
 set_tests_properties(securitybudgettest PROPERTIES TIMEOUT 30)
+
+ecm_add_test(textsecuritytest.cpp ../generators/txt/document.cpp ../generators/txt/converter.cpp
+    TEST_NAME "textsecuritytest"
+    LINK_LIBRARIES Qt6::Test okularcore
+)

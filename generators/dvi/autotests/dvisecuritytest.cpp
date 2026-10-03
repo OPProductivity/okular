@@ -1,9 +1,13 @@
 /*
     SPDX-License-Identifier: GPL-2.0-or-later
 */
+#include "../TeXFont_PK.h"
 #include "../bigEndianByteReader.h"
 #include "../debug_dvi.h"
 #include "../dviFile.h"
+#include "../fontpool.h"
+#include "../glyph.h"
+#include "../psgs.h"
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
@@ -53,6 +57,66 @@ class DviSecurityTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void pkRepeatsStayInsideBitmap()
+    {
+        QTemporaryDir dir;
+        fontPool pool(false);
+        for (bool malformed : {false, true}) {
+            QByteArray pk;
+            pk.append(char(247));
+            pk.append(char(89));
+            pk.append(char(0));
+            append32(pk, 655360);
+            append32(pk, 0);
+            append32(pk, 65536);
+            append32(pk, 65536);
+            pk.append(char(malformed ? 0xd8 : 0xe8));
+            pk.append(char(malformed ? 10 : 9));
+            pk.append(char(65));
+            pk.append(QByteArray(3, char(0)));
+            pk.append(char(8));
+            pk.append(char(8));
+            pk.append(char(1));
+            pk.append(char(0));
+            pk.append(char(0));
+            if (malformed) {
+                pk.append(char(0xe2));
+                pk.append(char(0x80));
+            } else {
+                pk.append(char(0xff));
+            }
+            pk.append(char(245));
+            QFile file(dir.filePath(QStringLiteral("font.pk")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(pk);
+            file.close();
+            TeXFontDefinition definition(QStringLiteral("test"), 1200, 0, 655360, &pool, 1.0);
+            definition.filename = file.fileName();
+            TeXFont_PK font(&definition);
+            const glyph *character = font.getGlyph(65);
+            QVERIFY(character);
+            QCOMPARE(character->addr == -1, malformed);
+        }
+    }
+    void restrictedPostScriptResources()
+    {
+        QTemporaryDir dir;
+        QFile resource(dir.filePath(QStringLiteral("figure.eps")));
+        QVERIFY(resource.open(QIODevice::WriteOnly));
+        resource.write("%!PS\n");
+        resource.close();
+        const QUrl document = QUrl::fromLocalFile(dir.filePath(QStringLiteral("doc.dvi")));
+        QCOMPARE(ghostscript_interface::locateEPSfile(QStringLiteral("figure.eps"), document), resource.fileName());
+        QVERIFY(ghostscript_interface::locateEPSfile(QStringLiteral("../secret.ps"), document).isEmpty());
+        QVERIFY(ghostscript_interface::locateEPSfile(resource.fileName(), document).isEmpty());
+        ghostscript_interface interface;
+        const QString staged = interface.stageResource(resource.fileName());
+        QVERIFY(!staged.isEmpty());
+        QVERIFY(staged != resource.fileName());
+        QCOMPARE(interface.stageResource(resource.fileName()), staged);
+        interface.clear();
+        QVERIFY(!QFile::exists(staged));
+    }
     void truncatedReaders()
     {
         quint8 bytes[] = {0x12, 0x34, 0x56, 0x78};
@@ -125,5 +189,5 @@ private Q_SLOTS:
         }
     }
 };
-QTEST_GUILESS_MAIN(DviSecurityTest)
+QTEST_MAIN(DviSecurityTest)
 #include "dvisecuritytest.moc"

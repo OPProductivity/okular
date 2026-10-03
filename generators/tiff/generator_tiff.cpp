@@ -6,6 +6,7 @@
 
 #include "generator_tiff.h"
 
+#include "core/rasterlimits_p.h"
 #include <QBuffer>
 #include <QDateTime>
 #include <QFile>
@@ -207,7 +208,7 @@ bool TIFFGenerator::loadTiff(QList<Okular::Page *> &pagesVector, const char *nam
 
     loadPages(pagesVector);
 
-    return true;
+    return !pagesVector.isEmpty();
 }
 
 bool TIFFGenerator::doCloseDocument()
@@ -238,7 +239,13 @@ QImage TIFFGenerator::image(Okular::PixmapRequest *request)
             orientation = ORIENTATION_TOPLEFT;
         }
 
-        QImage img(width, height, QImage::Format_RGB32);
+        if (!Okular::boundedRasterSize(width, height)) {
+            return {};
+        }
+        QImage img(int(width), int(height), QImage::Format_RGB32);
+        if (img.isNull()) {
+            return {};
+        }
         uint32_t *data = reinterpret_cast<uint32_t *>(img.bits());
 
         // read data
@@ -331,6 +338,12 @@ void TIFFGenerator::loadPages(QList<Okular::Page *> &pagesVector)
             continue;
         }
 
+        if (!Okular::boundedRasterSize(width, height)) {
+            qDeleteAll(pagesVector);
+            pagesVector.clear();
+            m_pageMapping.clear();
+            return;
+        }
         adaptSizeToResolution(d->tiff, TIFFTAG_XRESOLUTION, dpi.width(), &width);
         adaptSizeToResolution(d->tiff, TIFFTAG_YRESOLUTION, dpi.height(), &height);
 
@@ -363,7 +376,13 @@ Okular::Document::PrintError TIFFGenerator::print(QPrinter &printer)
             continue;
         }
 
-        QImage printImage(width, height, QImage::Format_RGB32);
+        if (!Okular::boundedRasterSize(width, height)) {
+            return Okular::Document::UnknownPrintError;
+        }
+        QImage printImage(int(width), int(height), QImage::Format_RGB32);
+        if (printImage.isNull()) {
+            return Okular::Document::UnknownPrintError;
+        }
         uint32_t *data = reinterpret_cast<uint32_t *>(printImage.bits());
 
         // read data

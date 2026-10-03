@@ -6,8 +6,12 @@
 
 #include "converter.h"
 
+#include "core/rasterlimits_p.h"
 #include <QAbstractTextDocumentLayout>
+#include <QBuffer>
+#include <QElapsedTimer>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QRegularExpression>
 #include <QTextDocument>
 #include <QTextDocumentFragment>
@@ -194,8 +198,17 @@ QTextDocument *Converter::convert(const QString &fileName)
     QList<Okular::MovieAnnotation *> movieAnnots;
     QList<Okular::SoundAction *> soundActions;
 
+    QElapsedTimer conversionTime;
+    conversionTime.start();
+    qsizetype textBytes = 0;
+    int sections = 0;
+    bool oversized = false;
     const QSize videoSize(320, 240);
     do {
+        if (++sections > 10000 || conversionTime.elapsed() > 120000) {
+            oversized = true;
+            break;
+        }
         if (!epub_it_get_curr(it)) {
             continue;
         }
@@ -205,7 +218,13 @@ QTextDocument *Converter::convert(const QString &fileName)
 
         const QString link = QString::fromUtf8(epub_it_get_curr_url(it));
         mTextDocument->setCurrentSubDocument(link);
-        QString htmlContent = QString::fromUtf8(epub_it_get_curr(it));
+        const QByteArray chapter = mTextDocument->resourceData(link);
+        textBytes += chapter.size();
+        if (textBytes > 16 * 1024 * 1024 || mTextDocument->blockCount() > 100000) {
+            oversized = true;
+            break;
+        }
+        QString htmlContent = QString::fromUtf8(chapter);
 
         // as QTextCharFormat::anchorNames() ignores sections, replace it with <p>
         static const QRegularExpression sectionStart {QStringLiteral("< *section")};
@@ -261,7 +280,7 @@ QTextDocument *Converter::convert(const QString &fileName)
                 if (!sourceTags.isEmpty()) {
                     QString lnk = sourceTags.at(0).toElement().attribute(QStringLiteral("src"));
 
-                    Okular::Movie *movie = new Okular::Movie(mTextDocument->loadResource(EpubDocument::MovieResource, QUrl(lnk)).toString());
+                    Okular::Movie *movie = new Okular::Movie(lnk, mTextDocument->loadResource(EpubDocument::MovieResource, QUrl(lnk)).toByteArray());
                     movie->setSize(videoSize);
                     movie->setShowControls(true);
 
@@ -356,6 +375,12 @@ QTextDocument *Converter::convert(const QString &fileName)
 
     epub_free_iterator(it);
 
+    if (oversized) {
+        delete _cursor;
+        delete mTextDocument;
+        mTextDocument = nullptr;
+        return nullptr;
+    }
     // handle toc
     struct titerator *tit;
 
@@ -367,6 +392,10 @@ QTextDocument *Converter::convert(const QString &fileName)
 
     if (tit) {
         do {
+            if (++sections > 10000 || conversionTime.elapsed() > 120000 || mTextDocument->characterCount() > 16 * 1024 * 1024) {
+                oversized = true;
+                break;
+            }
             if (epub_tit_curr_valid(tit)) {
                 char *clink = epub_tit_get_curr_link(tit);
                 QString link = QString::fromUtf8(clink);
@@ -380,20 +409,38 @@ QTextDocument *Converter::convert(const QString &fileName)
                     if (mSectionMap.contains(percentDecodedLink)) {
                         block = mSectionMap.value(percentDecodedLink);
                     } else { // load missing resource
-                        char *data = nullptr;
-                        // epub_get_data can't handle whitespace url encodings
-                        QByteArray ba = link.replace(QLatin1String("%20"), QLatin1String(" ")).toLatin1();
-                        const char *clinkClean = ba.data();
-                        int size = epub_get_data(mTextDocument->getEpub(), clinkClean, &data);
+                        const QByteArray data = mTextDocument->resourceData(link);
+                        textBytes += data.size();
+                        if (textBytes > 16 * 1024 * 1024) {
+                            oversized = true;
+                            free(clink);
+                            free(label);
+                            break;
+                        }
 
-                        if (data) {
+                        if (!data.isEmpty()) {
                             _cursor->insertBlock();
 
                             // try to load as image and if not load as html
                             block = _cursor->block();
+                            QBuffer imageBuffer;
+                            imageBuffer.setData(data);
+                            imageBuffer.open(QIODevice::ReadOnly);
+                            QImageReader imageReader(&imageBuffer);
+                            const QSize imageSize = imageReader.size();
                             QImage image;
+                            if (Okular::boundedRasterSize(imageSize.width(), imageSize.height())) {
+                                image = imageReader.read();
+                            }
                             mSectionMap.insert(link, block);
-                            if (image.loadFromData(reinterpret_cast<unsigned char *>(data), size)) {
+                            if (!image.isNull()) {
+                                if (image.sizeInBytes() > 256 * 1024 * 1024 - mTextDocument->mRetainedBytes) {
+                                    oversized = true;
+                                    free(clink);
+                                    free(label);
+                                    break;
+                                }
+                                mTextDocument->mRetainedBytes += image.sizeInBytes();
                                 mTextDocument->addResource(QTextDocument::ImageResource, QUrl(link), image);
                                 _cursor->insertImage(link);
                             } else {
@@ -408,8 +455,6 @@ QTextDocument *Converter::convert(const QString &fileName)
                                 _cursor->insertText(QStringLiteral("\n"));
                             }
                         }
-
-                        free(data);
                     }
                 }
 
@@ -433,6 +478,12 @@ QTextDocument *Converter::convert(const QString &fileName)
         qDebug() << "no toc found";
     }
 
+    if (oversized) {
+        delete _cursor;
+        delete mTextDocument;
+        mTextDocument = nullptr;
+        return nullptr;
+    }
     // adding link actions
     QHashIterator<QString, QList<QPair<int, int>>> hit(mLocalLinks);
     while (hit.hasNext()) {

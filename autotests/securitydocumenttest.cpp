@@ -6,11 +6,14 @@
 #include "core/document.h"
 #include "core/form.h"
 #include "core/generator.h"
+#include "core/movie.h"
 #include "core/observer.h"
 #include "core/page.h"
+#include "core/processbudget_p.h"
 #include "core/sound.h"
 #include "generators/fictionbook/converter.h"
 #include "generators/fictionbook/document.h"
+#include "part/latexrenderer.h"
 #include "settings_core.h"
 #include <KConfig>
 #include <KConfigGroup>
@@ -26,6 +29,7 @@
 #include <QTextDocument>
 #include <memory>
 #include <poppler-link.h>
+#include <tuple>
 
 static bool writePdf(const QString &path, const QList<QByteArray> &objects)
 {
@@ -58,6 +62,184 @@ private Q_SLOTS:
         Okular::SettingsCore::instance(QStringLiteral("securitydocumenttest"));
         // Ensure these tests exercise rebuilt generators exclusively.
         QCoreApplication::setLibraryPaths({QCoreApplication::applicationDirPath()});
+    }
+    void latexProgrammingRejected()
+    {
+        GuiUtils::LatexRenderer renderer;
+        for (const QString &formula : {QStringLiteral("\\input"), QStringLiteral("^^5cinput{secret}"), QStringLiteral("\\csname input\\endcsname"), QStringLiteral("\\end{eqnarray*}"), QStringLiteral("\\write18{payload}")}) {
+            QString html = QStringLiteral("$$%1$$").arg(formula), output;
+            const QString original = html;
+            QCOMPARE(renderer.renderLatexInHtml(html, Qt::black, 12, 100, output), GuiUtils::LatexRenderer::NoError);
+            QCOMPARE(html, original);
+            QVERIFY(output.isEmpty());
+        }
+    }
+    void boundedActionGraphs()
+    {
+        auto root = std::make_unique<Okular::ScriptAction>(Okular::JavaScript, QStringLiteral(""));
+        Okular::Action *last = root.get();
+        for (int i = 0; i < 20000; ++i) {
+            auto next = new Okular::ScriptAction(Okular::JavaScript, QStringLiteral(""));
+            last->setNextActions({next});
+            last = next;
+        }
+        last->setNextActions({root.get()});
+        Okular::Document doc(nullptr);
+        QCOMPARE(open(doc, QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"), QStringLiteral("application/pdf")), Okular::Document::OpenSuccess);
+        doc.processAction(root.get());
+        root.reset(); // Iterative destruction, including a cycle back to root.
+    }
+    void automaticMediaGotoAndCommands()
+    {
+        Okular::Document doc(nullptr);
+        Okular::GotoAction destination(QStringLiteral("//server/share/document.pdf"), Okular::DocumentViewport());
+        doc.processAction(&destination, false);
+        Okular::RenditionAction rendition(Okular::RenditionAction::Play, new Okular::Movie(QStringLiteral("http://127.0.0.1/video")), Okular::JavaScript, {});
+        doc.processAction(&rendition, false);
+        Okular::MovieAction unresolved(Okular::MovieAction::Play);
+        doc.processAction(&unresolved, false);
+    }
+#ifdef OKULAR_SECURITY_SPECTRE
+    void postScriptRenderAndRecovery()
+    {
+        QTemporaryDir dir;
+        QFile file(dir.filePath(QStringLiteral("normal.ps")));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("%!PS-Adobe-3.0\n%%BoundingBox: 0 0 200 200\n%%Pages: 1\n%%EndComments\n%%Page: 1 1\n{} loop\nshowpage\n%%EOF\n");
+        file.close();
+        QProcess stuck;
+        QString program = QCoreApplication::applicationDirPath() + QStringLiteral("/okular-spectre-render");
+#ifdef Q_OS_WIN
+        program += QStringLiteral(".exe");
+#endif
+        stuck.setProgram(program);
+        stuck.setArguments({file.fileName(),
+                            QStringLiteral("0"),
+                            QStringLiteral("1"),
+                            QStringLiteral("1"),
+                            QStringLiteral("4"),
+                            QStringLiteral("4"),
+                            QStringLiteral("200"),
+                            QStringLiteral("200"),
+                            QStringLiteral("0"),
+                            dir.filePath(QStringLiteral("stuck.png"))});
+        QByteArray failedOutput, failedErrors;
+        QCOMPARE(Okular::runBoundedHelper(stuck, failedOutput, failedErrors, 300), -1);
+        QCOMPARE(stuck.state(), QProcess::NotRunning);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("%!PS-Adobe-3.0\n%%BoundingBox: 0 0 200 200\n%%Pages: 1\n%%EndComments\n%%Page: 1 1\n/Helvetica findfont 12 scalefont setfont 20 100 moveto (Normal PostScript) show showpage\n%%EOF\n");
+        file.close();
+        QProcess helper;
+        helper.setProgram(QCoreApplication::applicationDirPath() + QStringLiteral("/okular-spectre-render")
+#ifdef Q_OS_WIN
+                          + QStringLiteral(".exe")
+#endif
+        );
+        helper.setArguments({file.fileName(),
+                             QStringLiteral("0"),
+                             QStringLiteral("1"),
+                             QStringLiteral("1"),
+                             QStringLiteral("4"),
+                             QStringLiteral("4"),
+                             QStringLiteral("200"),
+                             QStringLiteral("200"),
+                             QStringLiteral("0"),
+                             dir.filePath(QStringLiteral("page.png"))});
+        QByteArray out, err;
+        QCOMPARE(Okular::runBoundedHelper(helper, out, err, 10000), 0);
+        QVERIFY(!QImage(dir.filePath(QStringLiteral("page.png"))).isNull());
+        Okular::Document doc(nullptr);
+        QCOMPARE(open(doc, file.fileName(), QStringLiteral("application/postscript")), Okular::Document::OpenSuccess);
+        Okular::DocumentObserver observer;
+        doc.addObserver(&observer);
+        doc.requestPixmaps({new Okular::PixmapRequest(&observer, 0, 200, 200, 1.0, 1, Okular::PixmapRequest::NoFeature)});
+        QTRY_VERIFY(doc.page(0)->hasPixmap(&observer));
+        doc.removeObserver(&observer);
+        doc.closeDocument();
+    }
+#endif
+#ifdef OKULAR_SECURITY_TIFF
+    void tiffAllocationBudgets()
+    {
+        QTemporaryDir dir;
+        for (bool oversized : {false, true}) {
+            QByteArray data("II");
+            auto append16 = [&](quint16 value) {
+                data.append(char(value));
+                data.append(char(value >> 8));
+            };
+            auto append32 = [&](quint32 value) {
+                for (int shift = 0; shift < 32; shift += 8)
+                    data.append(char(value >> shift));
+            };
+            append16(42);
+            append32(8);
+            append16(9);
+            const quint32 dimension = oversized ? 0xffffffffU : 1;
+            for (const auto [tag, type, value] : QList<std::tuple<quint16, quint16, quint32>> {{256, 4, dimension}, {257, 4, dimension}, {258, 3, 8}, {259, 3, 1}, {262, 3, 1}, {273, 4, 122}, {277, 3, 1}, {278, 4, dimension}, {279, 4, 1}}) {
+                append16(tag);
+                append16(type);
+                append32(1);
+                append32(value);
+            }
+            append32(0);
+            data.append(char(0));
+            QFile file(dir.filePath(QStringLiteral("image.tif")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(data);
+            file.close();
+            Okular::Document doc(nullptr);
+            const auto result = open(doc, file.fileName(), QStringLiteral("image/tiff"));
+            if (oversized) {
+                QVERIFY(result != Okular::Document::OpenSuccess);
+            } else {
+                QCOMPARE(result, Okular::Document::OpenSuccess);
+                QCOMPARE(doc.pages(), 1U);
+                Okular::DocumentObserver observer;
+                doc.addObserver(&observer);
+                doc.requestPixmaps({new Okular::PixmapRequest(&observer, 0, 20, 20, 1.0, 1, Okular::PixmapRequest::NoFeature)});
+                QTRY_VERIFY(doc.page(0)->hasPixmap(&observer));
+                doc.removeObserver(&observer);
+            }
+        }
+    }
+#endif
+    void calculateActionsRequireScripts()
+    {
+        QTemporaryDir dir;
+        for (const QByteArray &action : {QByteArray("/S /URI /URI (https://example.invalid/)"), QByteArray("/S /GoToR /F (other.pdf) /D [0 /Fit]"), QByteArray("/S /Named /N /Print"), QByteArray("/S /Launch /F (other.exe)")}) {
+            const QString file = dir.filePath(QStringLiteral("calculate.pdf"));
+            QVERIFY(writePdf(file,
+                             {"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /CO [4 0 R] >> >>",
+                              "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                              "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [4 0 R] >>",
+                              "<< /Type /Annot /Subtype /Widget /FT /Tx /T (edit) /Rect [0 0 100 20] /P 3 0 R /AA << /C 5 0 R >> >>",
+                              "<< " + action + " >>"}));
+            Okular::Document doc(nullptr);
+            QCOMPARE(open(doc, file, QStringLiteral("application/pdf")), Okular::Document::OpenSuccess);
+            doc.recalculateForms();
+            QCOMPARE(static_cast<Okular::FormFieldText *>(doc.page(0)->formFields().first())->text(), QString());
+        }
+    }
+    void nestedScriptsRetainWatchdog()
+    {
+        QTemporaryDir dir;
+        const QString file = dir.filePath(QStringLiteral("nested.pdf"));
+        QVERIFY(writePdf(file,
+                         {"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+                          "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                          "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [4 0 R] >>",
+                          "<< /Type /Annot /Subtype /Widget /FT /Tx /T (edit) /Rect [0 0 100 20] /P 3 0 R /AA << /K << /S /JavaScript /JS (var nestedRan=true;) >> >> >>"}));
+        Okular::Document doc(nullptr);
+        QCOMPARE(open(doc, file, QStringLiteral("application/pdf")), Okular::Document::OpenSuccess);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        Okular::ScriptAction outer(Okular::JavaScript, QStringLiteral("Doc.getField('edit').value='changed'; while(true) {}"));
+        doc.processAction(&outer);
+        QVERIFY(elapsed.elapsed() >= 1500 && elapsed.elapsed() < 5000);
+        Okular::ScriptAction verify(Okular::JavaScript, QStringLiteral("Doc.getField('edit').value = typeof nestedRan !== 'undefined' && nestedRan ? 'nested confirmed' : 'missing';"));
+        doc.processAction(&verify);
+        QCOMPARE(static_cast<Okular::FormFieldText *>(doc.page(0)->formFields().first())->text(), QStringLiteral("nested confirmed"));
     }
     void closingRenditionOwnership()
     {

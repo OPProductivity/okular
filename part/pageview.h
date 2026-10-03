@@ -153,7 +153,7 @@ public Q_SLOTS:
 
     void slotSelectPage();
 
-    void slotAction(Okular::Action *action);
+    void slotAction(Okular::Action *action, bool userInitiated);
     void slotMouseAction(Okular::Action *action, Okular::FormField *form, Okular::Document::MouseEventType fieldMouseEventType);
     void slotFormChanged(int pageNumber);
 

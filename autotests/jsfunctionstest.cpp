@@ -89,6 +89,10 @@ private Q_SLOTS:
     void testNegativeFieldIndex();
     void testTimerQuotaAndCleanup();
     void testDisplay();
+    void testPrecisionBudget();
+    void testRecurringCallbackBudget();
+    void testInterruptedTimerCancelled();
+    void testReplacingTimeoutBudget();
     void testSetClearInterval();
     void testSetClearTimeOut();
     void testGetOCGs();
@@ -154,6 +158,43 @@ void JSFunctionsTest::testTimerQuotaAndCleanup()
     QTest::qWait(100);
     Okular::ScriptAction verify(Okular::JavaScript,
                                 QStringLiteral("var afterCleanup = app.setInterval('', 60000); Doc.getField('0.0').display = afterCleanup !== undefined ? display.visible : display.hidden; app.clearInterval(afterCleanup);"));
+    m_document->processAction(&verify);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
+}
+
+void JSFunctionsTest::testPrecisionBudget()
+{
+    Okular::ScriptAction action(Okular::JavaScript,
+                                QStringLiteral("var caught=0; for (var p of [-1, 2147483647]) { try { util.numberToString(1.0,1,p,0); } catch(e) { ++caught; } } Doc.getField('0.0').display = caught === 2 && util.numberToString(1.25,1,2,1) "
+                                               "=== '1.25' ? display.visible : display.hidden;"));
+    m_document->processAction(&action);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
+}
+void JSFunctionsTest::testRecurringCallbackBudget()
+{
+    Okular::ScriptAction start(Okular::JavaScript, QStringLiteral("var callbackCount=0; var frequent = app.setInterval('++callbackCount', 10);"));
+    m_document->processAction(&start);
+    QTest::qWait(2600);
+    Okular::ScriptAction verify(Okular::JavaScript, QStringLiteral("Doc.getField('0.0').display = callbackCount > 0 && callbackCount <= 200 ? display.visible : display.hidden; app.clearInterval(frequent);"));
+    m_document->processAction(&verify);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
+}
+
+void JSFunctionsTest::testInterruptedTimerCancelled()
+{
+    Okular::ScriptAction start(Okular::JavaScript, QStringLiteral("var attacks=0; app.setInterval('++attacks; while(true) {}', 10);"));
+    m_document->processAction(&start);
+    QTest::qWait(2600);
+    Okular::ScriptAction verify(Okular::JavaScript, QStringLiteral("Doc.getField('0.0').display = attacks === 1 ? display.visible : display.hidden;"));
+    m_document->processAction(&verify);
+    QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
+}
+void JSFunctionsTest::testReplacingTimeoutBudget()
+{
+    Okular::ScriptAction start(Okular::JavaScript, QStringLiteral("var replacements=0; function again() { ++replacements; app.setTimeOut('again()',0); } app.setTimeOut('again()',0);"));
+    m_document->processAction(&start);
+    QTest::qWait(2600);
+    Okular::ScriptAction verify(Okular::JavaScript, QStringLiteral("Doc.getField('0.0').display = replacements > 0 && replacements <= 200 ? display.visible : display.hidden;"));
     m_document->processAction(&verify);
     QVERIFY(m_fields[QStringLiteral("0.0")]->isVisible());
 }

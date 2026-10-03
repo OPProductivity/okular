@@ -24,6 +24,11 @@ QTextDocument *Converter::convert(const QString &fileName)
 {
     Document *textDocument = new Document(fileName);
 
+    if (!textDocument->isValid()) {
+        delete textDocument;
+        return nullptr;
+    }
+
     textDocument->setPageSize(QSizeF(600, 800));
 
     QTextFrameFormat frameFormat;

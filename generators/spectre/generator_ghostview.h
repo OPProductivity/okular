@@ -10,7 +10,9 @@
 #include <core/generator.h>
 #include <interfaces/configinterface.h>
 
+#include <atomic>
 #include <libspectre/spectre.h>
+#include <memory>
 
 class GSGenerator : public Okular::Generator, public Okular::ConfigInterface
 {
@@ -52,7 +54,7 @@ public:
     ~GSGenerator() override;
 
 public Q_SLOTS:
-    void slotImageGenerated(QImage *img, Okular::PixmapRequest *request);
+    void slotImageGenerated(GSGenerator *owner, quint64 generation, QImage *img, Okular::PixmapRequest *request);
 
 protected:
     bool doCloseDocument() override;
@@ -63,6 +65,9 @@ private:
 
     // backendish stuff
     SpectreDocument *m_internalDocument;
+    QString m_fileName;
+    quint64 m_generation = 0;
+    std::shared_ptr<std::atomic_bool> m_renderCancelled;
 
     Okular::PixmapRequest *m_request;
 

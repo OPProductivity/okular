@@ -6,6 +6,7 @@
 */
 
 #include "js_util_p.h"
+#include <QJSEngine>
 
 #include <QDateTime>
 #include <QDebug>
@@ -171,6 +172,12 @@ protected:
  */
 QString JSUtil::numberToString(double number, int formatStyle, int precision, int separatorStyle) const
 {
+    if (precision < 0 || precision > 100) {
+        if (auto *engine = qjsEngine(this)) {
+            engine->throwError(QJSValue::RangeError, QStringLiteral("Number precision must be between 0 and 100"));
+        }
+        return {};
+    }
     if (std::isnan(number)) {
         return QStringLiteral("NaN");
     }

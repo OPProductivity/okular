@@ -53,6 +53,8 @@ GSGenerator::GSGenerator(QObject *parent, const QVariantList &args)
 
 GSGenerator::~GSGenerator()
 {
+    if (m_renderCancelled)
+        m_renderCancelled->store(true);
 }
 
 bool GSGenerator::reparseConfig()
@@ -133,6 +135,9 @@ bool GSGenerator::loadDocument(const QString &fileName, QList<Okular::Page *> &p
     cache_AAtext = documentMetaData(TextAntialiasMetaData, true).toBool();
     cache_AAgfx = documentMetaData(GraphicsAntialiasMetaData, true).toBool();
 
+    m_fileName = fileName;
+    ++m_generation;
+    m_renderCancelled = std::make_shared<std::atomic_bool>(false);
     m_internalDocument = spectre_document_new();
     spectre_document_load(m_internalDocument, QFile::encodeName(fileName).constData());
     const SpectreStatus loadStatus = spectre_document_status(m_internalDocument);
@@ -149,17 +154,23 @@ bool GSGenerator::loadDocument(const QString &fileName, QList<Okular::Page *> &p
 
 bool GSGenerator::doCloseDocument()
 {
+    if (m_renderCancelled)
+        m_renderCancelled->store(true);
+    m_request = nullptr;
     spectre_document_free(m_internalDocument);
     m_internalDocument = nullptr;
 
     return true;
 }
 
-void GSGenerator::slotImageGenerated(QImage *img, Okular::PixmapRequest *request)
+void GSGenerator::slotImageGenerated(GSGenerator *owner, quint64 generation, QImage *img, Okular::PixmapRequest *request)
 {
     // This can happen as GSInterpreterCMD is a singleton and on creation signals all the slots
     // of all the generators attached to it
-    if (request != m_request) {
+    if (owner != this)
+        return;
+    if (generation != m_generation || request != m_request || m_renderCancelled->load()) {
+        delete img;
         return;
     }
 
@@ -200,12 +211,15 @@ void GSGenerator::generatePixmap(Okular::PixmapRequest *req)
 {
     qCDebug(OkularSpectreDebug) << "receiving" << *req;
 
-    SpectrePage *page = spectre_document_get_page(m_internalDocument, req->pageNumber());
-
     GSRendererThread *renderer = GSRendererThread::getCreateRenderer();
 
     GSRendererThreadRequest gsreq(this);
-    gsreq.spectrePage = page;
+    gsreq.pageNumber = req->pageNumber();
+    gsreq.width = req->width();
+    gsreq.height = req->height();
+    gsreq.generation = m_generation;
+    gsreq.cancelled = m_renderCancelled;
+    gsreq.fileName = m_fileName;
     gsreq.platformFonts = GSSettings::platformFonts();
     int graphicsAA = 1;
     int textAA = 1;

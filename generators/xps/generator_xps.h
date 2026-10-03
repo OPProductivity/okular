@@ -7,6 +7,7 @@
 #ifndef _OKULAR_GENERATOR_XPS_H_
 #define _OKULAR_GENERATOR_XPS_H_
 
+#include "core/archivebudget_p.h"
 #include <core/generator.h>
 #include <core/textpage.h>
 
@@ -250,6 +251,19 @@ public:
     QFont getFontByName(const QString &absoluteFileName, float size);
 
     KZip *xpsArchive();
+    QByteArray readPart(const KArchiveEntry *entry, QString *pathOfFile = nullptr) const;
+    QImage cachedImage(const QString &path) const
+    {
+        return m_imageCache.value(path);
+    }
+    bool cacheImage(const QString &path, const QImage &image)
+    {
+        if (image.sizeInBytes() > 256 * 1024 * 1024 - m_imageBytes)
+            return false;
+        m_imageBytes += image.sizeInBytes();
+        m_imageCache.insert(path, image);
+        return true;
+    }
 
 private:
     int loadFontByName(const QString &absoluteFileName);
@@ -265,6 +279,9 @@ private:
     QString m_signatureOrigin;
 
     std::unique_ptr<KZip> m_xpsArchive;
+    mutable Okular::ArchiveReadBudget m_readBudget;
+    QHash<QString, QImage> m_imageCache;
+    qint64 m_imageBytes = 0;
 
     QMap<QString, int> m_fontCache;
 };

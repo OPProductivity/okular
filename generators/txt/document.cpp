@@ -28,8 +28,22 @@ Document::Document(const QString &fileName)
         return;
     }
 
-    const QByteArray buffer = plainFile.readAll();
-    setPlainText(toUnicode(buffer));
+    // QTextDocument layout and undo storage multiply the input footprint.
+    constexpr qint64 maxTextBytes = 16 * 1024 * 1024;
+    if (plainFile.size() > maxTextBytes) {
+        return;
+    }
+    const QByteArray buffer = plainFile.read(maxTextBytes + 1);
+    if (buffer.size() > maxTextBytes || plainFile.error() != QFile::NoError) {
+        return;
+    }
+    const QString text = toUnicode(buffer);
+    if (text.count(QLatin1Char('\n')) > 100000) {
+        return;
+    }
+    setUndoRedoEnabled(false);
+    setPlainText(text);
+    m_valid = true;
 }
 
 Document::~Document()

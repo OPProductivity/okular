@@ -5688,9 +5688,9 @@ void PageView::slotPauseResumeSpeech()
 
 #endif
 
-void PageView::slotAction(Okular::Action *action)
+void PageView::slotAction(Okular::Action *action, bool userInitiated)
 {
-    d->document->processAction(action);
+    d->document->processAction(action, userInitiated);
 }
 
 void PageView::slotMouseAction(Okular::Action *action, Okular::FormField *form, Okular::Document::MouseEventType fieldMouseEventType)
@@ -5698,7 +5698,8 @@ void PageView::slotMouseAction(Okular::Action *action, Okular::FormField *form, 
     if (form && action->actionType() == Okular::Action::Script) {
         d->document->processFormMouseScriptAction(action, form, fieldMouseEventType);
     } else {
-        d->document->processAction(action);
+        const bool activated = fieldMouseEventType == Okular::Document::FieldMouseDown || fieldMouseEventType == Okular::Document::FieldMouseUp;
+        d->document->processAction(action, activated);
     }
 }
 

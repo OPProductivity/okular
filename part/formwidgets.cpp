@@ -73,7 +73,7 @@ FormWidgetsController::~FormWidgetsController()
 
 void FormWidgetsController::signalAction(Okular::Action *a)
 {
-    Q_EMIT action(a);
+    Q_EMIT action(a, true);
 }
 
 void FormWidgetsController::signalMouseAction(Okular::Action *action, Okular::FormField *form, Okular::Document::MouseEventType fieldMouseEventType)
@@ -90,7 +90,7 @@ void FormWidgetsController::processScriptAction(Okular::Action *a, Okular::FormF
     // If it's not a Action Script or if the field is neither a FormText nor a combobox FormChoice, handle it normally
     if (a->actionType() != Okular::Action::Script ||
         (field->type() != Okular::FormField::FormText && !(field->type() == Okular::FormField::FormChoice && (dynamic_cast<Okular::FormFieldChoice *>(field)->choiceType() == Okular::FormFieldChoice::ComboBox)))) {
-        Q_EMIT action(a);
+        Q_EMIT action(a, type == Okular::Annotation::MouseReleased || type == Okular::Annotation::MousePressed);
         return;
     }
     switch (type) {
@@ -104,7 +104,7 @@ void FormWidgetsController::processScriptAction(Okular::Action *a, Okular::FormF
     case Okular::Annotation::CursorLeaving:
     case Okular::Annotation::MousePressed:
     case Okular::Annotation::MouseReleased:
-        Q_EMIT action(a);
+        Q_EMIT action(a, type == Okular::Annotation::MouseReleased || type == Okular::Annotation::MousePressed);
     }
 }
 

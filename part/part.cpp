@@ -21,6 +21,7 @@
 */
 
 #include "part.h"
+#include "core/processbudget_p.h"
 
 #include "config-okular.h"
 
@@ -1332,7 +1333,17 @@ bool Part::slotImportPSFile()
 
         setLocalFilePath(url.toLocalFile());
         const QStringList args {url.toLocalFile(), m_temporaryLocalFile};
-        QProcess *p = new QProcess();
+        QProcess *p = new QProcess(this);
+        p->setProperty("okularImportOutput", m_temporaryLocalFile);
+        const QString importOutput = m_temporaryLocalFile;
+        connect(p, &QObject::destroyed, [importOutput]() { QFile::remove(importOutput); });
+        Okular::boundAsyncHelper(p, m_temporaryLocalFile);
+        connect(p, &QProcess::errorOccurred, this, [p, importOutput](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                QFile::remove(importOutput);
+                p->deleteLater();
+            }
+        });
         m_pageView->displayMessage(i18n("Importing PS file as PDF (this may take a while)…"));
         connect(p, &QProcess::finished, this, &Part::psTransformEnded);
         p->start(app, args);
@@ -3678,19 +3689,21 @@ bool Part::doPrint(QPrinter &printer)
 
 void Part::psTransformEnded(int exit, QProcess::ExitStatus status)
 {
-    Q_UNUSED(exit)
-    if (status != QProcess::NormalExit) {
+    QProcess *process = qobject_cast<QProcess *>(sender());
+    if (!process) {
         return;
     }
-
-    QProcess *senderobj = sender() ? qobject_cast<QProcess *>(sender()) : nullptr;
-    if (senderobj) {
-        senderobj->close();
-        senderobj->deleteLater();
+    const QString output = process->property("okularImportOutput").toString();
+    if (status != QProcess::NormalExit || exit != 0 || QFileInfo(output).size() == 0 || QFileInfo(output).size() > 1024LL * 1024 * 1024) {
+        QFile::remove(output);
+        process->deleteLater();
+        m_temporaryLocalFile.clear();
+        return;
     }
-
-    setLocalFilePath(m_temporaryLocalFile);
-    openUrl(QUrl::fromLocalFile(m_temporaryLocalFile));
+    // Keep the owned helper object until the part closes: its output is now
+    // the opened document, and its destruction removes the temporary file.
+    setLocalFilePath(output);
+    openUrl(QUrl::fromLocalFile(output));
     m_temporaryLocalFile.clear();
 }
 

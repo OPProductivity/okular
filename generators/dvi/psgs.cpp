@@ -17,7 +17,9 @@
 
 #include <KLocalizedString>
 #include <KProcess>
+#include <QCryptographicHash>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QTemporaryFile>
 #include <QUrl>
 #include <core/documentlimits_p.h>
@@ -90,11 +92,9 @@ void ghostscript_interface::setPostScript(const quint16 page, const QString &Pos
 
 void ghostscript_interface::setIncludePath(const QString &_includePath)
 {
-    if (_includePath.isEmpty()) {
-        includePath = QLatin1Char('*'); // Allow all files
-    } else {
-        includePath = _includePath + QStringLiteral("/*");
-    }
+    Q_UNUSED(_includePath)
+    // Only explicitly staged PostScript resources may be read by document code.
+    includePath = m_resources.path() + QStringLiteral("/*");
 }
 
 void ghostscript_interface::setBackgroundColor(const quint16 page, const QColor &background_color, bool permanent)
@@ -154,6 +154,9 @@ QColor ghostscript_interface::getBackgroundColor(const quint16 page) const
 void ghostscript_interface::clear()
 {
     PostScriptHeaderString->truncate(0);
+    m_resources = QTemporaryDir();
+    m_resourceBytes = 0;
+    setIncludePath({});
 
     // Deletes all items, removes temporary files, etc.
     qDeleteAll(pageList);
@@ -242,14 +245,13 @@ void ghostscript_interface::gs_generate_graphics_file(const quint16 page, const 
     KProcess proc;
     proc.setOutputChannelMode(KProcess::SeparateChannels);
     QStringList argus {gsFullPath};
-    argus << QStringLiteral("-dSAFER") << QStringLiteral("-dPARANOIDSAFER") << QStringLiteral("-dDELAYSAFER") << QStringLiteral("-dNOPAUSE") << QStringLiteral("-dBATCH");
+    argus << QStringLiteral("-dSAFER") << QStringLiteral("-dPARANOIDSAFER") << QStringLiteral("-dNOPAUSE") << QStringLiteral("-dBATCH");
     argus << QStringLiteral("-sDEVICE=%1").arg(*gsDevice);
     argus << QStringLiteral("-sOutputFile=%1").arg(filename);
-    argus << QStringLiteral("-sExtraIncludePath=%1").arg(includePath);
+    argus << QStringLiteral("--permit-file-read=%1").arg(includePath);
     argus << QStringLiteral("-g%1x%2").arg(pixel_page_w).arg(pixel_page_h); // page size in pixels
     argus << QStringLiteral("-r%1").arg(resolution);                        // resolution in dpi
     argus << QStringLiteral("-dTextAlphaBits=4 -dGraphicsAlphaBits=2");     // Antialiasing
-    argus << QStringLiteral("-c") << QStringLiteral("<< /PermitFileReading [ ExtraIncludePath ] /PermitFileWriting [] /PermitFileControl [] >> setuserparams .locksafe");
     argus << QStringLiteral("-f") << PSfileName;
 
 #ifdef DEBUG_PSGS
@@ -343,15 +345,38 @@ void ghostscript_interface::graphics(const quint16 page, double dpi, long magnif
     return;
 }
 
+QString ghostscript_interface::stageResource(const QString &fileName)
+{
+    if (!m_resources.isValid() || fileName.isEmpty())
+        return {};
+    const QString canonical = QFileInfo(fileName).canonicalFilePath();
+    const QString hash = QString::fromLatin1(QCryptographicHash::hash(canonical.toUtf8(), QCryptographicHash::Sha256).toHex());
+    const QString target = m_resources.filePath(hash + QStringLiteral(".ps"));
+    if (QFile::exists(target))
+        return target;
+    QFile input(canonical), output(target);
+    if (!input.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly) || !Okular::copyBoundedDocument(&input, &output, 64 * 1024 * 1024 - m_resourceBytes)) {
+        output.remove();
+        return {};
+    }
+    m_resourceBytes += output.size();
+    return target;
+}
+
 QString ghostscript_interface::locateEPSfile(const QString &filename, const QUrl &base)
 {
+    const QString clean = QDir::cleanPath(filename);
+    static const QRegularExpression safe(QStringLiteral("^[a-zA-Z0-9_./ -]+\\.(ps|eps|pro|pdf)$"), QRegularExpression::CaseInsensitiveOption);
+    if (QDir::isAbsolutePath(clean) || clean.startsWith(QLatin1String("../")) || !safe.match(clean).hasMatch() || clean.startsWith(QLatin1Char('-'))) {
+        return {};
+    }
     // If the base URL indicates that the DVI file is local, try to find
     // the graphics file in the directory where the DVI file resides
     if (base.isLocalFile()) {
-        QString path = base.path(); // -> "/bar/foo.dvi"
+        QString path = base.toLocalFile();
         QFileInfo fi1(path);
         QFileInfo fi2(fi1.dir(), filename);
-        if (fi2.exists()) {
+        if (fi2.exists() && fi2.canonicalFilePath().startsWith(fi1.dir().canonicalPath() + QLatin1Char('/'))) {
             return fi2.absoluteFilePath();
         }
     }
@@ -365,8 +390,10 @@ QString ghostscript_interface::locateEPSfile(const QString &filename, const QUrl
 
     KProcess proc;
     proc << fullPath << filename;
-    proc.execute();
-    return QString::fromLocal8Bit(proc.readLine().trimmed());
+    QByteArray output, errors;
+    if (Okular::runBoundedHelper(proc, output, errors, 5000) != 0)
+        return {};
+    return QString::fromLocal8Bit(output.split('\n').value(0).trimmed());
 }
 
 #include "moc_psgs.cpp"

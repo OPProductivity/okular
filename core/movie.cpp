@@ -87,6 +87,11 @@ QString Movie::url() const
     }
 }
 
+bool Movie::isEmbedded() const
+{
+    return d->m_tmp != nullptr;
+}
+
 void Movie::setSize(const QSize aspect)
 {
     d->m_aspect = aspect;

@@ -1,8 +1,11 @@
 /*
     SPDX-License-Identifier: GPL-2.0-or-later
 */
+#include "core/archivebudget_p.h"
 #include "core/documentlimits_p.h"
 #include "core/processbudget_p.h"
+#include "core/rasterlimits_p.h"
+#include <KZip>
 #include <QBuffer>
 #include <QFile>
 #include <QTemporaryDir>
@@ -29,6 +32,55 @@ private Q_SLOTS:
         QCOMPARE(result, input);
         QCOMPARE(Okular::expansionLimit(1), 64LL * 1024 * 1024);
         QCOMPARE(Okular::expansionLimit(1024LL * 1024 * 1024), Okular::MaxExpandedDocumentBytes);
+    }
+    void rasterAndArchiveBudgets()
+    {
+        QVERIFY(Okular::boundedRasterSize(4000, 3000));
+        QVERIFY(!Okular::boundedRasterSize(0, 100));
+        QVERIFY(!Okular::boundedRasterSize(0xffffffffU, 0xffffffffU));
+        QVERIFY(!Okular::boundedRasterSize(32768, 32768));
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("oversized.zip"));
+        KZip writer(path);
+        QVERIFY(writer.open(QIODevice::WriteOnly));
+        QVERIFY(writer.writeFile(QStringLiteral("chapter.xhtml"), QByteArray(17 * 1024 * 1024, 'x')));
+        QVERIFY(writer.close());
+        KZip reader(path);
+        QVERIFY(reader.open(QIODevice::ReadOnly));
+        QVERIFY(!Okular::boundedArchive(reader.directory(), QFileInfo(path).size()));
+        const auto *entry = static_cast<const KArchiveFile *>(reader.directory()->entry(QStringLiteral("chapter.xhtml")));
+        QVERIFY(Okular::boundedArchiveData(entry, 1024).isEmpty());
+    }
+    void asyncHelperTimesOut()
+    {
+        QProcess process;
+        process.setProgram(QCoreApplication::applicationFilePath());
+        process.setArguments({QStringLiteral("--helper-spin")});
+        Okular::boundAsyncHelper(&process, {}, 200);
+        process.start();
+        QTRY_COMPARE_WITH_TIMEOUT(process.state(), QProcess::NotRunning, 5000);
+        QVERIFY(process.exitStatus() == QProcess::CrashExit || process.exitCode() != 0);
+    }
+    void asyncHelperOwnerCancellation()
+    {
+        auto process = std::make_unique<QProcess>();
+        process->setProgram(QCoreApplication::applicationFilePath());
+        process->setArguments({QStringLiteral("--helper-tree")});
+        Okular::boundAsyncHelper(process.get());
+        process->start();
+        QVERIFY(process->waitForStarted());
+        QVERIFY(process->waitForReadyRead());
+        bool ok = false;
+        const qint64 pid = process->readAllStandardOutput().trimmed().toLongLong(&ok);
+        QVERIFY(ok && pid > 0);
+        process.reset();
+#ifdef Q_OS_WIN
+        HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, DWORD(pid));
+        if (child) {
+            QCOMPARE(WaitForSingleObject(child, 3000), DWORD(WAIT_OBJECT_0));
+            CloseHandle(child);
+        }
+#endif
     }
     void helperCompletes()
     {

@@ -64,7 +64,7 @@ TeXFont_PK::TeXFont_PK(TeXFontDefinition *parent)
     for (auto &characterBitmap : characterBitmaps) {
         characterBitmap = nullptr;
     }
-    file = fopen(QFile::encodeName(parent->filename).constData(), "r");
+    file = fopen(QFile::encodeName(parent->filename).constData(), "rb");
     if (file == nullptr) {
         qCCritical(OkularDviDebug) << i18n("Cannot open font file %1.", parent->filename);
     }
@@ -351,33 +351,49 @@ int TeXFont_PK::PK_packed_num(FILE *fp)
     qCDebug(OkularDviDebug) << "PK_packed_num";
 #endif
 
-    int i;
-
-    if ((i = PK_get_nyb(fp)) == 0) {
-        int j;
+    // Bound recursive repeat markers and integer accumulation, including EOF.
+    static thread_local int depth = 0;
+    if (depth >= 32)
+        return -1;
+    struct Guard {
+        int &value;
+        Guard(int &v)
+            : value(v)
+        {
+            ++value;
+        }
+        ~Guard()
+        {
+            --value;
+        }
+    } guard(depth);
+    int i = PK_get_nyb(fp);
+    if (feof(fp))
+        return -1;
+    if (i == 0) {
+        int zeroes = 1;
+        quint64 j = 0;
         do {
             j = PK_get_nyb(fp);
-            ++i;
+            if (feof(fp) || ++zeroes > 8)
+                return -1;
         } while (j == 0);
-        while (i > 0) {
+        for (int n = 0; n < zeroes - 1; ++n) {
             j = (j << 4) | PK_get_nyb(fp);
-            --i;
+            if (feof(fp) || j > 0x7fffffffU)
+                return -1;
         }
-        return (j - 15 + ((13 - PK_dyn_f) << 4) + PK_dyn_f);
-    } else {
-        if (i <= PK_dyn_f) {
-            return i;
-        }
-        if (i < 14) {
-            return (((i - PK_dyn_f - 1) << 4) + PK_get_nyb(fp) + PK_dyn_f + 1);
-        }
-        if (i == 14) {
-            PK_repeat_count = PK_packed_num(fp);
-        } else {
-            PK_repeat_count = 1;
-        }
-        return PK_packed_num(fp);
+        const qint64 result = qint64(j) - 15 + ((13 - PK_dyn_f) << 4) + PK_dyn_f;
+        return result > 0 && result <= 0x7fffffff ? int(result) : -1;
     }
+    if (i <= PK_dyn_f)
+        return i;
+    if (i < 14)
+        return ((i - PK_dyn_f - 1) << 4) + PK_get_nyb(fp) + PK_dyn_f + 1;
+    PK_repeat_count = i == 14 ? PK_packed_num(fp) : 1;
+    if (PK_repeat_count < 0)
+        return -1;
+    return PK_packed_num(fp);
 }
 
 void TeXFont_PK::PK_skip_specials()
@@ -496,7 +512,7 @@ void TeXFont_PK::read_PK_char(unsigned int ch)
         /* width must be multiple of 16 bits for raster_op */
         characterBitmaps[ch]->bytes_wide = ROUNDUP((int)characterBitmaps[ch]->w, 32) * 4;
         unsigned int size = characterBitmaps[ch]->bytes_wide * characterBitmaps[ch]->h;
-        characterBitmaps[ch]->bits = new char[size != 0 ? size : 1];
+        characterBitmaps[ch]->bits = new char[size != 0 ? size : 1]();
     }
 
     cp = reinterpret_cast<quint32 *>(characterBitmaps[ch]->bits);
@@ -549,6 +565,11 @@ void TeXFont_PK::read_PK_char(unsigned int ch)
             word = 0;
             while (rows_left > 0) {
                 count = PK_packed_num(fp);
+                if (count <= 0 || feof(fp)) {
+                    delete[] characterBitmaps[ch]->bits;
+                    characterBitmaps[ch]->bits = nullptr;
+                    return;
+                }
                 while (count > 0) {
                     if (count < word_weight && count < h_bit) {
                         h_bit -= count;
@@ -560,6 +581,13 @@ void TeXFont_PK::read_PK_char(unsigned int ch)
                     } else if (count >= h_bit && h_bit <= word_weight) {
                         if (paint_switch) {
                             word |= bit_masks[h_bit] << (word_weight - h_bit);
+                        }
+                        // Validate before emitting the current row or its repetitions.
+                        if (PK_repeat_count < 0 || PK_repeat_count >= rows_left || (count > h_bit && PK_repeat_count + 1 == rows_left)) {
+                            qCWarning(OkularDviDebug) << "Invalid PK row repeat";
+                            delete[] characterBitmaps[ch]->bits;
+                            characterBitmaps[ch]->bits = nullptr;
+                            return;
                         }
                         *cp++ = word;
                         /* "output" row(s) */
@@ -639,6 +667,11 @@ void TeXFont_PK::read_PK_char(unsigned int ch)
             word = 0;
             while (rows_left > 0) {
                 count = PK_packed_num(fp);
+                if (count <= 0 || feof(fp)) {
+                    delete[] characterBitmaps[ch]->bits;
+                    characterBitmaps[ch]->bits = nullptr;
+                    return;
+                }
                 while (count > 0) {
                     if (count < word_weight && count < h_bit) {
                         if (paint_switch) {
@@ -650,6 +683,13 @@ void TeXFont_PK::read_PK_char(unsigned int ch)
                     } else if (count >= h_bit && h_bit <= word_weight) {
                         if (paint_switch) {
                             word |= bit_masks[h_bit] << (32 - word_weight);
+                        }
+                        // Validate before emitting the current row or its repetitions.
+                        if (PK_repeat_count < 0 || PK_repeat_count >= rows_left || (count > h_bit && PK_repeat_count + 1 == rows_left)) {
+                            qCWarning(OkularDviDebug) << "Invalid PK row repeat";
+                            delete[] characterBitmaps[ch]->bits;
+                            characterBitmaps[ch]->bits = nullptr;
+                            return;
                         }
                         *cp++ = word;
                         /* "output" row(s) */

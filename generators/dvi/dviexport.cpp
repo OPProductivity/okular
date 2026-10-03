@@ -19,6 +19,7 @@
 #include <config.h>
 #include <core/fileprinter.h>
 
+#include "core/processbudget_p.h"
 #include "dviexport.h"
 
 #include "debug_dvi.h"
@@ -57,7 +58,6 @@ void DVIExport::start(const QString &command, const QStringList &args, const QSt
     process_ = new KProcess;
     process_->setOutputChannelMode(KProcess::MergedChannels);
     process_->setNextOpenMode(QIODevice::Text);
-    connect(process_, &KProcess::readyReadStandardOutput, this, &DVIExport::output_receiver);
     connect(process_, &KProcess::finished, this, &DVIExport::finished);
 
     *process_ << command << args;
@@ -68,8 +68,9 @@ void DVIExport::start(const QString &command, const QStringList &args, const QSt
 
     error_message_ = error_message;
 
+    Okular::boundAsyncHelper(process_, outputPath_);
     process_->start();
-    if (!process_->waitForStarted(-1)) {
+    if (!process_->waitForStarted(5000)) {
         qCCritical(OkularDviDebug) << command << " failed to start";
     } else {
         started_ = true;
@@ -147,6 +148,7 @@ DVIExportToPS::DVIExportToPS(dviRenderer &parent, const QString &output_name, co
     }
 
     output_name_ = output_name;
+    outputPath_ = output_name;
 
     // There is a major problem with dvips, at least 5.86 and lower: the
     // arguments of the option "-pp" refer to TeX-pages, not to
@@ -239,7 +241,10 @@ DVIExportToPS::DVIExportToPS(dviRenderer &parent, const QString &output_name, co
 
 void DVIExportToPS::finished_impl(int exit_code)
 {
-    if (printer_ && !output_name_.isEmpty()) {
+    if (QFileInfo(output_name_).size() > 1024LL * 1024 * 1024) {
+        exit_code = -1;
+    }
+    if (exit_code == 0 && printer_ && !output_name_.isEmpty()) {
         const QFileInfo output(output_name_);
         if (output.exists() && output.isReadable()) {
             // I'm not 100% sure on this, think we still need to select pages in export to ps above
@@ -247,6 +252,9 @@ void DVIExportToPS::finished_impl(int exit_code)
         }
     }
 
+    if (exit_code != 0) {
+        QFile::remove(output_name_);
+    }
     if (!tmpfile_name_.isEmpty()) {
         // Delete the file.
         QFile(tmpfile_name_).remove();
@@ -264,6 +272,7 @@ void DVIExportToPS::abort_process_impl()
         tmpfile_name_.clear();
     }
 
+    QFile::remove(output_name_);
     printer_ = nullptr;
 
     DVIExport::abort_process_impl();

@@ -53,6 +53,7 @@ protected:
      *  can be removed from any stores.
      */
     explicit DVIExport(dviRenderer &parent);
+    QString outputPath_;
 
     /** Spawns the external process having connected slots to the child
      *  process's stdin and stdout streams.

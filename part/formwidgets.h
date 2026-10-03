@@ -93,7 +93,7 @@ Q_SIGNALS:
 
     void formButtonsChangedByWidget(int pageNumber, const QList<Okular::FormFieldButton *> &formButtons, const QList<bool> &newButtonStates);
 
-    void action(Okular::Action *action);
+    void action(Okular::Action *action, bool userInitiated);
 
     void mouseAction(Okular::Action *action, Okular::FormField *form, Okular::Document::MouseEventType fieldMouseEventType);
 

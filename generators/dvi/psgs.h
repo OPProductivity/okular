@@ -15,6 +15,7 @@
 #include <QEvent>
 #include <QHash>
 #include <QObject>
+#include <QTemporaryDir>
 
 class QUrl;
 class PageNumber;
@@ -48,6 +49,7 @@ public:
     void setPostScript(const quint16 page, const QString &PostScript);
 
     // sets path from additional postscript files may be read
+    QString stageResource(const QString &fileName);
     void setIncludePath(const QString &_includePath);
 
     // Sets the background color for a certain page. If permanent is false then the original
@@ -88,6 +90,8 @@ private:
     int pixel_page_h = 0;  // in pixels
 
     QString includePath;
+    QTemporaryDir m_resources;
+    qint64 m_resourceBytes = 0;
 
     // Output device that ghostscript is supposed tp use. Default is
     // "png256". If that does not work, gs_generate_graphics_file will

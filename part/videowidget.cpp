@@ -34,7 +34,9 @@
 #include <qwidgetaction.h>
 
 #include <KLocalizedString>
+#include <KMessageBox>
 #include <QIcon>
+#include <QPointer>
 
 #include "core/annotations.h"
 #include "core/area.h"
@@ -111,7 +113,7 @@ public:
 
     enum PlayPauseMode { PlayMode, PauseMode };
 
-    void load();
+    bool load();
     void setupPlayPauseAction(PlayPauseMode mode);
     void setPosterImage(const QImage &);
     void takeSnapshot();
@@ -156,13 +158,19 @@ static QUrl urlFromUrlString(const QString &url, Okular::Document *document)
     return newurl;
 }
 
-void VideoWidget::Private::load()
+bool VideoWidget::Private::load()
 {
     repetitionsLeft = movie->playRepetitions();
     if (loaded) {
-        return;
+        return true;
     }
-
+    if (!movie->isEmbedded()) {
+        const QPointer<VideoWidget> guard(q);
+        const int answer = KMessageBox::warningContinueCancel(q, i18n("This document wants to load an external video: %1", movie->url()), i18n("External Video"));
+        if (!guard || answer != KMessageBox::Continue) {
+            return false;
+        }
+    }
     loaded = true;
 
     player->setSource(urlFromUrlString(movie->url(), document));
@@ -170,6 +178,7 @@ void VideoWidget::Private::load()
     connect(player, &QMediaPlayer::playbackStateChanged, q, [this](QMediaPlayer::PlaybackState s) { playbackStateChanged(s); });
 
     seekSlider->setEnabled(true);
+    return true;
 }
 
 void VideoWidget::Private::setupPlayPauseAction(PlayPauseMode mode)
@@ -386,7 +395,7 @@ void VideoWidget::pageEntered()
         show();
     }
 
-    if (d->movie->autoPlay()) {
+    if (d->movie->autoPlay() && d->movie->isEmbedded()) {
         show();
         QMetaObject::invokeMethod(this, "play", Qt::QueuedConnection);
         if (d->movie->startPaused()) {
@@ -406,7 +415,9 @@ void VideoWidget::pageLeft()
 void VideoWidget::play()
 {
     d->controlBar->setVisible(d->movie->showControls());
-    d->load();
+    if (!d->load()) {
+        return;
+    }
     // if d->repetitionsLeft is less than 1, we are supposed to stop midway, but not even Adobe reader does this
     d->player->play();
     d->stopAction->setEnabled(true);

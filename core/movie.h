@@ -55,6 +55,9 @@ public:
      */
     QString url() const;
 
+    /** Whether the media is an owned embedded payload rather than an external reference. */
+    bool isEmbedded() const;
+
     /**
      * Sets the size for the movie.
      */

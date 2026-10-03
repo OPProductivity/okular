@@ -18,8 +18,13 @@ class Document : public QTextDocument
 public:
     explicit Document(const QString &fileName);
     ~Document() override;
+    bool isValid() const
+    {
+        return m_valid;
+    }
 
 private:
+    bool m_valid = false;
     QString toUnicode(const QByteArray &array);
 };
 }

@@ -5,6 +5,7 @@
 */
 
 #include "action.h"
+#include <QSet>
 
 // kde includes
 #include <KLocalizedString>
@@ -26,12 +27,25 @@ public:
 
     virtual ~ActionPrivate()
     {
-        qDeleteAll(m_nextActions);
+        QList<Action *> pending = std::move(m_nextActions);
+        QSet<Action *> deleted;
+        while (!pending.isEmpty()) {
+            Action *action = pending.takeLast();
+            if (!action || action == m_owner || deleted.contains(action)) {
+                continue;
+            }
+            deleted.insert(action);
+            ActionPrivate *child = action->d_func();
+            pending.append(child->m_nextActions);
+            child->m_nextActions.clear();
+            delete action;
+        }
     }
 
     ActionPrivate(const ActionPrivate &) = delete;
     ActionPrivate &operator=(const ActionPrivate &) = delete;
 
+    Action *m_owner = nullptr;
     QVariant m_nativeId;
     std::shared_ptr<const void> m_nativeHandle;
     QList<Action *> m_nextActions;
@@ -40,6 +54,7 @@ public:
 Action::Action(ActionPrivate &dd)
     : d_ptr(&dd)
 {
+    dd.m_owner = this;
 }
 
 Action::~Action()

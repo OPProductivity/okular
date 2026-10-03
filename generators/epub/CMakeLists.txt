@@ -14,7 +14,7 @@ set(okularGenerator_epub_PART_SRCS
 okular_add_generator(okularGenerator_epub ${okularGenerator_epub_PART_SRCS})
 
 target_include_directories(okularGenerator_epub PRIVATE ${EPUB_INCLUDE_DIR})
-target_link_libraries(okularGenerator_epub okularcore ${EPUB_LIBRARIES} KF6::I18n Qt6::Widgets Qt6::Xml)
+target_link_libraries(okularGenerator_epub okularcore ${EPUB_LIBRARIES} KF6::I18n Qt6::Widgets Qt6::Xml KF6::Archive)
 
 
 ########### autotests ###############

@@ -33,3 +33,10 @@ if (BUILD_MOBILE)
 endif()
 ecm_install_icons(ICONS 16-apps-okular-gv.png  32-apps-okular-gv.png DESTINATION ${KDE_INSTALL_DATADIR}/okular/icons)
 install( FILES org.kde.okular-spectre.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR} )
+
+# A hung interpreter must not occupy the viewer's shared rendering thread.
+add_executable(okular-spectre-render renderhelper.cpp)
+target_include_directories(okular-spectre-render PRIVATE ${LIBSPECTRE_INCLUDE_DIR} ${CMAKE_SOURCE_DIR})
+target_link_libraries(okular-spectre-render PRIVATE ${LIBSPECTRE_LIBRARY} Qt6::Core Qt6::Gui)
+install(TARGETS okular-spectre-render RUNTIME DESTINATION ${KDE_INSTALL_BINDIR})
+add_dependencies(okularGenerator_ghostview okular-spectre-render)

@@ -28,6 +28,8 @@
 #include <QMutex>
 #include <QPainter>
 #include <QPrinter>
+#include <QScopeGuard>
+#include <QScopedValueRollback>
 #include <QStack>
 #include <QTemporaryFile>
 #include <QTextStream>
@@ -436,6 +438,19 @@ Okular::Action *createLinkFromPopplerLink(std::variant<const Poppler::Link *, st
         return nullptr;
     }
 
+    static thread_local int depth = 0;
+    static thread_local int nodes = 0;
+    static thread_local QSet<const Poppler::Link *> ancestors;
+    if (depth == 0) {
+        nodes = 0;
+        ancestors.clear();
+    }
+    if (depth >= 64 || ++nodes > 1000 || ancestors.contains(rawPopplerLink)) {
+        return nullptr;
+    }
+    QScopedValueRollback<int> depthGuard(depth, depth + 1);
+    ancestors.insert(rawPopplerLink);
+    const auto ancestorGuard = qScopeGuard([rawPopplerLink]() { ancestors.remove(rawPopplerLink); });
     Okular::Action *link = nullptr;
     Okular::DocumentViewport viewport;
 
@@ -612,7 +627,11 @@ Okular::Action *createLinkFromPopplerLink(std::variant<const Poppler::Link *, st
         QList<Okular::Action *> nextActions;
         const QList<Poppler::Link *> nextLinks = rawPopplerLink->nextLinks();
         for (const Poppler::Link *nl : nextLinks) {
-            nextActions << createLinkFromPopplerLink(nl);
+            if (nodes >= 1000)
+                break;
+            if (Okular::Action *next = createLinkFromPopplerLink(nl)) {
+                nextActions.append(next);
+            }
         }
         link->setNextActions(nextActions);
     }

@@ -10,6 +10,7 @@
 #include <QApplication>
 
 #include <QLocale>
+#include <QPointer>
 #include <QTimer>
 
 #include <KLocalizedString>
@@ -291,7 +292,7 @@ QJSValue JSApp::setInterval(const QString &cExpr, int nMilliseconds)
     }
     QTimer *timer = new QTimer(this);
 
-    QObject::connect(timer, &QTimer::timeout, m_doc->m_parent, [=, this]() { m_doc->executeScript(cExpr); });
+    QObject::connect(timer, &QTimer::timeout, m_doc->m_parent, [=, this]() { runTimerScript(cExpr); });
 
     timer->start(qMax(nMilliseconds, 10));
 
@@ -319,12 +320,12 @@ QJSValue JSApp::setTimeOut(const QString &cExpr, int nMilliseconds)
     QTimer *timer = new QTimer(this);
     timer->setSingleShot(true);
 
-    timer->start(qMax(nMilliseconds, 0));
+    timer->start(qMax(nMilliseconds, 10));
     const int id = timer->timerId();
     QObject::connect(timer, &QTimer::timeout, m_doc->m_parent, [this, timer, id, cExpr]() {
         g_timerCache->remove(id);
         timer->deleteLater();
-        m_doc->executeScript(cExpr);
+        runTimerScript(cExpr);
     });
     return JSApp::wrapTimer(timer);
 }
@@ -414,6 +415,39 @@ JSApp::~JSApp()
         } else {
             ++it;
         }
+    }
+}
+
+void JSApp::cancelTimers()
+{
+    for (QTimer *timer : findChildren<QTimer *>(QString(), Qt::FindDirectChildrenOnly)) {
+        g_timerCache->remove(timer->timerId());
+        timer->stop();
+        timer->deleteLater();
+    }
+}
+
+void JSApp::runTimerScript(const QString &script)
+{
+    if (!m_callbackWindow.isValid() || m_callbackWindow.elapsed() >= 10000) {
+        m_callbackWindow.restart();
+        m_callbackCount = 0;
+        m_callbackWorkMs = 0;
+    }
+    if (++m_callbackCount > 200 || m_callbackWorkMs >= 2000) {
+        cancelTimers();
+        return;
+    }
+    QElapsedTimer work;
+    work.start();
+    const QPointer<JSApp> guard(this);
+    m_doc->executeScript(script);
+    if (!guard) {
+        return;
+    }
+    m_callbackWorkMs += work.elapsed();
+    if (m_callbackWorkMs >= 2000 || qjsEngine(this)->isInterrupted()) {
+        cancelTimers();
     }
 }
 

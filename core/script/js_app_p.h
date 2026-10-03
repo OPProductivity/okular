@@ -8,6 +8,7 @@
 #ifndef OKULAR_SCRIPT_JS_APP_P_H
 #define OKULAR_SCRIPT_JS_APP_P_H
 
+#include <QElapsedTimer>
 #include <QJSValue>
 #include <QObject>
 #include <QPoint>
@@ -63,6 +64,11 @@ public:
 
 private:
     QJSValue wrapTimer(QTimer *timer) const;
+    void runTimerScript(const QString &script);
+    void cancelTimers();
+    QElapsedTimer m_callbackWindow;
+    qint64 m_callbackWorkMs = 0;
+    int m_callbackCount = 0;
     static bool createPopUpMenuTree(int depth, QMenu *rootMenu, const QJSValue &arguments, int &remainingItems);
 
     DocumentPrivate *m_doc = nullptr;

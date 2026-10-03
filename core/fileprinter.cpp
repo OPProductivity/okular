@@ -8,6 +8,7 @@
 */
 
 #include "fileprinter.h"
+#include "processbudget_p.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -34,16 +35,23 @@ FilePrinter::printFile(QPrinter &printer, const QString &file, QPageLayout::Orie
     return fp.doPrintFiles(printer, QStringList(file), fileDeletePolicy, pageSelectPolicy, pageRange, documentOrientation, scaleMode);
 }
 
-static Document::PrintError doKProcessExecute(const QString &exe, const QStringList &argList)
+static Document::PrintError doKProcessExecute(const QString &exe, const QStringList &argList, const QString &outputFile = {})
 {
-    const int ret = KProcess::execute(exe, argList);
+    QProcess process;
+    process.setProgram(QStandardPaths::findExecutable(exe));
+    process.setArguments(argList);
+    QByteArray out, err;
+    const int ret = runBoundedHelper(process, out, err, 120000, [&]() { return outputFile.isEmpty() || QFileInfo(outputFile).size() <= 1024LL * 1024 * 1024; });
+    if (ret != 0 && !outputFile.isEmpty()) {
+        QFile::remove(outputFile);
+    }
     if (ret == -1) {
         return Document::PrintingProcessCrashPrintError;
     }
     if (ret == -2) {
         return Document::PrintingProcessStartPrintError;
     }
-    if (ret < 0) {
+    if (ret != 0) {
         return Document::UnknownPrintError;
     }
 
@@ -102,12 +110,12 @@ FilePrinter::doPrintFiles(QPrinter &printer, const QStringList &fileList, FileDe
             exe = QStringLiteral("ps2pdf");
             argList << fileList[0] << printer.outputFileName();
             qCDebug(OkularCoreDebug) << "Executing" << exe << "with arguments" << argList;
-            ret = doKProcessExecute(exe, argList);
+            ret = doKProcessExecute(exe, argList, printer.outputFileName());
         } else if (inputFileInfo.suffix() == QLatin1String("pdf") && printer.outputFormat() == QPrinter::NativeFormat && pdf2psAvailable()) {
             exe = QStringLiteral("pdf2ps");
             argList << fileList[0] << printer.outputFileName();
             qCDebug(OkularCoreDebug) << "Executing" << exe << "with arguments" << argList;
-            ret = doKProcessExecute(exe, argList);
+            ret = doKProcessExecute(exe, argList, printer.outputFileName());
         } else {
             ret = Document::PrintToFilePrintError;
         }

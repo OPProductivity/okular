@@ -39,6 +39,7 @@
 #include <QPageSize>
 #include <QPrintDialog>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QScreen>
 #include <QStack>
 #include <QStandardPaths>
@@ -80,6 +81,7 @@
 #include "interfaces/printinterface.h"
 #include "interfaces/saveinterface.h"
 #include "misc.h"
+#include "movie.h"
 #include "observer.h"
 #include "page.h"
 #include "page_p.h"
@@ -1172,7 +1174,7 @@ void DocumentPrivate::recalculateForms()
                 for (FormField *form : forms) {
                     if (form->id() == formId) {
                         const Action *action = form->additionalAction(FormField::CalculateField);
-                        if (action) {
+                        if (action && action->actionType() == Action::Script) {
                             std::shared_ptr<Event> event;
                             if (dynamic_cast<FormFieldText *>(form) || dynamic_cast<FormFieldChoice *>(form)) {
                                 // Prepare text calculate event
@@ -4069,9 +4071,31 @@ void Document::processAction(const Action *action, bool userInitiated)
         return;
     }
 
+    // One budget spans chained actions and reentrant dispatch, including cycles.
+    static thread_local int actionDepth = 0;
+    static thread_local int actionNodes = 0;
+    static thread_local QSet<const Action *> visitedActions;
+    if (actionDepth == 0) {
+        actionNodes = 0;
+        visitedActions.clear();
+    }
+    if (actionDepth >= 64 || ++actionNodes > 1000 || visitedActions.contains(action)) {
+        return;
+    }
+    QScopedValueRollback<int> depthGuard(actionDepth, actionDepth + 1);
+    visitedActions.insert(action);
     if (!userInitiated) {
+        const bool externalGoto = action->actionType() == Action::Goto && static_cast<const GotoAction *>(action)->isExternal();
+        const Movie *movie = nullptr;
+        if (action->actionType() == Action::Movie) {
+            const auto *annotation = static_cast<const MovieAction *>(action)->annotation();
+            movie = annotation ? annotation->movie() : nullptr;
+        } else if (action->actionType() == Action::Rendition) {
+            movie = static_cast<const RenditionAction *>(action)->movie();
+        }
+        const bool externalMovie = (action->actionType() == Action::Movie || action->actionType() == Action::Rendition) && (!movie || !movie->isEmbedded());
         const bool externalSound = action->actionType() == Action::Sound && static_cast<const SoundAction *>(action)->sound() && static_cast<const SoundAction *>(action)->sound()->soundType() == Sound::External;
-        if (action->actionType() == Action::Browse || action->actionType() == Action::Execute || externalSound) {
+        if (action->actionType() == Action::Browse || action->actionType() == Action::Execute || externalSound || externalGoto || externalMovie || action->actionType() == Action::DocAction) {
             qCWarning(OkularCoreDebug) << "Blocked automatic external document action";
             return;
         }

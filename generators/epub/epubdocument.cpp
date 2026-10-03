@@ -5,8 +5,12 @@
 */
 
 #include "epubdocument.h"
+#include "core/archivebudget_p.h"
+#include "core/rasterlimits_p.h"
+#include <QBuffer>
 #include <QDir>
-#include <QTemporaryFile>
+#include <QFileInfo>
+#include <QImageReader>
 
 #include <QRegularExpression>
 
@@ -18,6 +22,28 @@ EpubDocument::EpubDocument(const QString &fileName, const QFont &font)
     , padding(20)
     , mFont(font)
 {
+    mArchive = std::make_unique<KZip>(fileName);
+    if (!mArchive->open(QIODevice::ReadOnly) || !Okular::boundedArchive(mArchive->directory(), QFileInfo(fileName).size())) {
+        return;
+    }
+    // libepub exposes chapter/resource URLs relative to the OPF package.
+    const auto *containerEntry = mArchive->directory()->entry(QStringLiteral("META-INF/container.xml"));
+    if (!containerEntry || !containerEntry->isFile()) {
+        return;
+    }
+    QXmlStreamReader container(mReadBudget.read(static_cast<const KArchiveFile *>(containerEntry)));
+    while (!container.atEnd()) {
+        container.readNext();
+        if (container.isStartElement() && container.name() == QLatin1String("rootfile")) {
+            const QString package = container.attributes().value(QLatin1String("full-path")).toString();
+            const int slash = package.lastIndexOf(QLatin1Char('/'));
+            if (slash >= 0) {
+                mPackageDirectory = package.left(slash + 1);
+            }
+            break;
+        }
+    }
+    setUndoRedoEnabled(false);
 #ifdef Q_OS_WIN
     mEpub = epub_open(qUtf8Printable(fileName), 2);
 #else
@@ -50,7 +76,7 @@ struct epub *EpubDocument::getEpub()
 void EpubDocument::setCurrentSubDocument(const QString &doc)
 {
     mCurrentSubDocument.clear();
-    int index = doc.indexOf(QLatin1Char('/'));
+    int index = doc.lastIndexOf(QLatin1Char('/'));
     if (index > 0) {
         mCurrentSubDocument = QUrl::fromLocalFile(doc.left(index + 1));
     }
@@ -98,25 +124,36 @@ QString EpubDocument::checkCSS(const QString &c)
 
 QVariant EpubDocument::loadResource(int type, const QUrl &name)
 {
-    int size;
-    char *data = nullptr;
-
-    QString fileInPath = mCurrentSubDocument.resolved(name).path();
-
-    // Get the data from the epub file
-    size = epub_get_data(mEpub, fileInPath.toUtf8().constData(), &data);
-
-    if (data == nullptr || size <= 0) {
-        qCWarning(OkularEpuDebug) << "EPUB : error loading resource" << fileInPath << "size" << size << "type" << type;
-        free(data);
-        return QVariant();
+    const QString fileInPath = mCurrentSubDocument.resolved(name).path();
+    const QByteArray bytes = resourceData(fileInPath);
+    const int size = bytes.size();
+    if (bytes.isEmpty()) {
+        return {};
     }
 
+    if (type != QTextDocument::ImageResource) {
+        // Text is UTF-16 after conversion; charge it before retaining a resource.
+        const qint64 retained = (type == EpubDocument::AudioResource || type == EpubDocument::MovieResource) ? size : qint64(size) * 2;
+        if (retained > 256 * 1024 * 1024 - mRetainedBytes)
+            return {};
+        mRetainedBytes += retained;
+    }
     QVariant resource;
 
     switch (type) {
     case QTextDocument::ImageResource: {
-        QImage img = QImage::fromData(reinterpret_cast<unsigned char *>(data), size);
+        QBuffer buffer;
+        buffer.setData(bytes);
+        buffer.open(QIODevice::ReadOnly);
+        QImageReader reader(&buffer);
+        const QSize original = reader.size();
+        if (!Okular::boundedRasterSize(original.width(), original.height())) {
+            return {};
+        }
+        if (original.width() > maxContentWidth() || original.height() > maxContentHeight()) {
+            reader.setScaledSize(original.scaled(maxContentWidth(), maxContentHeight(), Qt::KeepAspectRatio));
+        }
+        QImage img = reader.read();
         const int maxHeight = maxContentHeight();
         const int maxWidth = maxContentWidth();
         if (img.height() > maxHeight) {
@@ -125,37 +162,31 @@ QVariant EpubDocument::loadResource(int type, const QUrl &name)
         if (img.width() > maxWidth) {
             img = img.scaledToWidth(maxWidth, Qt::SmoothTransformation);
         }
+        if (img.sizeInBytes() > 256 * 1024 * 1024 - mRetainedBytes)
+            return {};
+        mRetainedBytes += img.sizeInBytes();
         resource.setValue(img);
         break;
     }
     case QTextDocument::StyleSheetResource: {
-        QString css = QString::fromUtf8(data);
+        QString css = QString::fromUtf8(bytes);
         resource.setValue(checkCSS(css));
         break;
     }
     case EpubDocument::MovieResource: {
-        QTemporaryFile *tmp = new QTemporaryFile(QStringLiteral("%1/okrXXXXXX").arg(QDir::tempPath()), this);
-        if (!tmp->open()) {
-            qCWarning(OkularEpuDebug) << "EPUB : error creating temporary video file";
-        }
-        if (tmp->write(data, size) == -1) {
-            qCWarning(OkularEpuDebug) << "EPUB : error writing data" << tmp->errorString();
-        }
-        tmp->flush();
-        resource.setValue(tmp->fileName());
+        resource.setValue(bytes);
         break;
     }
     case EpubDocument::AudioResource: {
-        QByteArray ba(data, size);
+        QByteArray ba(bytes);
         resource.setValue(ba);
         break;
     }
     default:
-        resource.setValue(QString::fromUtf8(data));
+        resource.setValue(QString::fromUtf8(bytes));
         break;
     }
 
-    free(data);
 
     // add to cache
     addResource(type, name, resource);
@@ -163,4 +194,18 @@ QVariant EpubDocument::loadResource(int type, const QUrl &name)
     return resource;
 }
 
+QByteArray EpubDocument::resourceData(const QString &path)
+{
+    QString decoded = QUrl::fromPercentEncoding(path.toUtf8()).section(QLatin1Char('#'), 0, 0);
+    // QUrl::fromLocalFile/resolved supplies a leading slash for archive-relative URLs.
+    while (decoded.startsWith(QLatin1Char('/'))) {
+        decoded.remove(0, 1);
+    }
+    const QString local = QDir::cleanPath(mPackageDirectory + decoded);
+    if (!mArchive || local.startsWith(QLatin1String("../")) || local.contains(QLatin1Char('\\'))) {
+        return {};
+    }
+    const KArchiveEntry *entry = mArchive->directory()->entry(local);
+    return entry && entry->isFile() ? mReadBudget.read(static_cast<const KArchiveFile *>(entry)) : QByteArray();
+}
 #include "moc_epubdocument.cpp"

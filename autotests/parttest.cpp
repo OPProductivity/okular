@@ -12,6 +12,7 @@
 #include <QSignalSpy>
 #include <QTest>
 
+#include "../core/action.h"
 #include "../core/annotations.h"
 #include "../core/document_p.h"
 #include "../core/form.h"
@@ -104,6 +105,7 @@ private Q_SLOTS:
     void testCrashTextEditDestroy();
     void testAnnotWindow();
     void testAdditionalActionTriggers();
+    void testPassiveActionProvenance();
     void testTypewriterAnnotTool();
     void testJumpToPage();
     void testOpenAtPage();
@@ -1908,6 +1910,18 @@ void PartTest::testAnnotWindow()
     QCOMPARE(win1->visibleRegion().boundingRect().size().height(), 50);
     QCOMPARE(win2->visibleRegion().boundingRect().size().width(), 300);
     QCOMPARE(win2->visibleRegion().boundingRect().size().height(), 300);
+}
+
+void PartTest::testPassiveActionProvenance()
+{
+    Okular::Part part(nullptr, QVariantList());
+    QVERIFY(openDocument(&part, QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")));
+    Okular::BrowseAction action(QUrl(QStringLiteral("unsafe-handler:payload")));
+    QSignalSpy blocked(part.m_document, &Okular::Document::error);
+    QVERIFY(QMetaObject::invokeMethod(part.m_pageView, "slotAction", Qt::DirectConnection, Q_ARG(Okular::Action *, &action), Q_ARG(bool, false)));
+    QCOMPARE(blocked.size(), 0);
+    QVERIFY(QMetaObject::invokeMethod(part.m_pageView, "slotAction", Qt::DirectConnection, Q_ARG(Okular::Action *, &action), Q_ARG(bool, true)));
+    QCOMPARE(blocked.size(), 1);
 }
 
 // Helper for testAdditionalActionTriggers

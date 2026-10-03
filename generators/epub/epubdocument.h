@@ -7,12 +7,15 @@
 #ifndef EPUB_DOCUMENT_H
 #define EPUB_DOCUMENT_H
 
+#include "core/archivebudget_p.h"
+#include <KZip>
 #include <QImage>
 #include <QLoggingCategory>
 #include <QTextDocument>
 #include <QUrl>
 #include <QVariant>
 #include <epub.h>
+#include <memory>
 
 namespace Epub
 {
@@ -24,6 +27,7 @@ public:
     explicit EpubDocument(const QString &fileName, const QFont &font);
     ~EpubDocument() override;
     bool isValid();
+    QByteArray resourceData(const QString &path);
     struct epub *getEpub();
     void setCurrentSubDocument(const QString &doc);
     int maxContentHeight() const;
@@ -36,7 +40,11 @@ protected:
 private:
     QString checkCSS(const QString &css);
 
-    struct epub *mEpub;
+    struct epub *mEpub = nullptr;
+    std::unique_ptr<KZip> mArchive;
+    Okular::ArchiveReadBudget mReadBudget;
+    qint64 mRetainedBytes = 0;
+    QString mPackageDirectory;
     QUrl mCurrentSubDocument;
 
     int padding;

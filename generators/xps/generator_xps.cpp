@@ -19,6 +19,9 @@
 #include <QPrinter>
 #include <QUrl>
 
+#include "core/archivebudget_p.h"
+#include "core/rasterlimits_p.h"
+#include <QFileInfo>
 #include <core/area.h>
 #include <core/document.h>
 #include <core/fileprinter.h>
@@ -471,7 +474,7 @@ static QString absolutePath(const QString &path, const QString &location)
 
    \see XPS specification 10.1.2
 */
-static QByteArray readFileOrDirectoryParts(const KArchiveEntry *entry, QString *pathOfFile = nullptr)
+QByteArray XpsFile::readPart(const KArchiveEntry *entry, QString *pathOfFile) const
 {
     QByteArray data;
     if (!entry) {
@@ -488,14 +491,18 @@ static QByteArray readFileOrDirectoryParts(const KArchiveEntry *entry, QString *
             }
 
             const KZipFileEntry *relSubFile = static_cast<const KZipFileEntry *>(relSubEntry);
-            data.append(relSubFile->data());
+            const QByteArray part = m_readBudget.read(relSubFile);
+            if (part.size() > Okular::MaxArchivePartBytes - data.size()) {
+                return {};
+            }
+            data.append(part);
         }
     } else {
         if (!entry->isFile()) {
             return data;
         }
         const KZipFileEntry *relFile = static_cast<const KZipFileEntry *>(entry);
-        data.append(relFile->data());
+        data.append(m_readBudget.read(relFile));
         if (pathOfFile) {
             *pathOfFile = entryPath(relFile);
         }
@@ -1311,7 +1318,7 @@ XpsPage::XpsPage(XpsFile *file, const QString &fileName)
     const KArchiveEntry *pageFile = m_file->xpsArchive()->directory()->entry(fileName);
 
     QXmlStreamReader xml;
-    xml.addData(readFileOrDirectoryParts(pageFile));
+    xml.addData(m_file->readPart(pageFile));
     while (!xml.atEnd()) {
         xml.readNext();
         if (xml.isStartElement() && (xml.name() == QStringLiteral("FixedPage"))) {
@@ -1358,7 +1365,7 @@ bool XpsPage::renderToPainter(QPainter *painter)
 {
     painter->setWorldTransform(QTransform().scale((qreal)painter->device()->width() / size().width(), (qreal)painter->device()->height() / size().height()));
     const KArchiveEntry *pageFile = m_file->xpsArchive()->directory()->entry(m_fileName);
-    QByteArray data = readFileOrDirectoryParts(pageFile);
+    QByteArray data = m_file->readPart(pageFile);
     QXmlStreamReader reader(data);
 
     while (!reader.atEnd()) {
@@ -1437,7 +1444,7 @@ int XpsFile::loadFontByName(const QString &absoluteFileName)
         return -1;
     }
 
-    QByteArray fontData = readFileOrDirectoryParts(fontFile); // once per file, according to the docs
+    QByteArray fontData = readPart(fontFile); // once per file, according to the docs
 
     int result = QFontDatabase::addApplicationFontFromData(fontData);
     if (-1 == result) {
@@ -1502,13 +1509,20 @@ QImage XpsPage::loadImageFromFile(const QString &fileName)
 
     */
 
+    const QImage cached = m_file->cachedImage(absoluteFileName);
+    if (!cached.isNull())
+        return cached;
     QImage image;
-    QByteArray data = readFileOrDirectoryParts(imageFile);
+    QByteArray data = m_file->readPart(imageFile);
 
     QBuffer buffer(&data);
     buffer.open(QBuffer::ReadOnly);
 
     QImageReader reader(&buffer);
+    const QSize raster = reader.size();
+    if (!Okular::boundedRasterSize(raster.width(), raster.height())) {
+        return {};
+    }
     image = reader.read();
 
     image.setDotsPerMeterX(qRound(96 / 0.0254));
@@ -1518,7 +1532,7 @@ QImage XpsPage::loadImageFromFile(const QString &fileName)
     reader.setDevice(&buffer);
     reader.read(&image);
 
-    return image;
+    return m_file->cacheImage(absoluteFileName, image) ? image : QImage();
 }
 
 Okular::TextPage *XpsPage::textPage()
@@ -1529,7 +1543,7 @@ Okular::TextPage *XpsPage::textPage()
 
     const KArchiveEntry *pageFile = m_file->xpsArchive()->directory()->entry(m_fileName);
     QXmlStreamReader xml;
-    xml.addData(readFileOrDirectoryParts(pageFile));
+    xml.addData(m_file->readPart(pageFile));
 
     QTransform matrix = QTransform();
     QStack<QTransform> matrices;
@@ -1624,7 +1638,7 @@ void XpsDocument::parseDocumentStructure(const QString &documentStructureFileNam
     const KArchiveEntry *documentStructureFile = m_file->xpsArchive()->directory()->entry(documentStructureFileName);
 
     QXmlStreamReader xml;
-    xml.addData(readFileOrDirectoryParts(documentStructureFile));
+    xml.addData(m_file->readPart(documentStructureFile));
 
     while (!xml.atEnd()) {
         xml.readNext();
@@ -1703,7 +1717,7 @@ XpsDocument::XpsDocument(XpsFile *file, const QString &fileName)
     const QString documentEntryPath = entryPath(fileName);
 
     QXmlStreamReader docXml;
-    docXml.addData(readFileOrDirectoryParts(documentEntry, &documentFilePath));
+    docXml.addData(m_file->readPart(documentEntry, &documentFilePath));
     while (!docXml.atEnd()) {
         docXml.readNext();
         if (docXml.isStartElement()) {
@@ -1742,7 +1756,7 @@ XpsDocument::XpsDocument(XpsFile *file, const QString &fileName)
     QString documentStructureFile;
     if (relFile) {
         QXmlStreamReader xml;
-        xml.addData(readFileOrDirectoryParts(relFile));
+        xml.addData(m_file->readPart(relFile));
         while (!xml.atEnd()) {
             xml.readNext();
             if (xml.isStartElement() && (xml.name() == QStringLiteral("Relationship"))) {
@@ -1808,6 +1822,10 @@ bool XpsFile::loadDocument(const QString &filename)
         return false;
     }
 
+    if (!Okular::boundedArchive(m_xpsArchive->directory(), QFileInfo(filename).size())) {
+        m_xpsArchive.reset();
+        return false;
+    }
     // The only fixed entry in XPS is /_rels/.rels
     const KArchiveEntry *relEntry = m_xpsArchive->directory()->entry(QStringLiteral("_rels/.rels"));
     if (!relEntry) {
@@ -1816,7 +1834,7 @@ bool XpsFile::loadDocument(const QString &filename)
     }
 
     QXmlStreamReader relXml;
-    relXml.addData(readFileOrDirectoryParts(relEntry));
+    relXml.addData(readPart(relEntry));
 
     QString fixedRepresentationFileName;
     // We work through the relationships document and pull out each element.
@@ -1859,7 +1877,7 @@ bool XpsFile::loadDocument(const QString &filename)
     QString fixedRepresentationFilePath = fixedRepresentationFileName;
 
     QXmlStreamReader fixedRepXml;
-    fixedRepXml.addData(readFileOrDirectoryParts(fixedRepEntry, &fixedRepresentationFileName));
+    fixedRepXml.addData(readPart(fixedRepEntry, &fixedRepresentationFileName));
 
     while (!fixedRepXml.atEnd()) {
         fixedRepXml.readNext();
@@ -1904,7 +1922,7 @@ Okular::DocumentInfo XpsFile::generateDocumentInfo() const
         const KArchiveEntry *corepropsFile = m_xpsArchive->directory()->entry(m_corePropertiesFileName);
 
         QXmlStreamReader xml;
-        xml.addData(readFileOrDirectoryParts(corepropsFile));
+        xml.addData(readPart(corepropsFile));
         while (!xml.atEnd()) {
             xml.readNext();
             if (xml.isEndElement()) {

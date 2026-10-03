@@ -7,11 +7,14 @@
 #ifndef _OKULAR_GSRENDERERTHREAD_H_
 #define _OKULAR_GSRENDERERTHREAD_H_
 
+#include "generator_ghostview.h"
 #include <QMutex>
 #include <QQueue>
 #include <QSemaphore>
 #include <QString>
 #include <QThread>
+#include <atomic>
+#include <memory>
 
 #include <libspectre/spectre.h>
 
@@ -27,7 +30,6 @@ struct GSRendererThreadRequest {
     explicit GSRendererThreadRequest(GSGenerator *_owner)
         : owner(_owner)
         , request(nullptr)
-        , spectrePage(nullptr)
         , textAAbits(1)
         , graphicsAAbits(1)
         , magnify(1.0)
@@ -38,7 +40,11 @@ struct GSRendererThreadRequest {
 
     GSGenerator *owner;
     Okular::PixmapRequest *request;
-    SpectrePage *spectrePage;
+    int pageNumber = 0;
+    int width = 0, height = 0;
+    quint64 generation = 0;
+    std::shared_ptr<std::atomic_bool> cancelled;
+    QString fileName;
     int textAAbits;
     int graphicsAAbits;
     double magnify;
@@ -58,7 +64,7 @@ public:
     void addRequest(const GSRendererThreadRequest &req);
 
 Q_SIGNALS:
-    void imageDone(QImage *image, Okular::PixmapRequest *request);
+    void imageDone(GSGenerator *owner, quint64 generation, QImage *image, Okular::PixmapRequest *request);
 
 private:
     GSRendererThread();

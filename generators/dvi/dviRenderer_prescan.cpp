@@ -292,25 +292,13 @@ void dviRenderer::prescan_ParsePSHeaderSpecial(const QString &cp)
     qCDebug(OkularDviDebug) << "PostScript-special, header " << cp;
 #endif
 
-    QString _file = cp;
-
-    // If the file is not found in the current directory, use kpsewhich
-    // to find it.
-    if (!QFile::exists(_file)) {
-        // Otherwise, use kpsewhich to find the eps file.
-        // Make sure kpsewhich is in PATH and not just in the CWD
-        static const QString fullPath = QStandardPaths::findExecutable(QStringLiteral("kpsewhich"));
-        if (!fullPath.isEmpty()) {
-            KProcess proc;
-            proc << fullPath << cp;
-            proc.setOutputChannelMode(KProcess::SeparateChannels);
-            proc.execute();
-            _file = QString::fromLocal8Bit(proc.readLine().trimmed());
-        }
-    }
-
-    if (QFile::exists(_file)) {
-        PS_interface->PostScriptHeaderString->append(QStringLiteral(" (%1) run\n").arg(_file));
+    const QString resource = PS_interface->stageResource(ghostscript_interface::locateEPSfile(cp.trimmed(), baseURL));
+    if (!resource.isEmpty()) {
+        QString escaped = resource;
+        escaped.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+        escaped.replace(QLatin1Char('('), QLatin1String("\\("));
+        escaped.replace(QLatin1Char(')'), QLatin1String("\\)"));
+        PS_interface->PostScriptHeaderString->append(QStringLiteral(" (%1) run\n").arg(escaped));
     }
 }
 
@@ -486,7 +474,11 @@ void dviRenderer::prescan_ParsePSFileSpecial(const QString &cp)
 
     int clip = include_command.indexOf(QStringLiteral(" clip")); // -1 if clip keyword is not present, >= 0 otherwise
 
-    if (QFile::exists(EPSfilename)) {
+    EPSfilename = PS_interface->stageResource(EPSfilename);
+    if (!EPSfilename.isEmpty()) {
+        EPSfilename.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+        EPSfilename.replace(QLatin1Char('('), QLatin1String("\\("));
+        EPSfilename.replace(QLatin1Char(')'), QLatin1String("\\)"));
         double PS_H = (currinf.data.dvi_h * 300.0) / (65536 * 1200) - 300;
         double PS_V = (currinf.data.dvi_v * 300.0) / 1200 - 300;
         PostScriptOutPutString->append(QStringLiteral(" %1 %2 moveto\n").arg(PS_H).arg(PS_V));

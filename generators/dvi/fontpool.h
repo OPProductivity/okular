@@ -11,9 +11,11 @@
 #include "fontEncodingPool.h"
 #include "fontMap.h"
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QObject>
 #include <QProcess>
+#include <QTemporaryDir>
 
 #ifdef HAVE_FREETYPE
 #include <ft2build.h>
@@ -200,6 +202,8 @@ private:
 
     // The handle on the external process.
     std::unique_ptr<QProcess> kpsewhich_;
+    QTemporaryDir m_generatedFonts;
+    QElapsedTimer m_fontWork;
 
 private Q_SLOTS:
     // This slot is called when MetaFont is run via the kpsewhich program.

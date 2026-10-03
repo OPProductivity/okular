@@ -106,10 +106,15 @@ void ExecutorJS::execute(const QString &script, const std::shared_ptr<Event> &ev
     d->m_events.push(event);
     d->updateEvent();
 
-    QMetaObject::invokeMethod(d->m_watchdogTimer, qOverload<>(&QTimer::start));
-    d->m_interpreter.setInterrupted(false);
+    const bool outermost = d->m_events.size() == 1;
+    if (outermost) {
+        d->m_interpreter.setInterrupted(false);
+        QMetaObject::invokeMethod(d->m_watchdogTimer, qOverload<>(&QTimer::start), Qt::BlockingQueuedConnection);
+    }
     auto result = d->m_interpreter.evaluate(script, QStringLiteral("okular.js"));
-    QMetaObject::invokeMethod(d->m_watchdogTimer, qOverload<>(&QTimer::stop));
+    if (outermost) {
+        QMetaObject::invokeMethod(d->m_watchdogTimer, qOverload<>(&QTimer::stop), Qt::BlockingQueuedConnection);
+    }
 
     if (result.isError()) {
         qCDebug(OkularCoreDebug) << "JS exception" << result.toString() << "(line " << result.property(QStringLiteral("lineNumber")).toInt() << ")";

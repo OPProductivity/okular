@@ -8,8 +8,11 @@
 #include <config.h>
 
 #include "TeXFont.h"
+#include "core/processbudget_p.h"
 #include "debug_dvi.h"
 #include "fontpool.h"
+#include <QDirIterator>
+#include <QRegularExpression>
 
 #include <KLocalizedString>
 
@@ -162,6 +165,8 @@ bool fontPool::areFontsLocated()
 void fontPool::locateFonts()
 {
     kpsewhichOutput.clear();
+    m_fontWork.start();
+    int passes = 0;
 
     // First, we try and find those fonts which exist on disk
     // already. If virtual fonts are found, they will add new fonts to
@@ -171,7 +176,7 @@ void fontPool::locateFonts()
     do {
         vffound = false;
         locateFonts(false, false, &vffound);
-    } while (vffound);
+    } while (vffound && ++passes < 32 && m_fontWork.elapsed() < 60000);
 
     // If still not all fonts are found, look again, this time with
     // on-demand generation of PK fonts enabled.
@@ -204,6 +209,15 @@ void fontPool::locateFonts()
 
 void fontPool::locateFonts(bool makePK, bool locateTFMonly, bool *virtualFontsFound)
 {
+    if (fontList.size() > 512 || !m_generatedFonts.isValid() || !m_fontWork.isValid() || m_fontWork.elapsed() >= 60000) {
+        return;
+    }
+    static const QRegularExpression safeName(QStringLiteral("^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$"));
+    for (const TeXFontDefinition *font : std::as_const(fontList)) {
+        if (!safeName.match(font->fontname).hasMatch()) {
+            return;
+        }
+    }
     // Make sure kpsewhich is in PATH and not just in the CWD
     static const QString kpsewhichFullPath = QStandardPaths::findExecutable(QStringLiteral("kpsewhich"));
     if (kpsewhichFullPath.isEmpty()) {
@@ -259,7 +273,12 @@ void fontPool::locateFonts(bool makePK, bool locateTFMonly, bool *virtualFontsFo
     // the output of MetaFont into its stderr. Here we make sure this
     // output is intercepted and parsed.
     kpsewhich_ = std::make_unique<QProcess>();
-    connect(kpsewhich_.get(), &QProcess::readyReadStandardError, this, &fontPool::mf_output_receiver);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    for (const QString &key : {QStringLiteral("VARTEXFONTS"), QStringLiteral("TEXMFVAR"), QStringLiteral("TEXMFOUTPUT"), QStringLiteral("TMPDIR"), QStringLiteral("TEMP"), QStringLiteral("TMP")}) {
+        env.insert(key, m_generatedFonts.path());
+    }
+    kpsewhich_->setProcessEnvironment(env);
+    kpsewhich_->setWorkingDirectory(m_generatedFonts.path());
 
     // Now run... kpsewhich. In case of error, kick up a fuss.
     // This string is not going to be quoted, as it might be were it
@@ -267,44 +286,27 @@ void fontPool::locateFonts(bool makePK, bool locateTFMonly, bool *virtualFontsFo
     const QString kpsewhich_exe = QStringLiteral("kpsewhich");
     kpsewhichOutput += QStringLiteral("<b>") + kpsewhich_exe + QLatin1Char(' ') + kpsewhich_args.join(QStringLiteral(" ")) + QStringLiteral("</b>");
 
-    kpsewhich_->start(kpsewhichFullPath, kpsewhich_args, QIODevice::ReadOnly | QIODevice::Text);
-    if (!kpsewhich_->waitForStarted()) {
-        QApplication::restoreOverrideCursor();
-        Q_EMIT error(i18n("<qt><p>There were problems running <em>kpsewhich</em>. As a result, "
-                          "some font files could not be located, and your document might be unreadable.<br/>"
-                          "Possible reason: the <em>kpsewhich</em> program is perhaps not installed on your system, "
-                          "or it cannot be found in the current search path.</p>"
-                          "<p><small><b>PATH:</b> %1</small></p>"
-                          "<p><small>%2</small></p></qt>",
-                          QString::fromLocal8Bit(qgetenv("PATH")),
-                          kpsewhichOutput.replace(QLatin1String("\n"), QLatin1String("<br/>"))),
-                     -1);
-
-        // This makes sure the we don't try to run kpsewhich again
-        markFontsAsLocated();
+    kpsewhich_->setProgram(kpsewhichFullPath);
+    kpsewhich_->setArguments(kpsewhich_args);
+    QByteArray output, errors;
+    const int result = Okular::runBoundedHelper(*kpsewhich_, output, errors, qMax(1, 60000 - int(m_fontWork.elapsed())), [&]() {
+        qint64 total = 0;
+        int count = 0;
+        QDirIterator files(m_generatedFonts.path(), QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            files.next();
+            total += files.fileInfo().size();
+            if (++count > 1024 || total > 64 * 1024 * 1024)
+                return false;
+        }
+        return true;
+    });
+    if (result != 0) {
         kpsewhich_.reset();
         return;
     }
-    // We wait here while the external program runs concurrently.
-    kpsewhich_->waitForFinished();
-
-    // Handle fatal errors.
-    int const kpsewhich_exit_code = kpsewhich_->exitCode();
-    if (kpsewhich_exit_code < 0) {
-        Q_EMIT warning(i18n("<qt>The font generation by <em>kpsewhich</em> was aborted (exit code %1, error %2). As a "
-                            "result, some font files could not be located, and your document might be unreadable.</qt>",
-                            kpsewhich_exit_code,
-                            kpsewhich_->errorString()),
-                       -1);
-
-        // This makes sure the we don't try to run kpsewhich again
-        if (makePK == false) {
-            markFontsAsLocated();
-        }
-    }
-
-    // Create a list with all filenames found by the kpsewhich program.
-    const QStringList fileNameList = QString::fromLocal8Bit(kpsewhich_->readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    kpsewhichOutput += QString::fromLocal8Bit(errors).toHtmlEscaped();
+    const QStringList fileNameList = QString::fromLocal8Bit(output).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
 
     // Now associate the file names found with the fonts
     QList<TeXFontDefinition *>::iterator it_fontp = fontList.begin();
