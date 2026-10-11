@@ -41,6 +41,7 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QStandardPaths>
+#include <QStatusBar>
 #include <QTabBar>
 #include <QStyleOption>
 #include <QTabWidget>
@@ -147,10 +148,13 @@ private Q_SLOTS:
     void testEpubAtLongWindowsPath();
     void testForwardedWindowReturnsFromOffscreen();
     void testForwardedFileOpensInExistingTabs();
+    void testForwardedBatchReportsAlreadyOpenFiles();
     void testForwardingRejectsOversizeRequest();
     void testShortcutLaunchReusesExistingWindow();
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
     void testSeparateWindowSessionsRestore();
+    void testRecentlyClosedWindowRestoresRemainingTabs();
+    void testClosedWindowExpiresAfterFifteenMinutes();
     void testClosingPrimaryTransfersForwarding();
     void testElevatedRequestDeclinesUnreadableFile();
     void testNewWindowActionAppearsInFileMenu();
@@ -440,6 +444,33 @@ void MainShellTest::testForwardedFileOpensInExistingTabs()
     socket.disconnectFromServer();
 }
 
+void MainShellTest::testForwardedBatchReportsAlreadyOpenFiles()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QUrl first = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl second = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    shell->openUrl(first);
+
+    for (const QUrl &url : {second, first, second}) {
+        QLocalSocket socket;
+        socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
+        QVERIFY(socket.waitForConnected(1000));
+        const QByteArray payload = tabOpenRequest(0x4f4b5450, options, {url.toLocalFile()});
+        QCOMPARE(socket.write(payload), payload.size());
+        socket.flush();
+        QTRY_VERIFY_WITH_TIMEOUT(socket.bytesAvailable() > 0, 1000);
+        QCOMPARE(socket.read(1), QByteArrayLiteral("A"));
+        socket.disconnectFromServer();
+    }
+
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(shell->statusBar()->currentMessage().contains(QStringLiteral("1 document opened; 2 were already open")), 3000);
+    QVERIFY(shell->statusBar()->isVisible());
+}
+
 void MainShellTest::testForwardingRejectsOversizeRequest()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -530,6 +561,70 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
         QVERIFY(restored.at(1)->geometry().width() < restored.at(0)->geometry().width());
     }
+}
+
+void MainShellTest::testRecentlyClosedWindowRestoresRemainingTabs()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QUrl closedTab = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl retainedTab = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    first->openUrl(closedTab);
+    first->openUrl(retainedTab);
+    first->closeTab(0);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    second->openUrl(closedTab);
+    second->saveOpenDocumentSession();
+    const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(ids.size(), 2);
+
+    QVERIFY(first->close());
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
+    const KConfigGroup closedGroup = KSharedConfig::openConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
+    const QStringList savedUrls = closedGroup.readPathEntry("Urls", QStringList());
+    QCOMPARE(savedUrls.size(), 1);
+    QCOMPARE(QDir::cleanPath(QUrl(savedUrls.first()).toLocalFile()), QDir::cleanPath(retainedTab.toLocalFile()));
+    QVERIFY(closedGroup.readEntry("ClosedAt", qint64(0)) > 0);
+    delete first;
+    QVERIFY(second->close());
+    delete second;
+
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    const QList<Shell *> restored = getShells();
+    QCOMPARE(restored.size(), 2);
+    QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(retainedTab.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(closedTab.toLocalFile()));
+}
+
+void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    first->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    second->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    second->saveOpenDocumentSession();
+    const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(ids.size(), 2);
+
+    QVERIFY(first->close());
+    delete first;
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup closedGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
+    closedGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() - 15 * 60 - 1);
+    config->sync();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), QStringList {ids.last()});
+    QVERIFY(second->close());
+    delete second;
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), QStringList {ids.last()});
 }
 
 void MainShellTest::testClosingPrimaryTransfersForwarding()

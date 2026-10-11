@@ -200,6 +200,7 @@ private:
 #if defined(Q_OS_WIN)
     void startWindowsTabOpenServer();
     void handleWindowsTabOpenConnection();
+    void showWindowsBatchOpenSummary();
     void raisePrivateWindowsShell();
     void applyPrivateWindowsStartupGeometry();
     bool moveTabToNewWindow(int tab, const QPoint &dropPosition = QPoint());
@@ -249,6 +250,10 @@ private:
     QTimer *m_openDocumentSessionSaveTimer = nullptr;
 #if defined(Q_OS_WIN)
     QLocalServer *m_windowsTabOpenServer = nullptr;
+    QTimer *m_windowsBatchOpenSummaryTimer = nullptr;
+    int m_windowsBatchOpenedCount = 0;
+    int m_windowsBatchAlreadyOpenCount = 0;
+    QPointer<Shell> m_windowsBatchSummaryTarget;
     bool m_privateWindowsStartupGeometryApplied = false;
     QPointer<KParts::ReadWritePart> m_draggedTabPart;
     QPoint m_tabDragStart;

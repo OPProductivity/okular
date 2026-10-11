@@ -72,6 +72,7 @@
 #include <QSet>
 #include <QSignalBlocker>
 #include <QStandardPaths>
+#include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
@@ -105,12 +106,14 @@ static const char *const SESSION_URL_KEY = "Urls";
 static const char *const SESSION_TAB_KEY = "ActiveTab";
 static const char *const SESSION_ACTIVE_URL_KEY = "ActiveUrl";
 static constexpr int OPEN_DOCUMENT_SESSION_SAVE_DELAY_MS = 2000;
+static constexpr qint64 CLOSED_WINDOW_RESTORE_GRACE_SECONDS = 15 * 60;
 static constexpr qint64 RECENT_FILE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60;
 static constexpr int MAX_RECENT_FILES = 50;
 #if defined(Q_OS_WIN)
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
 static constexpr quint32 WINDOWS_TAB_OPEN_ELEVATED_MAGIC = 0x4f4b5445; // OKTE
 static constexpr quint32 WINDOWS_TAB_OPEN_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+static constexpr int WINDOWS_BATCH_OPEN_SUMMARY_DELAY_MS = 1200;
 static QPointer<QLocalServer> s_windowsTabOpenPrimaryServer;
 
 static QByteArray tokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS kind)
@@ -641,6 +644,11 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_openDocumentSessionSaveTimer = new QTimer(this);
         m_openDocumentSessionSaveTimer->setSingleShot(true);
         connect(m_openDocumentSessionSaveTimer, &QTimer::timeout, this, &Shell::saveOpenDocumentSession);
+#if defined(Q_OS_WIN)
+        m_windowsBatchOpenSummaryTimer = new QTimer(this);
+        m_windowsBatchOpenSummaryTimer->setSingleShot(true);
+        connect(m_windowsBatchOpenSummaryTimer, &QTimer::timeout, this, &Shell::showWindowsBatchOpenSummary);
+#endif
 
         m_sidebar = new Sidebar;
         m_sidebar->setObjectName(QStringLiteral("okular_sidebar"));
@@ -996,17 +1004,30 @@ void Shell::handleWindowsTabOpenConnection()
                 socket->flush();
                 const QString page = ShellUtils::page(serializedOptions);
                 Shell *raiseTarget = this;
+                bool countedRequest = false;
                 for (const QString &path : std::as_const(paths)) {
                     if (path == QLatin1String("-")) {
                         continue;
                     }
                     const QUrl url = ShellUtils::urlFromArg(path, ShellUtils::qfileExistFunc(), page);
+                    const bool alreadyOpen = findTabIndex(url) >= 0 || otherWindowWithUrl(url);
                     openDocument(url, serializedOptions);
                     if (findTabIndex(url) >= 0) {
                         raiseTarget = this;
                     } else if (Shell *other = otherWindowWithUrl(url)) {
                         raiseTarget = other;
                     }
+                    if (alreadyOpen) {
+                        ++m_windowsBatchAlreadyOpenCount;
+                        countedRequest = true;
+                    } else if (findTabIndex(url) >= 0 || otherWindowWithUrl(url)) {
+                        ++m_windowsBatchOpenedCount;
+                        countedRequest = true;
+                    }
+                }
+                if (countedRequest) {
+                    m_windowsBatchSummaryTarget = raiseTarget;
+                    m_windowsBatchOpenSummaryTimer->start(WINDOWS_BATCH_OPEN_SUMMARY_DELAY_MS);
                 }
 
                 if (!ShellUtils::noRaise(serializedOptions)) {
@@ -1028,6 +1049,19 @@ void Shell::handleWindowsTabOpenConnection()
             readRequest();
         }
     }
+}
+
+void Shell::showWindowsBatchOpenSummary()
+{
+    if (m_windowsBatchAlreadyOpenCount > 0) {
+        const QString message = i18np("%1 document opened", "%1 documents opened", m_windowsBatchOpenedCount)
+            + i18np("; %1 was already open", "; %1 were already open", m_windowsBatchAlreadyOpenCount);
+        Shell *target = m_windowsBatchSummaryTarget && m_windowsBatchSummaryTarget->isVisible() ? m_windowsBatchSummaryTarget.data() : this;
+        target->statusBar()->showMessage(message, 6000);
+    }
+    m_windowsBatchOpenedCount = 0;
+    m_windowsBatchAlreadyOpenCount = 0;
+    m_windowsBatchSummaryTarget.clear();
 }
 
 void Shell::raisePrivateWindowsShell()
@@ -1436,7 +1470,17 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     if (!KSharedConfig::openConfig(configFilePath)->group(GeneralGroupKey()).readEntry("ShellRestoreOpenDocuments", true)) {
         return {};
     }
-    return savedWindowIds(ShellSessionConfig());
+    const KSharedConfigPtr config = ShellSessionConfig();
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QStringList restorable;
+    for (const QString &id : savedWindowIds(config)) {
+        const KConfigGroup group = config->group(WindowSessionGroupKey(id));
+        const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
+        if (closedAt == 0 || (closedAt <= now && now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS)) {
+            restorable.append(id);
+        }
+    }
+    return restorable;
 }
 
 bool Shell::savedWindowWasSeparate(const QString &sessionWindowId)
@@ -1537,10 +1581,27 @@ void Shell::saveOpenDocumentSession()
 
     const QStringList previousIds = savedWindowIds(config);
     QStringList ids;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    // Preserve the earlier window order, including recently closed windows.
+    for (const QString &id : previousIds) {
+        const auto live = std::find_if(windows.cbegin(), windows.cend(), [&id](const Shell *window) { return window->m_sessionWindowId == id; });
+        if (live != windows.cend()) {
+            ids.append(id);
+        } else {
+            const KConfigGroup group = config->group(WindowSessionGroupKey(id));
+            const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
+            if (closedAt > 0 && closedAt <= now && now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
+                ids.append(id);
+            }
+        }
+    }
     for (const Shell *window : std::as_const(windows)) {
-        ids.append(window->m_sessionWindowId);
+        if (!ids.contains(window->m_sessionWindowId)) {
+            ids.append(window->m_sessionWindowId);
+        }
         KConfigGroup windowGroup = config->group(WindowSessionGroupKey(window->m_sessionWindowId));
         window->writeOpenDocumentSession(windowGroup);
+        windowGroup.deleteEntry("ClosedAt");
         windowGroup.writeEntry("IntentionalSeparateWindow", window->m_intentionalSeparateWindow);
         if (window->m_intentionalSeparateWindow) {
             windowGroup.writeEntry("WindowGeometry", window->saveGeometry());
@@ -2104,6 +2165,14 @@ void Shell::closeEvent(QCloseEvent *event)
         }
     }
     if (survivor) {
+        // Keep this window's remaining tabs through a coordinated shutdown,
+        // while allowing a deliberate close to expire after fifteen minutes.
+        if (!m_unique && openDocumentSessionRestoreEnabled()) {
+            saveOpenDocumentSession();
+            const KSharedConfigPtr config = ShellSessionConfig();
+            config->group(WindowSessionGroupKey(m_sessionWindowId)).writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch());
+            config->sync();
+        }
         if (m_windowsTabOpenServer) {
             // Keep the primary pipe alive after closing its original window.
             m_windowsTabOpenServer->disconnect(this);
@@ -2111,6 +2180,13 @@ void Shell::closeEvent(QCloseEvent *event)
             survivor->m_windowsTabOpenServer = m_windowsTabOpenServer;
             connect(m_windowsTabOpenServer, &QLocalServer::newConnection, survivor, &Shell::handleWindowsTabOpenConnection);
             m_windowsTabOpenServer = nullptr;
+            if (m_windowsBatchOpenSummaryTimer->isActive()) {
+                survivor->m_windowsBatchOpenedCount += m_windowsBatchOpenedCount;
+                survivor->m_windowsBatchAlreadyOpenCount += m_windowsBatchAlreadyOpenCount;
+                survivor->m_windowsBatchSummaryTarget = m_windowsBatchSummaryTarget;
+                survivor->m_windowsBatchOpenSummaryTimer->start(m_windowsBatchOpenSummaryTimer->remainingTime());
+                m_windowsBatchOpenSummaryTimer->stop();
+            }
         }
         m_sessionClosed = true;
         survivor->saveOpenDocumentSession();
