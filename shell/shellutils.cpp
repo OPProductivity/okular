@@ -16,6 +16,13 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#if defined(Q_OS_WIN)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #if HAVE_DBUS
 #include <QUuid>
 #endif
@@ -158,16 +165,38 @@ QString editorCmd(const QString &serializedOptions)
 }
 
 #if defined(Q_OS_WIN)
+static QString windowsTabOpenIntegritySuffix()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return QStringLiteral("unknown");
+    }
+
+    TOKEN_ELEVATION elevation = {};
+    DWORD size = 0;
+    const bool queried = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size);
+    CloseHandle(token);
+    if (!queried) {
+        return QStringLiteral("unknown");
+    }
+    // A normal Explorer launch cannot write to a pipe owned by an elevated
+    // Okular. Keep both the pipe and its primary mutex in the same integrity
+    // level so ordinary launches can still join one another without waiting
+    // for an inaccessible elevated instance.
+    return elevation.TokenIsElevated ? QStringLiteral("elevated") : QStringLiteral("standard");
+}
+
 QString windowsTabOpenServerName()
 {
+    const QString baseName = QStringLiteral("okular-private-tab-open-v3-%1").arg(windowsTabOpenIntegritySuffix());
     const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
     if (!testInstance.isEmpty()) {
-        return QStringLiteral("okular-private-tab-open-v2-test-%1").arg(testInstance);
+        return baseName + QStringLiteral("-test-%1").arg(testInstance);
     }
     if (QStandardPaths::isTestModeEnabled()) {
-        return QStringLiteral("okular-private-tab-open-v2-test-%1").arg(QCoreApplication::applicationPid());
+        return baseName + QStringLiteral("-test-%1").arg(QCoreApplication::applicationPid());
     }
-    return QStringLiteral("okular-private-tab-open-v2");
+    return baseName;
 }
 #endif
 
