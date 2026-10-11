@@ -205,6 +205,7 @@ private:
     void updateOpenTabButtonGeometry();
 #if defined(Q_OS_WIN)
     void startWindowsTabOpenServer();
+    void mergeWindowSessionsWrittenByPreviousOwner();
     void handleWindowsTabOpenConnection();
     void showWindowsBatchOpenSummary();
     void raisePrivateWindowsShell();

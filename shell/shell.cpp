@@ -1017,6 +1017,7 @@ void Shell::startWindowsTabOpenServer()
     if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
         s_windowsTabOpenPrimaryServer = m_windowsTabOpenServer;
         if (m_openDocumentSessionReady) {
+            mergeWindowSessionsWrittenByPreviousOwner();
             saveOpenDocumentSession();
         }
         return;
@@ -1038,6 +1039,7 @@ void Shell::startWindowsTabOpenServer()
         if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
             s_windowsTabOpenPrimaryServer = m_windowsTabOpenServer;
             if (m_openDocumentSessionReady) {
+                mergeWindowSessionsWrittenByPreviousOwner();
                 saveOpenDocumentSession();
             }
             return;
@@ -1047,6 +1049,46 @@ void Shell::startWindowsTabOpenServer()
     m_windowsTabOpenServer->deleteLater();
     m_windowsTabOpenServer = nullptr;
     m_windowsPrimaryRetryTimer->start(2000);
+}
+
+void Shell::mergeWindowSessionsWrittenByPreviousOwner()
+{
+    // This process may have read okularrc while the old primary was still
+    // closing. KSharedConfig does not automatically see the other process's
+    // final write. Merge its window records before our first owned save.
+    const KSharedConfigPtr config = ShellSessionConfig();
+    QString path = config->name();
+    if (QFileInfo(path).isRelative()) {
+        path = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)).filePath(path);
+    }
+    KConfig disk(path, KConfig::SimpleConfig);
+    const QStringList diskIds = disk.group(WindowSessionIndexGroupKey()).readEntry("WindowIds", QStringList());
+    QStringList mergedIds;
+    for (const QString &id : diskIds) {
+        const QUuid uuid(id);
+        if (uuid.isNull() || uuid.toString(QUuid::WithoutBraces) != id || mergedIds.contains(id)) {
+            continue;
+        }
+        const KConfigGroup stored = disk.group(WindowSessionGroupKey(id));
+        if (stored.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
+            continue;
+        }
+        KConfigGroup cached = config->group(WindowSessionGroupKey(id));
+        if (cached.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
+            stored.copyTo(&cached);
+        }
+        mergedIds.append(id);
+    }
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        const Shell *window = qobject_cast<Shell *>(widget);
+        if (window && !window->m_unique && window->m_openDocumentSessionReady && !window->m_sessionClosed && !mergedIds.contains(window->m_sessionWindowId)) {
+            mergedIds.append(window->m_sessionWindowId);
+        }
+    }
+    KConfigGroup index = config->group(WindowSessionIndexGroupKey());
+    if (index.readEntry("WindowIds", QStringList()) != mergedIds) {
+        index.writeEntry("WindowIds", mergedIds);
+    }
 }
 
 void Shell::handleWindowsTabOpenConnection()
@@ -1716,6 +1758,11 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     QStringList restorable;
     const bool capture = s_windowsSessionRestoreInProgress && !s_startupWindowSnapshotCaptured;
+    if (capture && Okular::claimWindowsTabOpenPrimary()) {
+        // The old primary can finish its last save after this process first
+        // opened KSharedConfig. Snapshot the finished on-disk session.
+        config->reparseConfiguration();
+    }
     for (const QString &id : savedWindowIds(config)) {
         const KConfigGroup group = config->group(WindowSessionGroupKey(id));
         const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));

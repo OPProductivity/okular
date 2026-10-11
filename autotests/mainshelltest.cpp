@@ -159,6 +159,9 @@ private Q_SLOTS:
     void testCloseAllHiddenWindowsRestoresThreeSessions();
     void testCloseAllAfterClosingSomeTabsRestoresRemainingTabs();
     void testFiveWindowShutdownSurvivesPartialRestoreSave();
+    void testSequentialFiveWindowCloseRestoresAll();
+    void testPrimaryTakeoverKeepsPreviousOwnersWindows();
+    void testStartupReadsPreviousOwnersFinalSession();
     void testClosedWindowsCannotOverwriteCompletedShutdown();
     void testEmptyFirstWindowDoesNotRestore();
     void testTemporarilyMissingTabSurvivesRestore();
@@ -788,6 +791,95 @@ void MainShellTest::testFiveWindowShutdownSurvivesPartialRestoreSave()
     first->saveOpenDocumentSession();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
     QCOMPARE(getShells().size(), 4);
+}
+
+void MainShellTest::testSequentialFiveWindowCloseRestoresAll()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QList<Shell *> windows {findShell()};
+    QVERIFY(windows.first());
+    const QStringList files {
+        QStringLiteral(KDESRCDIR "data/file1.pdf"),
+        QStringLiteral(KDESRCDIR "data/file2.pdf"),
+        QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"),
+        QStringLiteral(KDESRCDIR "data/tocreload.pdf"),
+        QStringLiteral(KDESRCDIR "data/file1.pdf"),
+    };
+    windows.first()->openUrl(QUrl::fromLocalFile(files.first()));
+    for (const QString &file : files.mid(1)) {
+        Shell *window = new Shell(options, QString(), true);
+        QVERIFY(window->isValid());
+        window->show();
+        window->openUrl(QUrl::fromLocalFile(file));
+        windows.append(window);
+    }
+    windows.last()->saveOpenDocumentSession();
+    const QStringList expectedIds = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(expectedIds.size(), 5);
+    for (Shell *window : std::as_const(windows)) {
+        QVERIFY(window->close());
+        delete window;
+        QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
+    }
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QCOMPARE(getShells().size(), 5);
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
+}
+
+void MainShellTest::testPrimaryTakeoverKeepsPreviousOwnersWindows()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    shell->saveOpenDocumentSession();
+    const QStringList cachedIds = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(cachedIds.size(), 1);
+
+    const KSharedConfigPtr cached = KSharedConfig::openConfig();
+    KConfig previousOwner(cached->name(), KConfig::SimpleConfig);
+    const QString previousId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    previousOwner.group(QStringLiteral("Shell Open Documents Session Window ") + previousId)
+        .writePathEntry("Urls", QStringList {QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")).url()});
+    previousOwner.group(QStringLiteral("Shell Open Documents Session Windows"))
+        .writeEntry("WindowIds", QStringList {cachedIds.first(), previousId});
+    previousOwner.sync();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), cachedIds);
+
+    shell->mergeWindowSessionsWrittenByPreviousOwner();
+    shell->saveOpenDocumentSession();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 2);
+    delete shell;
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QCOMPARE(getShells().size(), 2);
+}
+
+void MainShellTest::testStartupReadsPreviousOwnersFinalSession()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    shell->saveOpenDocumentSession();
+    const QString firstId = Shell::savedOpenDocumentSessionWindowIds().first();
+    delete shell;
+
+    const KSharedConfigPtr cached = KSharedConfig::openConfig();
+    KConfig previousOwner(cached->name(), KConfig::SimpleConfig);
+    const QString secondId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    previousOwner.group(QStringLiteral("Shell Open Documents Session Window ") + secondId)
+        .writePathEntry("Urls", QStringList {QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")).url()});
+    previousOwner.group(QStringLiteral("Shell Open Documents Session Windows"))
+        .writeEntry("WindowIds", QStringList {firstId, secondId});
+    previousOwner.sync();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), QStringList {firstId});
+
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QCOMPARE(getShells().size(), 2);
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), (QStringList {firstId, secondId}));
 }
 
 void MainShellTest::testClosedWindowsCannotOverwriteCompletedShutdown()
