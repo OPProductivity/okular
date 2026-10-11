@@ -7,7 +7,7 @@
 - Regular Windows file opens, including several files opened at once from File Explorer, join one tabbed Okular window. A second launch from a shortcut raises the existing window.
 - The tab bar remains visible with one document. An adjacent `+` button opens another document. On a crowded tab bar, `<` and `>` select neighboring documents, while `o` centers the active tab when space permits.
 - Open local documents and the active tab can be restored at the next launch; this can be turned off in Okular's settings. If the launch names another PDF, it opens as a tab to the right of the restored tabs.
-- **File > Open in New Window** creates a separate window when you explicitly need one. Each window saves its own tabs, so closing one window does not replace the other window's saved session.
+- **File > Open in New Window** creates a separate window on the right half of the current screen when you explicitly need one. Each window saves its own tabs; separate windows also restore their position and size. Closing one window does not replace the other window's saved session.
 - A PDF launched from an elevated Windows application joins the existing normal Okular window when that window can read the file. If the file needs elevated access, it opens in a separate elevated Okular instance. The normal window never takes on the launcher's privileges.
 - The welcome screen lists up to 50 documents opened within the last 72 hours in one scrollable list. It can reopen all listed documents in one step, or reopen a Ctrl/Shift selected subset from anywhere in the list.
 - Revealing selected files in their containing folders groups files by folder and limits each action to five folders.

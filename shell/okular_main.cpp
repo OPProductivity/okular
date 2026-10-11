@@ -478,11 +478,12 @@ Status main(const QStringList &paths, const QString &serializedOptions)
 
 #if defined(Q_OS_WIN)
     for (const QString &id : savedWindowIds.mid(1)) {
-        Shell *additional = new Shell(serializedOptions, id);
+        Shell *additional = new Shell(serializedOptions, id, true);
         if (!additional->isValid()) {
             delete additional;
             continue;
         }
+        additional->restoreSavedWindowGeometry();
         additional->show();
         if (!additional->restoreOpenDocumentSession()) {
             delete additional;

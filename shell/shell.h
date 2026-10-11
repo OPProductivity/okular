@@ -62,7 +62,7 @@ public:
     /**
      * Constructor
      */
-    explicit Shell(const QString &serializedOptions = QString(), const QString &sessionWindowId = QString());
+    explicit Shell(const QString &serializedOptions = QString(), const QString &sessionWindowId = QString(), bool intentionalSeparateWindow = false);
 
     /**
      * Default Destructor
@@ -82,6 +82,7 @@ public:
     bool restoreOpenDocumentSession();
 #if defined(Q_OS_WIN)
     static QStringList savedOpenDocumentSessionWindowIds();
+    void restoreSavedWindowGeometry();
 #endif
     void saveOpenDocumentSession();
 
@@ -249,6 +250,7 @@ private:
     QString m_sessionWindowId;
     quint64 m_sessionWindowOrder = 0;
     bool m_sessionClosed = false;
+    bool m_intentionalSeparateWindow = false;
 #endif
 
     bool m_isValid;

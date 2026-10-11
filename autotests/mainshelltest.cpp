@@ -459,9 +459,10 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     Shell *first = findShell();
     QVERIFY(first);
     first->openUrl(firstUrl);
-    Shell *second = new Shell(options);
+    Shell *second = new Shell(options, QString(), true);
     QVERIFY(second->isValid());
     second->show();
+    second->resize(640, 480);
     second->openUrl(secondUrl);
     second->saveOpenDocumentSession();
 
@@ -470,6 +471,8 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(ids.size(), 2);
     QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(0)).readPathEntry("Urls", QStringList()).size(), 1);
     QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readPathEntry("Urls", QStringList()).size(), 1);
+    const QByteArray secondGeometry = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readEntry("WindowGeometry", QByteArray());
+    QVERIFY(!secondGeometry.isEmpty());
 
     delete second;
     delete first;
@@ -478,6 +481,8 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(restored.size(), 2);
     QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
     QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+    QCOMPARE(restored.at(1)->geometry().height(), 480);
+    QVERIFY(restored.at(1)->geometry().width() < restored.at(0)->geometry().width());
 }
 
 void MainShellTest::testClosingPrimaryTransfersForwarding()

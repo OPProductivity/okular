@@ -311,7 +311,7 @@ private:
     QWidget *m_dumbTitleWidget = nullptr;
 };
 
-Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId)
+Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, bool intentionalSeparateWindow)
     : KParts::MainWindow()
     , m_menuBarWasShown(true)
     , m_toolBarWasShown(true)
@@ -321,8 +321,10 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId)
     const QUuid savedId(sessionWindowId);
     m_sessionWindowId = savedId.isNull() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : savedId.toString(QUuid::WithoutBraces);
     m_sessionWindowOrder = ++s_nextSessionWindowOrder;
+    m_intentionalSeparateWindow = intentionalSeparateWindow;
 #else
     Q_UNUSED(sessionWindowId);
+    Q_UNUSED(intentionalSeparateWindow);
 #endif
     setObjectName(QStringLiteral("okular::Shell#"));
     setContextMenuPolicy(Qt::NoContextMenu);
@@ -754,7 +756,7 @@ void Shell::handleWindowsTabOpenConnection()
 
 void Shell::raisePrivateWindowsShell()
 {
-    if (!isFullScreen() && (isMinimized() || isMaximized())) {
+    if (!m_intentionalSeparateWindow && !isFullScreen() && (isMinimized() || isMaximized())) {
         showNormal();
     } else {
         show();
@@ -762,7 +764,9 @@ void Shell::raisePrivateWindowsShell()
 
     // Every regular Windows file launch starts from the same normal-window
     // placement, including launches forwarded to an existing shell.
-    applyPrivateWindowsStartupGeometry();
+    if (!m_intentionalSeparateWindow) {
+        applyPrivateWindowsStartupGeometry();
+    }
 
     raise();
     activateWindow();
@@ -1147,6 +1151,17 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     }
     return savedWindowIds(ShellSessionConfig());
 }
+
+void Shell::restoreSavedWindowGeometry()
+{
+    if (!m_intentionalSeparateWindow) {
+        return;
+    }
+    const QByteArray geometry = ShellSessionConfig()->group(WindowSessionGroupKey(m_sessionWindowId)).readEntry("WindowGeometry", QByteArray());
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    }
+}
 #endif
 
 void Shell::writeOpenDocumentSession(KConfigGroup &group) const
@@ -1219,6 +1234,9 @@ void Shell::saveOpenDocumentSession()
         ids.append(window->m_sessionWindowId);
         KConfigGroup windowGroup = config->group(WindowSessionGroupKey(window->m_sessionWindowId));
         window->writeOpenDocumentSession(windowGroup);
+        if (window->m_intentionalSeparateWindow) {
+            windowGroup.writeEntry("WindowGeometry", window->saveGeometry());
+        }
     }
     // Keep the original group as a migration and downgrade-compatible copy of
     // the first window. The index and per-window groups are authoritative.
@@ -1401,11 +1419,17 @@ void Shell::fileOpenImpl(bool newWindow)
 #if defined(Q_OS_WIN)
         Shell *destination = this;
         if (newWindow && !urlList.isEmpty()) {
-            destination = new Shell;
+            destination = new Shell(QString(), QString(), true);
             if (!destination->isValid()) {
                 delete destination;
                 destination = nullptr;
             } else {
+                QScreen *targetScreen = screen() ? screen() : QGuiApplication::primaryScreen();
+                if (targetScreen) {
+                    QRect area = targetScreen->availableGeometry();
+                    const int leftWidth = area.width() / 2;
+                    destination->setGeometry(area.x() + leftWidth, area.y(), area.width() - leftWidth, area.height());
+                }
                 destination->show();
             }
         }
@@ -1485,7 +1509,7 @@ void Shell::showEvent(QShowEvent *e)
     KParts::MainWindow::showEvent(e);
 
 #if defined(Q_OS_WIN)
-    if (!m_privateWindowsStartupGeometryApplied && !isFullScreen()) {
+    if (!m_privateWindowsStartupGeometryApplied && !isFullScreen() && !m_intentionalSeparateWindow) {
         m_privateWindowsStartupGeometryApplied = true;
         applyPrivateWindowsStartupGeometry();
         QTimer::singleShot(0, this, &Shell::applyPrivateWindowsStartupGeometry);
