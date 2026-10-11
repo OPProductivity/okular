@@ -33,6 +33,7 @@ class Sidebar;
 class KRecentFilesAction;
 class KToggleAction;
 class QResizeEvent;
+class QCloseEvent;
 class QTabWidget;
 class QTimer;
 class QToolButton;
@@ -61,7 +62,7 @@ public:
     /**
      * Constructor
      */
-    explicit Shell(const QString &serializedOptions = QString());
+    explicit Shell(const QString &serializedOptions = QString(), const QString &sessionWindowId = QString());
 
     /**
      * Default Destructor
@@ -79,6 +80,10 @@ public:
     bool openDocumentInTab(const QUrl &url, const QString &serializedOptions);
     void prepareForDocumentOpen();
     bool restoreOpenDocumentSession();
+#if defined(Q_OS_WIN)
+    static QStringList savedOpenDocumentSessionWindowIds();
+#endif
+    void saveOpenDocumentSession();
 
 public Q_SLOTS:
     Q_SCRIPTABLE Q_NOREPLY void tryRaise(const QString &startupId);
@@ -107,6 +112,7 @@ protected:
     void setCaption(const QString &caption) override;
 
     bool queryClose() override;
+    void closeEvent(QCloseEvent *event) override;
 
     void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -114,6 +120,9 @@ protected:
 
 private Q_SLOTS:
     void fileOpen();
+#if defined(Q_OS_WIN)
+    void fileOpenInNewWindow();
+#endif
 
     void slotUpdateFullScreen();
     void slotShowMenubar();
@@ -150,7 +159,6 @@ private Q_SLOTS:
     void undoCloseTab();
     void moveTabData(int from, int to);
     void scheduleOpenDocumentSessionSave();
-    void saveOpenDocumentSession();
 
     void slotFitWindowToPage(const QSize pageViewSize, const QSize pageSize);
 
@@ -169,6 +177,7 @@ private:
     void pruneRecentFiles();
     void setupAccel();
     void setupActions();
+    void fileOpenImpl(bool newWindow);
     void openNewTab(const QUrl &url, const QString &serializedOptions);
     void applyOptionsToPart(QObject *part, const QString &serializedOptions);
     void connectPart(const KParts::ReadWritePart *part);
@@ -236,6 +245,11 @@ private:
 #endif
     bool m_openDocumentSessionReady = false;
     bool m_restoringOpenDocumentSession = false;
+#if defined(Q_OS_WIN)
+    QString m_sessionWindowId;
+    quint64 m_sessionWindowOrder = 0;
+    bool m_sessionClosed = false;
+#endif
 
     bool m_isValid;
 };

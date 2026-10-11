@@ -10,6 +10,7 @@
 #include <config-okular.h>
 
 #include <KConfigGroup>
+#include <KActionCollection>
 #include <KLineEdit>
 #include <KLocalizedString>
 #include <KRecentFilesAction>
@@ -34,6 +35,7 @@
 #include <QItemSelectionModel>
 #include <QListView>
 #include <QMenu>
+#include <QMenuBar>
 #include <QPrintDialog>
 #include <QProcessEnvironment>
 #include <QScreen>
@@ -140,6 +142,10 @@ private Q_SLOTS:
     void testForwardedFileOpensInExistingTabs();
     void testShortcutLaunchReusesExistingWindow();
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
+    void testSeparateWindowSessionsRestore();
+    void testClosingPrimaryTransfersForwarding();
+    void testElevatedRequestDeclinesUnreadableFile();
+    void testNewWindowActionAppearsInFileMenu();
     void testDroppedFileOpensNewTab();
 #endif
     void testOpenDocumentSessionRestoresTabs();
@@ -229,6 +235,13 @@ void MainShellTest::init()
     partConfig->sync();
     KSharedConfigPtr config = KSharedConfig::openConfig();
     config->group(QStringLiteral("Shell Open Documents Session")).deleteGroup();
+#if defined(Q_OS_WIN)
+    const KConfigGroup windows = config->group(QStringLiteral("Shell Open Documents Session Windows"));
+    for (const QString &id : windows.readEntry("WindowIds", QStringList())) {
+        config->group(QStringLiteral("Shell Open Documents Session Window ") + id).deleteGroup();
+    }
+    config->group(QStringLiteral("Shell Open Documents Session Windows")).deleteGroup();
+#endif
     config->sync();
 
     // Clean docdatas
@@ -435,6 +448,123 @@ void MainShellTest::testAdditionalShellDoesNotRegisterWindowsTabOpenServer()
     QVERIFY(!additional->m_windowsTabOpenServer);
     QVERIFY(primary->m_windowsTabOpenServer->isListening());
     delete additional;
+}
+
+void MainShellTest::testSeparateWindowSessionsRestore()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    first->openUrl(firstUrl);
+    Shell *second = new Shell(options);
+    QVERIFY(second->isValid());
+    second->show();
+    second->openUrl(secondUrl);
+    second->saveOpenDocumentSession();
+
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(ids.size(), 2);
+    QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(0)).readPathEntry("Urls", QStringList()).size(), 1);
+    QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readPathEntry("Urls", QStringList()).size(), 1);
+
+    delete second;
+    delete first;
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    const QList<Shell *> restored = getShells();
+    QCOMPARE(restored.size(), 2);
+    QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+}
+
+void MainShellTest::testClosingPrimaryTransfersForwarding()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *primary = findShell();
+    QVERIFY(primary);
+    Shell *additional = new Shell(options);
+    QVERIFY(additional->isValid());
+    additional->show();
+    const QUrl url = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    QVERIFY(primary->close());
+    QCOMPARE(additional->m_windowsTabOpenServer->isListening(), true);
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 1);
+    delete primary;
+
+    QLocalSocket socket;
+    socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
+    QVERIFY(socket.waitForConnected(1000));
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(0x4f4b5450) << options << QStringList {url.toLocalFile()};
+    QCOMPARE(socket.write(payload), payload.size());
+    socket.flush();
+    QTRY_COMPARE(additional->m_tabs.first().part->url(), url);
+    QVERIFY(socket.bytesAvailable() > 0 || socket.waitForReadyRead(1000));
+    QCOMPARE(socket.read(1), QByteArrayLiteral("A"));
+}
+
+void MainShellTest::testElevatedRequestDeclinesUnreadableFile()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString missingPath = dir.filePath(QStringLiteral("missing.pdf"));
+    QLocalSocket socket;
+    socket.connectToServer(ShellUtils::windowsStandardTabOpenServerName(), QIODevice::ReadWrite);
+    QVERIFY(socket.waitForConnected(1000));
+    ULONG serverPid = 0;
+    QVERIFY(GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket.socketDescriptor()), &serverPid));
+    QCOMPARE(serverPid, ULONG(QCoreApplication::applicationPid()));
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(0x4f4b5445) << options << QStringList {missingPath};
+    QCOMPARE(socket.write(payload), payload.size());
+    socket.flush();
+    QTRY_VERIFY_WITH_TIMEOUT(socket.bytesAvailable() > 0, 1000);
+    QCOMPARE(socket.read(1), QByteArrayLiteral("D"));
+    QVERIFY(shell->m_tabs.first().part->url().isEmpty());
+
+    QLocalSocket readableSocket;
+    readableSocket.connectToServer(ShellUtils::windowsStandardTabOpenServerName(), QIODevice::ReadWrite);
+    QVERIFY(readableSocket.waitForConnected(1000));
+    QByteArray readablePayload;
+    QDataStream readableStream(&readablePayload, QIODevice::WriteOnly);
+    readableStream.setVersion(QDataStream::Qt_6_0);
+    const QUrl readableUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    readableStream << quint32(0x4f4b5445) << options << QStringList {readableUrl.toLocalFile()};
+    QCOMPARE(readableSocket.write(readablePayload), readablePayload.size());
+    readableSocket.flush();
+    QTRY_COMPARE(QDir::cleanPath(shell->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(readableUrl.toLocalFile()));
+    QTRY_VERIFY_WITH_TIMEOUT(readableSocket.bytesAvailable() > 0, 1000);
+    QCOMPARE(readableSocket.read(1), QByteArrayLiteral("A"));
+}
+
+void MainShellTest::testNewWindowActionAppearsInFileMenu()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QAction *action = shell->actionCollection()->action(QStringLiteral("file_open_new_window"));
+    QVERIFY(action);
+    bool inFileMenu = false;
+    for (QAction *menuAction : shell->menuBar()->actions()) {
+        if (menuAction->objectName() == QLatin1String("file") && menuAction->menu()) {
+            inFileMenu = menuAction->menu()->actions().contains(action);
+        }
+    }
+    QVERIFY(inFileMenu);
 }
 
 void MainShellTest::testDroppedFileOpensNewTab()

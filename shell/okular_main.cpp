@@ -55,6 +55,7 @@ static bool shouldRestoreOpenDocumentSession(const QString &serializedOptions)
 #include <windows.h>
 
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
+static constexpr quint32 WINDOWS_TAB_OPEN_ELEVATED_MAGIC = 0x4f4b5445; // OKTE
 
 static QString WindowsTabOpenStartupLockPath()
 {
@@ -90,7 +91,7 @@ static bool shouldAttachExistingWindowsInstance(const QStringList &paths, const 
     if (QStandardPaths::isTestModeEnabled() && qEnvironmentVariableIsEmpty("OKULAR_TEST_INSTANCE")) {
         return false;
     }
-    return !ShellUtils::unique(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::editorCmd(serializedOptions).isEmpty()
+    return !paths.contains(QStringLiteral("-")) && !ShellUtils::unique(serializedOptions) && !ShellUtils::showPrintDialogAndExit(serializedOptions) && ShellUtils::editorCmd(serializedOptions).isEmpty()
         && (!paths.isEmpty() || shouldRestoreOpenDocumentSession(serializedOptions));
 }
 
@@ -100,22 +101,73 @@ static bool shouldHoldWindowsStartupLock(const QStringList &paths, const QString
         && shouldRestoreOpenDocumentSession(serializedOptions);
 }
 
-static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &serializedOptions, int timeoutMs)
+static bool isTrustedStandardWindowsServer(const QLocalSocket &socket)
+{
+    ULONG serverPid = 0;
+    if (!GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket.socketDescriptor()), &serverPid)) {
+        return false;
+    }
+    const HANDLE server = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, serverPid);
+    if (!server) {
+        return false;
+    }
+    std::wstring path(32768, L'\0');
+    DWORD pathLength = DWORD(path.size());
+    const bool matchingImage = QueryFullProcessImageNameW(server, 0, path.data(), &pathLength)
+        && QDir::cleanPath(QString::fromWCharArray(path.data(), pathLength)).compare(QDir::cleanPath(QCoreApplication::applicationFilePath()), Qt::CaseInsensitive) == 0;
+
+    HANDLE serverToken = nullptr;
+    HANDLE ownToken = nullptr;
+    bool matchingUserAndLevel = false;
+    if (matchingImage && OpenProcessToken(server, TOKEN_QUERY, &serverToken) && OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &ownToken)) {
+        TOKEN_ELEVATION elevation = {};
+        DWORD returned = 0;
+        if (GetTokenInformation(serverToken, TokenElevation, &elevation, sizeof(elevation), &returned) && !elevation.TokenIsElevated) {
+            DWORD serverUserSize = 0;
+            DWORD ownUserSize = 0;
+            GetTokenInformation(serverToken, TokenUser, nullptr, 0, &serverUserSize);
+            GetTokenInformation(ownToken, TokenUser, nullptr, 0, &ownUserSize);
+            if (serverUserSize && ownUserSize) {
+                QByteArray serverUser(int(serverUserSize), '\0');
+                QByteArray ownUser(int(ownUserSize), '\0');
+                if (GetTokenInformation(serverToken, TokenUser, serverUser.data(), serverUserSize, &returned)
+                    && GetTokenInformation(ownToken, TokenUser, ownUser.data(), ownUserSize, &returned)) {
+                    matchingUserAndLevel = EqualSid(reinterpret_cast<TOKEN_USER *>(serverUser.data())->User.Sid, reinterpret_cast<TOKEN_USER *>(ownUser.data())->User.Sid);
+                }
+            }
+        }
+    }
+    if (serverToken) {
+        CloseHandle(serverToken);
+    }
+    if (ownToken) {
+        CloseHandle(ownToken);
+    }
+    CloseHandle(server);
+    return matchingImage && matchingUserAndLevel;
+}
+
+static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &serializedOptions, int timeoutMs, const QString &serverName = ShellUtils::windowsTabOpenServerName())
 {
     if (!ShellUtils::noRaise(serializedOptions)) {
         AllowSetForegroundWindow(ASFW_ANY);
     }
 
     QLocalSocket socket;
-    socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
+    socket.connectToServer(serverName, QIODevice::ReadWrite);
     if (!socket.waitForConnected(timeoutMs)) {
+        return false;
+    }
+
+    const bool crossingDown = ShellUtils::windowsProcessIsElevated() && serverName == ShellUtils::windowsStandardTabOpenServerName();
+    if (crossingDown && !isTrustedStandardWindowsServer(socket)) {
         return false;
     }
 
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
     stream.setVersion(QDataStream::Qt_6_0);
-    stream << WINDOWS_TAB_OPEN_MAGIC << serializedOptions << paths;
+    stream << (crossingDown ? WINDOWS_TAB_OPEN_ELEVATED_MAGIC : WINDOWS_TAB_OPEN_MAGIC) << serializedOptions << paths;
 
     if (socket.write(payload) != payload.size() || !socket.waitForBytesWritten(1000)) {
         return false;
@@ -151,6 +203,14 @@ static bool attachExistingWindowsInstance(const QStringList &paths, const QStrin
 {
     if (!shouldAttachExistingWindowsInstance(paths, serializedOptions)) {
         return false;
+    }
+
+    // An elevated launcher can send a file path to the user's existing normal
+    // Okular. It must never make the normal process connect to an elevated
+    // endpoint. The receiving process opens the file with its own permissions.
+    if (ShellUtils::windowsProcessIsElevated() && !paths.isEmpty()
+        && sendWindowsTabOpenRequest(paths, serializedOptions, 500, ShellUtils::windowsStandardTabOpenServerName())) {
+        return true;
     }
 
     if (sendWindowsTabOpenRequest(paths, serializedOptions, 500)) {
@@ -400,7 +460,12 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     }
 #endif
 
+#if defined(Q_OS_WIN)
+    const QStringList savedWindowIds = shouldRestoreOpenDocumentSession(serializedOptions) ? Shell::savedOpenDocumentSessionWindowIds() : QStringList();
+    Shell *shell = new Shell(serializedOptions, savedWindowIds.value(0));
+#else
     Shell *shell = new Shell(serializedOptions);
+#endif
     if (!shell->isValid()) {
         return Error;
     }
@@ -410,6 +475,20 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     }
     shell->show();
     const bool restoredOpenDocumentSession = shouldRestoreOpenDocumentSession(serializedOptions) && shell->restoreOpenDocumentSession();
+
+#if defined(Q_OS_WIN)
+    for (const QString &id : savedWindowIds.mid(1)) {
+        Shell *additional = new Shell(serializedOptions, id);
+        if (!additional->isValid()) {
+            delete additional;
+            continue;
+        }
+        additional->show();
+        if (!additional->restoreOpenDocumentSession()) {
+            delete additional;
+        }
+    }
+#endif
 
 #if defined(Q_OS_WIN)
     windowsStartupLock.reset();
@@ -429,6 +508,8 @@ Status main(const QStringList &paths, const QString &serializedOptions)
             shell->show();
         }
     }
+
+    shell->saveOpenDocumentSession();
 
     return Success;
 }

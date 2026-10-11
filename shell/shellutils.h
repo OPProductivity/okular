@@ -38,6 +38,8 @@ QString editorCmd(const QString &serializedOptions);
 
 #if defined(Q_OS_WIN)
 QString windowsTabOpenServerName();
+QString windowsStandardTabOpenServerName();
+bool windowsProcessIsElevated();
 #endif
 
 #if HAVE_DBUS

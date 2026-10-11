@@ -186,9 +186,14 @@ static QString windowsTabOpenIntegritySuffix()
     return elevation.TokenIsElevated ? QStringLiteral("elevated") : QStringLiteral("standard");
 }
 
-QString windowsTabOpenServerName()
+bool windowsProcessIsElevated()
 {
-    const QString baseName = QStringLiteral("okular-private-tab-open-v3-%1").arg(windowsTabOpenIntegritySuffix());
+    return windowsTabOpenIntegritySuffix() == QLatin1String("elevated");
+}
+
+static QString windowsTabOpenServerNameForSuffix(const QString &suffix)
+{
+    const QString baseName = QStringLiteral("okular-private-tab-open-v3-%1").arg(suffix);
     const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
     if (!testInstance.isEmpty()) {
         return baseName + QStringLiteral("-test-%1").arg(testInstance);
@@ -197,6 +202,16 @@ QString windowsTabOpenServerName()
         return baseName + QStringLiteral("-test-%1").arg(QCoreApplication::applicationPid());
     }
     return baseName;
+}
+
+QString windowsTabOpenServerName()
+{
+    return windowsTabOpenServerNameForSuffix(windowsTabOpenIntegritySuffix());
+}
+
+QString windowsStandardTabOpenServerName()
+{
+    return windowsTabOpenServerNameForSuffix(QStringLiteral("standard"));
 }
 #endif
 

@@ -39,6 +39,7 @@
 #include <KXMLGUIFactory>
 #include <QAbstractSocket>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -71,6 +72,7 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
+#include <QUuid>
 #include <QWindow>
 
 // local includes
@@ -101,6 +103,7 @@ static constexpr qint64 RECENT_FILE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60;
 static constexpr int MAX_RECENT_FILES = 50;
 #if defined(Q_OS_WIN)
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
+static constexpr quint32 WINDOWS_TAB_OPEN_ELEVATED_MAGIC = 0x4f4b5445; // OKTE
 static QPointer<QLocalServer> s_windowsTabOpenPrimaryServer;
 #endif
 
@@ -129,8 +132,51 @@ static inline QString GeneralGroupKey()
 }
 static inline QString OpenDocumentSessionGroupKey()
 {
+#if defined(Q_OS_WIN)
+    if (ShellUtils::windowsProcessIsElevated()) {
+        return QStringLiteral("Shell Open Documents Session Elevated");
+    }
+#endif
     return QStringLiteral("Shell Open Documents Session");
 }
+
+static KSharedConfigPtr ShellSessionConfig()
+{
+#if defined(Q_OS_WIN)
+    // Elevated shells must not race the normal shell's okularrc writes.
+    if (ShellUtils::windowsProcessIsElevated()) {
+        return KSharedConfig::openConfig(QStringLiteral("okular-elevated-sessionrc"));
+    }
+#endif
+    return KSharedConfig::openConfig();
+}
+
+#if defined(Q_OS_WIN)
+static quint64 s_nextSessionWindowOrder = 0;
+
+static QString WindowSessionIndexGroupKey()
+{
+    return OpenDocumentSessionGroupKey() + QStringLiteral(" Windows");
+}
+
+static QString WindowSessionGroupKey(const QString &id)
+{
+    return OpenDocumentSessionGroupKey() + QStringLiteral(" Window ") + id;
+}
+
+static QStringList savedWindowIds(const KSharedConfigPtr &config)
+{
+    const QStringList stored = config->group(WindowSessionIndexGroupKey()).readEntry("WindowIds", QStringList());
+    QStringList valid;
+    for (const QString &id : stored) {
+        const QUuid uuid(id);
+        if (!uuid.isNull() && uuid.toString(QUuid::WithoutBraces) == id && !valid.contains(id)) {
+            valid.append(id);
+        }
+    }
+    return valid;
+}
+#endif
 
 class ResizableStackedWidget : public QStackedWidget
 {
@@ -265,12 +311,19 @@ private:
     QWidget *m_dumbTitleWidget = nullptr;
 };
 
-Shell::Shell(const QString &serializedOptions)
+Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId)
     : KParts::MainWindow()
     , m_menuBarWasShown(true)
     , m_toolBarWasShown(true)
     , m_isValid(true)
 {
+#if defined(Q_OS_WIN)
+    const QUuid savedId(sessionWindowId);
+    m_sessionWindowId = savedId.isNull() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : savedId.toString(QUuid::WithoutBraces);
+    m_sessionWindowOrder = ++s_nextSessionWindowOrder;
+#else
+    Q_UNUSED(sessionWindowId);
+#endif
     setObjectName(QStringLiteral("okular::Shell#"));
     setContextMenuPolicy(Qt::NoContextMenu);
     // otherwise .rc file won't be found by unit test
@@ -603,6 +656,7 @@ void Shell::startWindowsTabOpenServer()
     }
 
     m_windowsTabOpenServer = new QLocalServer(this);
+    m_windowsTabOpenServer->setSocketOptions(QLocalServer::UserAccessOption);
     connect(m_windowsTabOpenServer, &QLocalServer::newConnection, this, &Shell::handleWindowsTabOpenConnection);
 
     if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
@@ -654,7 +708,22 @@ void Shell::handleWindowsTabOpenConnection()
                 return;
             }
 
-            if (magic == WINDOWS_TAB_OPEN_MAGIC) {
+            if (magic == WINDOWS_TAB_OPEN_MAGIC || magic == WINDOWS_TAB_OPEN_ELEVATED_MAGIC) {
+                if (magic == WINDOWS_TAB_OPEN_ELEVATED_MAGIC) {
+                    for (const QString &path : std::as_const(paths)) {
+                        const QUrl url = ShellUtils::urlFromArg(path, ShellUtils::qfileExistFunc());
+                        if (url.isLocalFile()) {
+                            QFile file(url.toLocalFile());
+                            if (!file.open(QIODevice::ReadOnly)) {
+                                socket->write("D", 1);
+                                socket->flush();
+                                socket->disconnectFromServer();
+                                socket->deleteLater();
+                                return;
+                            }
+                        }
+                    }
+                }
                 // Confirm receipt before document loading can block the GUI thread.
                 socket->write("A", 1);
                 socket->flush();
@@ -908,6 +977,12 @@ void Shell::readSettings()
 void Shell::writeSettings()
 {
     saveRecents();
+#if defined(Q_OS_WIN)
+    if (ShellUtils::windowsProcessIsElevated()) {
+        ShellSessionConfig()->sync();
+        return;
+    }
+#endif
 
     KConfigGroup sidebarGroup = KSharedConfig::openConfig()->group(GeneralGroupKey());
     sidebarGroup.writeEntry(SIDEBAR_LOCKED_KEY, m_sidebar->isLocked());
@@ -927,20 +1002,20 @@ void Shell::writeSettings()
 void Shell::saveRecents()
 {
     pruneRecentFiles();
-    m_recent->saveEntries(KSharedConfig::openConfig()->group(RecentFilesGroupKey()));
+    m_recent->saveEntries(ShellSessionConfig()->group(RecentFilesGroupKey()));
 }
 
 void Shell::addRecentUrl(const QUrl &url)
 {
     m_recent->addUrl(url);
     if (m_recent->urls().contains(url)) {
-        KSharedConfig::openConfig()->group(RecentOpenTimesGroupKey()).writeEntry(recentOpenTimeKey(url).constData(), QDateTime::currentSecsSinceEpoch());
+        ShellSessionConfig()->group(RecentOpenTimesGroupKey()).writeEntry(recentOpenTimeKey(url).constData(), QDateTime::currentSecsSinceEpoch());
     }
 }
 
 void Shell::pruneRecentFiles()
 {
-    KConfigGroup times = KSharedConfig::openConfig()->group(RecentOpenTimesGroupKey());
+    KConfigGroup times = ShellSessionConfig()->group(RecentOpenTimesGroupKey());
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     QSet<QByteArray> retainedKeys;
     for (const QUrl &url : m_recent->urls()) {
@@ -962,6 +1037,11 @@ void Shell::pruneRecentFiles()
 void Shell::setupActions()
 {
     KStandardAction::open(this, SLOT(fileOpen()), actionCollection());
+#if defined(Q_OS_WIN)
+    QAction *openNewWindow = actionCollection()->addAction(QStringLiteral("file_open_new_window"));
+    openNewWindow->setText(i18n("Open in New Window..."));
+    connect(openNewWindow, &QAction::triggered, this, &Shell::fileOpenInNewWindow);
+#endif
     m_recent = KStandardAction::openRecent(this, SLOT(openUrl(QUrl)), actionCollection());
     m_recent->setToolBarMode(KRecentFilesAction::MenuMode);
     connect(m_recent, &QAction::triggered, this, &Shell::showOpenRecentMenu);
@@ -1058,6 +1138,17 @@ bool Shell::openDocumentSessionRestoreEnabled() const
     return KSharedConfig::openConfig(configFilePath)->group(GeneralGroupKey()).readEntry("ShellRestoreOpenDocuments", true);
 }
 
+#if defined(Q_OS_WIN)
+QStringList Shell::savedOpenDocumentSessionWindowIds()
+{
+    const QString configFilePath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1String("/okularpartrc");
+    if (!KSharedConfig::openConfig(configFilePath)->group(GeneralGroupKey()).readEntry("ShellRestoreOpenDocuments", true)) {
+        return {};
+    }
+    return savedWindowIds(ShellSessionConfig());
+}
+#endif
+
 void Shell::writeOpenDocumentSession(KConfigGroup &group) const
 {
     QStringList urls;
@@ -1102,9 +1193,49 @@ void Shell::saveOpenDocumentSession()
         return;
     }
 
-    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KSharedConfigPtr config = ShellSessionConfig();
+#if defined(Q_OS_WIN)
+    // One process owns the tab endpoint. A timed-out fallback process must not
+    // overwrite that owner's session when both are using the same account.
+    if (!s_windowsTabOpenPrimaryServer && !QStandardPaths::isTestModeEnabled()) {
+        return;
+    }
+
+    QList<Shell *> windows;
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        Shell *window = qobject_cast<Shell *>(widget);
+        if (window && !window->m_unique && window->m_openDocumentSessionReady && !window->m_sessionClosed) {
+            windows.append(window);
+        }
+    }
+    std::sort(windows.begin(), windows.end(), [](const Shell *a, const Shell *b) { return a->m_sessionWindowOrder < b->m_sessionWindowOrder; });
+    if (windows.isEmpty()) {
+        return;
+    }
+
+    const QStringList previousIds = savedWindowIds(config);
+    QStringList ids;
+    for (const Shell *window : std::as_const(windows)) {
+        ids.append(window->m_sessionWindowId);
+        KConfigGroup windowGroup = config->group(WindowSessionGroupKey(window->m_sessionWindowId));
+        window->writeOpenDocumentSession(windowGroup);
+    }
+    // Keep the original group as a migration and downgrade-compatible copy of
+    // the first window. The index and per-window groups are authoritative.
+    KConfigGroup legacyGroup = config->group(OpenDocumentSessionGroupKey());
+    windows.first()->writeOpenDocumentSession(legacyGroup);
+    KConfigGroup indexGroup = config->group(WindowSessionIndexGroupKey());
+    indexGroup.writeEntry("Version", 2);
+    indexGroup.writeEntry("WindowIds", ids);
+    for (const QString &oldId : previousIds) {
+        if (!ids.contains(oldId)) {
+            config->group(WindowSessionGroupKey(oldId)).deleteGroup();
+        }
+    }
+#else
     KConfigGroup group = config->group(OpenDocumentSessionGroupKey());
     writeOpenDocumentSession(group);
+#endif
     saveRecents();
     config->sync();
 }
@@ -1115,7 +1246,14 @@ bool Shell::restoreOpenDocumentSession()
         return false;
     }
 
-    const KConfigGroup group = KSharedConfig::openConfig()->group(OpenDocumentSessionGroupKey());
+    KSharedConfigPtr config = ShellSessionConfig();
+#if defined(Q_OS_WIN)
+    const QStringList ids = savedWindowIds(config);
+    const QString groupName = ids.contains(m_sessionWindowId) ? WindowSessionGroupKey(m_sessionWindowId) : OpenDocumentSessionGroupKey();
+#else
+    const QString groupName = OpenDocumentSessionGroupKey();
+#endif
+    const KConfigGroup group = config->group(groupName);
     const QStringList urls = group.readPathEntry(SESSION_URL_KEY, QStringList());
     if (urls.isEmpty()) {
         return false;
@@ -1172,11 +1310,22 @@ bool Shell::restoreOpenDocumentSession()
         setActiveTab(targetTab);
     }
 
-    saveOpenDocumentSession();
     return restoredAny;
 }
 
 void Shell::fileOpen()
+{
+    fileOpenImpl(false);
+}
+
+#if defined(Q_OS_WIN)
+void Shell::fileOpenInNewWindow()
+{
+    fileOpenImpl(true);
+}
+#endif
+
+void Shell::fileOpenImpl(bool newWindow)
 {
     // this slot is called whenever the File->Open menu is selected,
     // the Open shortcut is pressed (usually CTRL+O) or the Open toolbar
@@ -1249,9 +1398,31 @@ void Shell::fileOpen()
     dlg->setWindowTitle(i18n("Open Document")); /* cppcheck-suppress nullPointerRedundantCheck ; QPointer things here is not understood*/
     if (dlg->exec() && dlg) {                   /* cppcheck-suppress nullPointerRedundantCheck ; QPointer things here is not understood*/
         const QList<QUrl> urlList = dlg->selectedUrls();
+#if defined(Q_OS_WIN)
+        Shell *destination = this;
+        if (newWindow && !urlList.isEmpty()) {
+            destination = new Shell;
+            if (!destination->isValid()) {
+                delete destination;
+                destination = nullptr;
+            } else {
+                destination->show();
+            }
+        }
+        if (destination) {
+            for (const QUrl &url : urlList) {
+                destination->openDocumentInTab(url, QString());
+            }
+            if (newWindow) {
+                destination->saveOpenDocumentSession();
+            }
+        }
+#else
+        Q_UNUSED(newWindow);
         for (const QUrl &url : urlList) {
             openUrl(url);
         }
+#endif
     }
 
     if (dlg) {
@@ -1485,6 +1656,38 @@ bool Shell::queryClose()
         }
     }
     return true;
+}
+
+void Shell::closeEvent(QCloseEvent *event)
+{
+    KParts::MainWindow::closeEvent(event);
+    if (!event->isAccepted()) {
+        return;
+    }
+#if defined(Q_OS_WIN)
+    Shell *survivor = nullptr;
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        Shell *window = qobject_cast<Shell *>(widget);
+        if (window && window != this && window->isVisible() && !window->m_sessionClosed && !window->m_unique) {
+            survivor = window;
+            break;
+        }
+    }
+    if (survivor) {
+        if (m_windowsTabOpenServer) {
+            // Keep the primary pipe alive after closing its original window.
+            m_windowsTabOpenServer->disconnect(this);
+            m_windowsTabOpenServer->setParent(survivor);
+            survivor->m_windowsTabOpenServer = m_windowsTabOpenServer;
+            connect(m_windowsTabOpenServer, &QLocalServer::newConnection, survivor, &Shell::handleWindowsTabOpenConnection);
+            m_windowsTabOpenServer = nullptr;
+        }
+        m_sessionClosed = true;
+        survivor->saveOpenDocumentSession();
+    } else {
+        saveOpenDocumentSession();
+    }
+#endif
 }
 
 void Shell::setActiveTab(int tab)
@@ -1995,7 +2198,7 @@ void Shell::triggerUpdateRecentItems(const int maxItems)
     m_welcomeScreen->setMaxRecentItems(m_recent->maxItems());
     // saveRecents() dumps the recent files in correct order to KConfigGroup, respecting the allowed no. of recent items, discarding older items if needed
     refreshRecentsOnWelcomeScreen();
-    m_recent->loadEntries(KSharedConfig::openConfig()->group(RecentFilesGroupKey()));
+    m_recent->loadEntries(ShellSessionConfig()->group(RecentFilesGroupKey()));
 }
 
 void Shell::readRecentFilesSettings()
@@ -2008,7 +2211,7 @@ void Shell::readRecentFilesSettings()
     m_recent->setMaxItems(std::clamp(maxRecentItems, 0, MAX_RECENT_FILES));
     m_welcomeScreen->setMaxRecentItems(m_recent->maxItems());
     m_welcomeScreen->loadRecents();
-    m_recent->loadEntries(KSharedConfig::openConfig()->group(RecentFilesGroupKey()));
+    m_recent->loadEntries(ShellSessionConfig()->group(RecentFilesGroupKey()));
     pruneRecentFiles();
 }
 
