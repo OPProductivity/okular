@@ -132,6 +132,7 @@ if(BUILD_DESKTOP)
     )
     target_compile_definitions(mainshelltest PRIVATE OKULAR_BINARY="$<TARGET_FILE:okular>")
     if(WIN32)
+        target_link_libraries(mainshelltest Advapi32)
         if(MSVC)
             target_sources(mainshelltest PRIVATE ../shell/okular.manifest)
         else()
@@ -154,6 +155,9 @@ if(BUILD_DESKTOP)
         TEST_NAME "annotationtoolbartest"
         LINK_LIBRARIES Qt6::Test okularpart
     )
+    if(WIN32)
+        target_link_libraries(annotationtoolbartest Advapi32)
+    endif()
 
     if (HAVE_X11)
         target_link_libraries(annotationtoolbartest Qt6::GuiPrivate)

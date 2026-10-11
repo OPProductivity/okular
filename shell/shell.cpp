@@ -43,6 +43,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
 #if HAVE_DBUS
 #include <QDBusConnection>
 #endif // HAVE_DBUS
@@ -66,6 +67,7 @@
 #include <QPointer>
 #include <QProxyStyle>
 #include <QScreen>
+#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QTabBar>
@@ -90,6 +92,8 @@
 #endif
 #include <windows.h>
 #include <dwmapi.h>
+#include <aclapi.h>
+#include <sddl.h>
 #endif
 
 static const char *shouldShowMenuBarComingFromFullScreen = "shouldShowMenuBarComingFromFullScreen";
@@ -143,6 +147,14 @@ static inline QString OpenDocumentSessionGroupKey()
 static KSharedConfigPtr ShellSessionConfig()
 {
 #if defined(Q_OS_WIN)
+    const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
+    if (!testInstance.isEmpty()) {
+        const QString testDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/test-sessions");
+        QDir().mkpath(testDirectory);
+        const QString instanceHash = QString::fromLatin1(QCryptographicHash::hash(testInstance.toUtf8(), QCryptographicHash::Sha256).toHex());
+        const QString role = ShellUtils::windowsProcessIsElevated() ? QStringLiteral("elevated") : QStringLiteral("standard");
+        return KSharedConfig::openConfig(testDirectory + QStringLiteral("/okular-%1-%2.ini").arg(role, instanceHash));
+    }
     // Elevated shells must not race the normal shell's okularrc writes.
     if (ShellUtils::windowsProcessIsElevated()) {
         return KSharedConfig::openConfig(QStringLiteral("okular-elevated-sessionrc"));
@@ -152,6 +164,89 @@ static KSharedConfigPtr ShellSessionConfig()
 }
 
 #if defined(Q_OS_WIN)
+// Keep a small, private history of complete session configurations. These are
+// local recovery copies, never project files or inputs to ordinary startup.
+static bool secureSessionBackupDirectory(const QString &path)
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return false;
+    }
+    DWORD length = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &length);
+    QByteArray user(length, '\0');
+    const bool hasUser = length && GetTokenInformation(token, TokenUser, user.data(), length, &length);
+    CloseHandle(token);
+    if (!hasUser) {
+        return false;
+    }
+
+    LPWSTR userSid = nullptr;
+    if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(user.data())->User.Sid, &userSid)) {
+        return false;
+    }
+    const QString descriptor = QStringLiteral("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%1)").arg(QString::fromWCharArray(userSid));
+    LocalFree(userSid);
+    PSECURITY_DESCRIPTOR securityDescriptor = nullptr;
+    const std::wstring descriptorString = descriptor.toStdWString();
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptorString.c_str(), SDDL_REVISION_1, &securityDescriptor, nullptr)) {
+        return false;
+    }
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    PACL dacl = nullptr;
+    const bool hasDacl = GetSecurityDescriptorDacl(securityDescriptor, &present, &dacl, &defaulted) && present && dacl;
+    const std::wstring directory = path.toStdWString();
+    const bool secured = hasDacl && SetNamedSecurityInfoW(const_cast<LPWSTR>(directory.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl, nullptr) == ERROR_SUCCESS;
+    LocalFree(securityDescriptor);
+    return secured;
+}
+
+static void saveSessionRecoveryCopy(const KSharedConfigPtr &config)
+{
+    QString sourcePath = config->name();
+    if (QFileInfo(sourcePath).isRelative()) {
+        sourcePath = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)).filePath(sourcePath);
+    }
+    QFile source(sourcePath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        qWarning() << "Could not read Okular session configuration for recovery copy";
+        return;
+    }
+    const QByteArray contents = source.readAll();
+    if (contents.isEmpty()) {
+        return;
+    }
+
+    const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
+    const QString directoryPath = QFileInfo(sourcePath).absolutePath() + (testInstance.isEmpty() ? QStringLiteral("/okular/session-backups") : QStringLiteral("/session-backups"));
+    if (!QDir().mkpath(directoryPath) || !secureSessionBackupDirectory(directoryPath)) {
+        qWarning() << "Could not secure Okular session recovery directory";
+        return;
+    }
+    QDir directory(directoryPath);
+    const QString role = ShellUtils::windowsProcessIsElevated() ? QStringLiteral("elevated") : QStringLiteral("standard");
+    const QString prefix = QStringLiteral("okular-session-%1-").arg(role);
+    const QStringList existing = directory.entryList({prefix + QStringLiteral("*.ini")}, QDir::Files, QDir::Name);
+    if (!existing.isEmpty()) {
+        QFile latest(directory.filePath(existing.constLast()));
+        if (latest.open(QIODevice::ReadOnly) && latest.readAll() == contents) {
+            return;
+        }
+    }
+
+    const QString name = prefix + QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMddTHHmmsszzzZ")) + QLatin1Char('-') + QUuid::createUuid().toString(QUuid::WithoutBraces) + QStringLiteral(".ini");
+    QSaveFile backup(directory.filePath(name));
+    if (!backup.open(QIODevice::WriteOnly) || backup.write(contents) != contents.size() || !backup.commit()) {
+        qWarning() << "Could not save Okular session recovery copy";
+        return;
+    }
+    const QStringList retained = directory.entryList({prefix + QStringLiteral("*.ini")}, QDir::Files, QDir::Name);
+    for (int i = 0; i < retained.size() - 10; ++i) {
+        directory.remove(retained.at(i));
+    }
+}
+
 static quint64 s_nextSessionWindowOrder = 0;
 
 static QString WindowSessionIndexGroupKey()
@@ -1265,6 +1360,9 @@ void Shell::saveOpenDocumentSession()
 #endif
     saveRecents();
     config->sync();
+#if defined(Q_OS_WIN)
+    saveSessionRecoveryCopy(config);
+#endif
 }
 
 bool Shell::restoreOpenDocumentSession()

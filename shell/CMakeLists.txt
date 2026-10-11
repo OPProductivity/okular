@@ -27,6 +27,7 @@ ecm_add_app_icon(okular_SRCS ICONS ${ICONS_SRCS})
 add_executable(okular ${okular_SRCS})
 
 if(WIN32)
+    target_link_libraries(okular Advapi32)
     # Qt handles long paths itself, but native EPUB library file opens also
     # need the executable to opt in to Windows long-path support.
     if(MSVC)
