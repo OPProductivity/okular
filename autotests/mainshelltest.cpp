@@ -159,6 +159,7 @@ private Q_SLOTS:
     void testCloseAllHiddenWindowsRestoresThreeSessions();
     void testCloseAllAfterClosingSomeTabsRestoresRemainingTabs();
     void testFiveWindowShutdownSurvivesPartialRestoreSave();
+    void testClosedWindowsCannotOverwriteCompletedShutdown();
     void testClosedWindowExpiresAfterFifteenMinutes();
     void testClockCorrectionKeepsRecentlyClosedWindow();
     void testClosingPrimaryTransfersForwarding();
@@ -784,6 +785,49 @@ void MainShellTest::testFiveWindowShutdownSurvivesPartialRestoreSave()
     first->saveOpenDocumentSession();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
     QCOMPARE(getShells().size(), 4);
+}
+
+void MainShellTest::testClosedWindowsCannotOverwriteCompletedShutdown()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QList<Shell *> windows {findShell()};
+    QVERIFY(windows.first());
+    const QList<QUrl> urls {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    windows.first()->openUrl(urls.first());
+    for (const QUrl &url : urls.mid(1)) {
+        Shell *window = new Shell(options, QString(), true);
+        QVERIFY(window->isValid());
+        window->show();
+        window->openUrl(url);
+        windows.append(window);
+    }
+    windows.last()->saveOpenDocumentSession();
+    const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(ids.size(), 3);
+
+    for (Shell *window : std::as_const(windows)) {
+        window->hide();
+    }
+    for (Shell *window : std::as_const(windows)) {
+        QVERIFY(window->close());
+    }
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
+    // A queued timer or signal can still address a closed Shell before Qt
+    // destroys it. None of those saves may replace the completed session.
+    for (Shell *window : std::as_const(windows)) {
+        QVERIFY(window->m_sessionClosed);
+        QVERIFY(!window->m_openDocumentSessionSaveTimer->isActive());
+        window->saveOpenDocumentSession();
+    }
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
+    for (const QString &id : ids) {
+        QVERIFY(!KSharedConfig::openConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id).readPathEntry("Urls", QStringList()).isEmpty());
+    }
 }
 
 void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()

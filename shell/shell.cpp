@@ -1773,7 +1773,7 @@ void Shell::writeOpenDocumentSession(KConfigGroup &group) const
 
 void Shell::scheduleOpenDocumentSessionSave()
 {
-    if (m_unique || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
+    if (m_unique || m_sessionClosed || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
         return;
     }
 
@@ -1782,7 +1782,7 @@ void Shell::scheduleOpenDocumentSessionSave()
 
 void Shell::saveOpenDocumentSession()
 {
-    if (m_unique || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
+    if (m_unique || m_sessionClosed || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
         return;
     }
 #if defined(Q_OS_WIN)
@@ -1816,7 +1816,9 @@ void Shell::saveOpenDocumentSession()
     const QStringList previousIds = savedWindowIds(config);
     QStringList ids;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    // Preserve the earlier window order, including recently closed windows.
+    // Preserve the earlier window order. An indexed window with no ClosedAt
+    // marker was part of the completed session, even when its Shell is not
+    // currently live (for example while startup is still recovering windows).
     for (const QString &id : previousIds) {
         const auto live = std::find_if(windows.cbegin(), windows.cend(), [&id](const Shell *window) { return window->m_sessionWindowId == id; });
         if (live != windows.cend()) {
@@ -1824,7 +1826,7 @@ void Shell::saveOpenDocumentSession()
         } else {
             const KConfigGroup group = config->group(WindowSessionGroupKey(id));
             const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
-            if ((wasWindowClosedRecently(closedAt, now) || s_failedWindowRestores.contains(id)) && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
+            if ((closedAt == 0 || wasWindowClosedRecently(closedAt, now) || s_failedWindowRestores.contains(id)) && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
                 ids.append(id);
             }
         }
@@ -2486,6 +2488,9 @@ void Shell::closeEvent(QCloseEvent *event)
             }
         }
         m_sessionClosed = true;
+        if (m_openDocumentSessionSaveTimer) {
+            m_openDocumentSessionSaveTimer->stop();
+        }
         survivor->saveOpenDocumentSession();
     } else {
         saveOpenDocumentSession();
@@ -2508,6 +2513,10 @@ void Shell::closeEvent(QCloseEvent *event)
                 config->sync();
                 saveSessionRecoveryCopy(config);
             }
+        }
+        m_sessionClosed = true;
+        if (m_openDocumentSessionSaveTimer) {
+            m_openDocumentSessionSaveTimer->stop();
         }
     }
 #endif
