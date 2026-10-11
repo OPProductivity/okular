@@ -178,7 +178,7 @@ static bool trustedWindowsTabOpenClient(QLocalSocket *socket)
 }
 
 // QWidget::setGeometry positions the client area. Account for the native title
-// bar after show(), so an intentional half-screen window stays wholly visible.
+// bar after show(), so an intentional window stays wholly visible.
 static void placeIntentionalWindowFrame(QWidget *window, QRect frame, const QRect &available)
 {
     QWindow *handle = window->windowHandle();
@@ -1680,10 +1680,7 @@ bool Shell::moveTabToNewWindow(int tab, const QPoint &dropPosition)
         targetScreen = screen() ? screen() : QGuiApplication::primaryScreen();
     }
     if (targetScreen) {
-        const QRect area = targetScreen->availableGeometry();
-        const int width = qMin(area.width(), qMax(320, area.width() / 2));
-        const int left = dropPosition.isNull() ? area.x() + area.width() - width : qBound(area.left(), dropPosition.x() - width / 2, area.right() - width + 1);
-        targetFrame = QRect(left, area.y(), width, area.height());
+        targetFrame = targetScreen->availableGeometry();
     }
 
     const int oldActive = m_tabWidget->currentIndex();
@@ -1835,13 +1832,10 @@ void Shell::fileOpenImpl(bool newWindow)
                 destination = nullptr;
             } else {
                 QScreen *targetScreen = screen() ? screen() : QGuiApplication::primaryScreen();
+                destination->show();
                 if (targetScreen) {
-                    QRect area = targetScreen->availableGeometry();
-                    const int leftWidth = area.width() / 2;
-                    destination->show();
-                    placeIntentionalWindowFrame(destination, QRect(area.x() + leftWidth, area.y(), area.width() - leftWidth, area.height()), area);
-                } else {
-                    destination->show();
+                    const QRect area = targetScreen->availableGeometry();
+                    placeIntentionalWindowFrame(destination, area, area);
                 }
             }
         }

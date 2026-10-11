@@ -640,6 +640,8 @@ void MainShellTest::testMoveTabToNewWindowPreservesPart()
     if (QScreen *screen = destination->screen(); screen && QGuiApplication::platformName() != QLatin1String("offscreen")) {
         const QRect available = screen->availableGeometry();
         QVERIFY(available.contains(destination->frameGeometry()));
+        QVERIFY(destination->frameGeometry().width() >= available.width() * 9 / 10);
+        QVERIFY(destination->frameGeometry().height() >= available.height() * 9 / 10);
     }
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 2);
 
@@ -701,6 +703,12 @@ void MainShellTest::testDragTabOutsideWindowDetaches()
     const QList<Shell *> windows = getShells();
     Shell *destination = windows.at(0) == source ? windows.at(1) : windows.at(0);
     QCOMPARE(destination->m_tabs.first().part, part);
+    if (QScreen *screen = destination->screen(); screen && QGuiApplication::platformName() != QLatin1String("offscreen")) {
+        const QRect available = screen->availableGeometry();
+        QVERIFY(available.contains(destination->frameGeometry()));
+        QVERIFY(destination->frameGeometry().width() >= available.width() * 9 / 10);
+        QVERIFY(destination->frameGeometry().height() >= available.height() * 9 / 10);
+    }
 }
 
 void MainShellTest::testDroppedFileOpensNewTab()
