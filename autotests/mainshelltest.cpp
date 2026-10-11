@@ -39,6 +39,7 @@
 #include <QPrintDialog>
 #include <QProcessEnvironment>
 #include <QScreen>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -155,6 +156,7 @@ private Q_SLOTS:
     void testSeparateWindowSessionsRestore();
     void testRecentlyClosedWindowRestoresRemainingTabs();
     void testCloseAllHiddenWindowsRestoresThreeSessions();
+    void testFiveWindowShutdownSurvivesPartialRestoreSave();
     void testClosedWindowExpiresAfterFifteenMinutes();
     void testClosingPrimaryTransfersForwarding();
     void testElevatedRequestDeclinesUnreadableFile();
@@ -655,6 +657,73 @@ void MainShellTest::testCloseAllHiddenWindowsRestoresThreeSessions()
     }
 }
 
+void MainShellTest::testFiveWindowShutdownSurvivesPartialRestoreSave()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/tocreload.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+    };
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QList<Shell *> windows {findShell()};
+    QVERIFY(windows.first());
+    windows.first()->openUrl(urls.first());
+    for (int i = 1; i < urls.size(); ++i) {
+        Shell *window = new Shell(options, QString(), true);
+        QVERIFY(window->isValid());
+        window->show();
+        window->openUrl(urls.at(i));
+        windows.append(window);
+    }
+    windows.last()->saveOpenDocumentSession();
+    const QStringList originalIds = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(originalIds.size(), 5);
+
+    // Two ordinary closes, then explicitly remove the third window's only tab.
+    for (int i = 0; i < 2; ++i) {
+        QVERIFY(windows.at(i)->close());
+        delete windows[i];
+    }
+    QVERIFY(windows.at(2)->closeTab(0));
+    QVERIFY(windows.at(2)->close());
+    delete windows[2];
+
+    // The taskbar can hide both remaining windows before either receives a close event.
+    for (int i = 3; i < 5; ++i) {
+        windows.at(i)->hide();
+    }
+    for (int i = 3; i < 5; ++i) {
+        QVERIFY(windows.at(i)->close());
+        delete windows[i];
+    }
+    const QStringList expectedIds {originalIds.at(0), originalIds.at(1), originalIds.at(3), originalIds.at(4)};
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
+
+    // A save from the first restored window must not discard windows that the
+    // startup loop has not constructed yet, even if a timer fires mid-restore.
+    Shell::setWindowsSessionRestoreInProgress(true);
+    const auto resetRestoreFlag = qScopeGuard([]() { Shell::setWindowsSessionRestoreInProgress(false); });
+    Shell *first = new Shell(options, expectedIds.first(), false);
+    QVERIFY(first->isValid());
+    first->show();
+    QVERIFY(first->restoreOpenDocumentSession());
+    first->saveOpenDocumentSession();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
+    for (const QString &id : expectedIds.mid(1)) {
+        Shell *additional = new Shell(options, id, true);
+        QVERIFY(additional->isValid());
+        additional->show();
+        QVERIFY(additional->restoreOpenDocumentSession());
+    }
+    Shell::setWindowsSessionRestoreInProgress(false);
+    first->saveOpenDocumentSession();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
+    QCOMPARE(getShells().size(), 4);
+}
+
 void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -977,6 +1046,23 @@ void MainShellTest::testMoveToExistingWindowMenu()
     QVERIFY(found);
     QCOMPARE(target->m_tabs.size(), 2);
     QCOMPARE(target->m_tabs.at(1).part->url().toLocalFile(), QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")).toLocalFile());
+
+    source->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")));
+    target->setActiveTab(0);
+    const QString longTitle = QStringLiteral("A very long document title that describes the whole research collection and keeps going well beyond any sensible tab width.pdf");
+    target->m_tabWidget->setTabText(0, longTitle);
+    bool capped = false;
+    QTimer::singleShot(0, source, [&capped, &longTitle]() {
+        if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+            const QAction *destination = menu->actions().value(1);
+            capped = destination && menu->sizeHint().width() <= 450 && destination->text().contains(QStringLiteral("…")) && destination->toolTip().contains(QStringLiteral("file2.pdf"))
+                && !destination->text().contains(longTitle);
+            menu->close();
+        }
+    });
+    QContextMenuEvent longContext(QContextMenuEvent::Mouse, bar->tabRect(0).center(), bar->mapToGlobal(bar->tabRect(0).center()));
+    QApplication::sendEvent(bar, &longContext);
+    QVERIFY(capped);
 }
 
 void MainShellTest::testOrdinaryOpenFocusesTabInOtherWindow()

@@ -23,6 +23,7 @@
 #include <QLockFile>
 #include <QLocalSocket>
 #include <QMimeData>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QTextStream>
@@ -470,6 +471,8 @@ Status main(const QStringList &paths, const QString &serializedOptions)
 
 #if defined(Q_OS_WIN)
     const QStringList savedWindowIds = shouldRestoreOpenDocumentSession(serializedOptions) ? Shell::savedOpenDocumentSessionWindowIds() : QStringList();
+    Shell::setWindowsSessionRestoreInProgress(true);
+    const auto restoreSaveGuard = qScopeGuard([]() { Shell::setWindowsSessionRestoreInProgress(false); });
     Shell *shell = new Shell(serializedOptions, savedWindowIds.value(0), Shell::savedWindowWasSeparate(savedWindowIds.value(0)));
 #else
     Shell *shell = new Shell(serializedOptions);
@@ -521,6 +524,9 @@ Status main(const QStringList &paths, const QString &serializedOptions)
         }
     }
 
+#if defined(Q_OS_WIN)
+    Shell::setWindowsSessionRestoreInProgress(false);
+#endif
     shell->saveOpenDocumentSession();
 
     return Success;

@@ -85,6 +85,7 @@ public:
 #if defined(Q_OS_WIN)
     static QStringList savedOpenDocumentSessionWindowIds();
     static bool savedWindowWasSeparate(const QString &sessionWindowId);
+    static void setWindowsSessionRestoreInProgress(bool inProgress);
     void restoreSavedWindowGeometry();
 #endif
     void saveOpenDocumentSession();

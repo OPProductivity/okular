@@ -117,6 +117,7 @@ static constexpr quint32 WINDOWS_TAB_OPEN_ELEVATED_MAGIC = 0x4f4b5445; // OKTE
 static constexpr quint32 WINDOWS_TAB_OPEN_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 static constexpr int WINDOWS_BATCH_OPEN_SUMMARY_DELAY_MS = 1200;
 static QPointer<QLocalServer> s_windowsTabOpenPrimaryServer;
+static bool s_windowsSessionRestoreInProgress = false;
 
 static QByteArray tokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS kind)
 {
@@ -777,6 +778,7 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
                     selectTabsForClick(tab, Qt::NoModifier);
                 }
                 QMenu menu(bar);
+                menu.setMaximumWidth(450);
                 QAction *move = menu.addAction(i18n("Move to New Window"));
                 QHash<QAction *, QPointer<Shell>> otherWindows;
                 const auto containsPdf = [](const Shell *window) {
@@ -792,9 +794,14 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
                             continue;
                         }
                         const int active = other->m_tabWidget->currentIndex();
-                        const QString title = other->m_tabWidget->tabText(active).left(8);
+                        const QString title = other->m_tabWidget->tabText(active);
                         const int instance = ++labelCounts[title];
-                        QAction *action = menu.addAction(i18n("Move to Window %1", title) + (instance > 1 ? QStringLiteral(" (%1)").arg(instance) : QString()));
+                        const QString suffix = instance > 1 ? QStringLiteral(" (%1)").arg(instance) : QString();
+                        // Reserve room for the menu margins, icon column and a duplicate suffix.
+                        const QString frame = i18n("Move to Window: “%1”", QString());
+                        const int titleWidth = qMax(40, 450 - 50 - menu.fontMetrics().horizontalAdvance(frame + suffix));
+                        const QString displayTitle = menu.fontMetrics().elidedText(title, Qt::ElideRight, titleWidth);
+                        QAction *action = menu.addAction(i18n("Move to Window: “%1”", displayTitle) + suffix);
                         action->setToolTip(other->m_tabWidget->tabToolTip(active));
                         otherWindows.insert(action, other);
                     }
@@ -1595,6 +1602,11 @@ bool Shell::openDocumentSessionRestoreEnabled() const
 }
 
 #if defined(Q_OS_WIN)
+void Shell::setWindowsSessionRestoreInProgress(bool inProgress)
+{
+    s_windowsSessionRestoreInProgress = inProgress;
+}
+
 QStringList Shell::savedOpenDocumentSessionWindowIds()
 {
     const QString configFilePath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1String("/okularpartrc");
@@ -1689,6 +1701,13 @@ void Shell::saveOpenDocumentSession()
     if (m_unique || !m_openDocumentSessionReady || m_restoringOpenDocumentSession || !openDocumentSessionRestoreEnabled()) {
         return;
     }
+#if defined(Q_OS_WIN)
+    // Other restored windows may still be opening their files. Their saved
+    // groups have no live Shell yet and would otherwise be pruned here.
+    if (s_windowsSessionRestoreInProgress) {
+        return;
+    }
+#endif
 
     KSharedConfigPtr config = ShellSessionConfig();
 #if defined(Q_OS_WIN)
