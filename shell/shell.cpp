@@ -1152,6 +1152,14 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     return savedWindowIds(ShellSessionConfig());
 }
 
+bool Shell::savedWindowWasSeparate(const QString &sessionWindowId)
+{
+    if (sessionWindowId.isEmpty()) {
+        return false;
+    }
+    return ShellSessionConfig()->group(WindowSessionGroupKey(sessionWindowId)).readEntry("IntentionalSeparateWindow", false);
+}
+
 void Shell::restoreSavedWindowGeometry()
 {
     if (!m_intentionalSeparateWindow) {
@@ -1234,6 +1242,7 @@ void Shell::saveOpenDocumentSession()
         ids.append(window->m_sessionWindowId);
         KConfigGroup windowGroup = config->group(WindowSessionGroupKey(window->m_sessionWindowId));
         window->writeOpenDocumentSession(windowGroup);
+        windowGroup.writeEntry("IntentionalSeparateWindow", window->m_intentionalSeparateWindow);
         if (window->m_intentionalSeparateWindow) {
             windowGroup.writeEntry("WindowGeometry", window->saveGeometry());
         }

@@ -82,6 +82,7 @@ public:
     bool restoreOpenDocumentSession();
 #if defined(Q_OS_WIN)
     static QStringList savedOpenDocumentSessionWindowIds();
+    static bool savedWindowWasSeparate(const QString &sessionWindowId);
     void restoreSavedWindowGeometry();
 #endif
     void saveOpenDocumentSession();

@@ -462,7 +462,7 @@ Status main(const QStringList &paths, const QString &serializedOptions)
 
 #if defined(Q_OS_WIN)
     const QStringList savedWindowIds = shouldRestoreOpenDocumentSession(serializedOptions) ? Shell::savedOpenDocumentSessionWindowIds() : QStringList();
-    Shell *shell = new Shell(serializedOptions, savedWindowIds.value(0));
+    Shell *shell = new Shell(serializedOptions, savedWindowIds.value(0), Shell::savedWindowWasSeparate(savedWindowIds.value(0)));
 #else
     Shell *shell = new Shell(serializedOptions);
 #endif
@@ -473,6 +473,9 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     if (!paths.isEmpty()) {
         shell->prepareForDocumentOpen();
     }
+#if defined(Q_OS_WIN)
+    shell->restoreSavedWindowGeometry();
+#endif
     shell->show();
     const bool restoredOpenDocumentSession = shouldRestoreOpenDocumentSession(serializedOptions) && shell->restoreOpenDocumentSession();
 

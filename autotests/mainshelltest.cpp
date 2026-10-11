@@ -491,7 +491,7 @@ void MainShellTest::testClosingPrimaryTransfersForwarding()
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *primary = findShell();
     QVERIFY(primary);
-    Shell *additional = new Shell(options);
+    Shell *additional = new Shell(options, QString(), true);
     QVERIFY(additional->isValid());
     additional->show();
     const QUrl url = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
@@ -512,6 +512,13 @@ void MainShellTest::testClosingPrimaryTransfersForwarding()
     QTRY_COMPARE(additional->m_tabs.first().part->url(), url);
     QVERIFY(socket.bytesAvailable() > 0 || socket.waitForReadyRead(1000));
     QCOMPARE(socket.read(1), QByteArrayLiteral("A"));
+    additional->saveOpenDocumentSession();
+    delete additional;
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *restored = findShell();
+    QVERIFY(restored);
+    QVERIFY(restored->m_intentionalSeparateWindow);
+    QCOMPARE(QDir::cleanPath(restored->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(url.toLocalFile()));
 }
 
 void MainShellTest::testElevatedRequestDeclinesUnreadableFile()
