@@ -383,6 +383,15 @@ static QStringList savedWindowIds(const KSharedConfigPtr &config)
     }
     return valid;
 }
+
+static bool wasWindowClosedRecently(qint64 closedAt, qint64 now)
+{
+    if (closedAt <= 0) {
+        return false;
+    }
+    // The system clock can be corrected backwards between two window closes.
+    return closedAt > now ? closedAt - now <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS : now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS;
+}
 #endif
 
 class ResizableStackedWidget : public QStackedWidget
@@ -1280,6 +1289,7 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
                 scheduleOpenDocumentSessionSave();
             } else {
                 m_recent->removeUrl(url);
+                saveRecents();
                 closeTab(activeTab);
             }
         }
@@ -1296,6 +1306,13 @@ void Shell::openRecentDocuments(const QList<QUrl> &urls)
         int tab = findTabIndex(url);
         const bool alreadyOpen = tab >= 0;
         if (tab < 0) {
+#if defined(Q_OS_WIN)
+            if (Shell *other = otherWindowWithUrl(url)) {
+                other->setActiveTab(other->findTabIndex(url));
+                other->addRecentUrl(url);
+                continue;
+            }
+#endif
             if (m_tabs[m_tabWidget->currentIndex()].part->url().isEmpty()) {
                 openUrl(url);
             } else {
@@ -1464,7 +1481,21 @@ void Shell::writeSettings()
 void Shell::saveRecents()
 {
     pruneRecentFiles();
-    m_recent->saveEntries(ShellSessionConfig()->group(RecentFilesGroupKey()));
+    KSharedConfigPtr config = ShellSessionConfig();
+    m_recent->saveEntries(config->group(RecentFilesGroupKey()));
+#if defined(Q_OS_WIN)
+    // Every Shell owns a recent-file action, but the process shares one list.
+    // A later save from another window must not overwrite this change.
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        Shell *other = qobject_cast<Shell *>(widget);
+        if (other && other != this && other->m_recent) {
+            other->m_recent->loadEntries(config->group(RecentFilesGroupKey()));
+            if (other->m_centralStackedWidget->currentWidget() == other->m_welcomeScreen) {
+                other->m_welcomeScreen->loadRecents();
+            }
+        }
+    }
+#endif
 }
 
 void Shell::addRecentUrl(const QUrl &url)
@@ -1472,6 +1503,7 @@ void Shell::addRecentUrl(const QUrl &url)
     m_recent->addUrl(url);
     if (m_recent->urls().contains(url)) {
         ShellSessionConfig()->group(RecentOpenTimesGroupKey()).writeEntry(recentOpenTimeKey(url).constData(), QDateTime::currentSecsSinceEpoch());
+        saveRecents();
     }
 }
 
@@ -1619,7 +1651,7 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     for (const QString &id : savedWindowIds(config)) {
         const KConfigGroup group = config->group(WindowSessionGroupKey(id));
         const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
-        if (closedAt == 0 || (closedAt <= now && now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS)) {
+        if (closedAt == 0 || wasWindowClosedRecently(closedAt, now)) {
             restorable.append(id);
         }
     }
@@ -1740,7 +1772,7 @@ void Shell::saveOpenDocumentSession()
         } else {
             const KConfigGroup group = config->group(WindowSessionGroupKey(id));
             const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
-            if (closedAt > 0 && closedAt <= now && now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
+            if (wasWindowClosedRecently(closedAt, now) && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
                 ids.append(id);
             }
         }
@@ -2392,7 +2424,7 @@ void Shell::closeEvent(QCloseEvent *event)
             for (const QString &id : savedWindowIds(config)) {
                 KConfigGroup group = config->group(WindowSessionGroupKey(id));
                 const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
-                if (closedAt > 0 && closedAt <= now && now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS) {
+                if (wasWindowClosedRecently(closedAt, now)) {
                     group.deleteEntry("ClosedAt");
                     changed = true;
                 }
@@ -2553,6 +2585,7 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
         setActiveTab(previousActiveTab);
         closeTab(m_tabs.size() - 1);
         m_recent->removeUrl(url);
+        saveRecents();
     }
 }
 

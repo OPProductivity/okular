@@ -158,6 +158,7 @@ private Q_SLOTS:
     void testCloseAllHiddenWindowsRestoresThreeSessions();
     void testFiveWindowShutdownSurvivesPartialRestoreSave();
     void testClosedWindowExpiresAfterFifteenMinutes();
+    void testClockCorrectionKeepsRecentlyClosedWindow();
     void testClosingPrimaryTransfersForwarding();
     void testElevatedRequestDeclinesUnreadableFile();
     void testNewWindowActionAppearsInFileMenu();
@@ -169,6 +170,8 @@ private Q_SLOTS:
     void testMoveSelectedTabsViaMenu();
     void testMoveToExistingWindowMenu();
     void testOrdinaryOpenFocusesTabInOtherWindow();
+    void testRecentFilesStayConsistentAcrossWindows();
+    void testOpenRecentFocusesDocumentInOtherWindow();
     void testDragTabOutsideWindowDetaches();
     void testDroppedFileOpensNewTab();
 #endif
@@ -751,6 +754,35 @@ void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), QStringList {ids.last()});
 }
 
+void MainShellTest::testClockCorrectionKeepsRecentlyClosedWindow()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    first->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    second->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    second->saveOpenDocumentSession();
+    const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(ids.size(), 2);
+
+    QVERIFY(first->close());
+    delete first;
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup firstGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
+    firstGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() + 60);
+    config->sync();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
+    QVERIFY(second->close());
+    delete second;
+    QCOMPARE(firstGroup.readEntry("ClosedAt", qint64(0)), qint64(0));
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QCOMPARE(getShells().size(), 2);
+}
+
 void MainShellTest::testClosingPrimaryTransfersForwarding()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -1094,6 +1126,54 @@ void MainShellTest::testOrdinaryOpenFocusesTabInOtherWindow()
     intentional->show();
     QVERIFY(intentional->openDocumentInTab(second, QString()));
     QCOMPARE(intentional->m_tabs.first().part->url(), second);
+}
+
+void MainShellTest::testRecentFilesStayConsistentAcrossWindows()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    first->openUrl(firstUrl);
+    second->openUrl(secondUrl);
+    QVERIFY(first->m_recent->urls().contains(firstUrl));
+    QVERIFY(first->m_recent->urls().contains(secondUrl));
+    QVERIFY(second->m_recent->urls().contains(firstUrl));
+    QVERIFY(second->m_recent->urls().contains(secondUrl));
+
+    first->forgetRecentItems({firstUrl});
+    QVERIFY(!first->m_recent->urls().contains(firstUrl));
+    QVERIFY(!second->m_recent->urls().contains(firstUrl));
+    second->saveOpenDocumentSession();
+    Shell *third = new Shell(options, QString(), true);
+    QVERIFY(third->isValid());
+    QVERIFY(!third->m_recent->urls().contains(firstUrl));
+    QVERIFY(third->m_recent->urls().contains(secondUrl));
+}
+
+void MainShellTest::testOpenRecentFocusesDocumentInOtherWindow()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    first->openUrl(firstUrl);
+    second->openUrl(secondUrl);
+    first->openRecentDocuments({secondUrl});
+    QCOMPARE(first->m_tabs.size(), 1);
+    QCOMPARE(first->m_tabs.first().part->url(), firstUrl);
+    QCOMPARE(second->m_tabs.size(), 1);
+    QCOMPARE(second->m_tabs.first().part->url(), secondUrl);
 }
 
 void MainShellTest::testDragTabOutsideWindowDetaches()
