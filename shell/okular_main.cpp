@@ -470,9 +470,9 @@ Status main(const QStringList &paths, const QString &serializedOptions)
 #endif
 
 #if defined(Q_OS_WIN)
-    const QStringList savedWindowIds = shouldRestoreOpenDocumentSession(serializedOptions) ? Shell::savedOpenDocumentSessionWindowIds() : QStringList();
     Shell::setWindowsSessionRestoreInProgress(true);
     const auto restoreSaveGuard = qScopeGuard([]() { Shell::setWindowsSessionRestoreInProgress(false); });
+    const QStringList savedWindowIds = shouldRestoreOpenDocumentSession(serializedOptions) ? Shell::savedOpenDocumentSessionWindowIds() : QStringList();
     Shell *shell = new Shell(serializedOptions, savedWindowIds.value(0), Shell::savedWindowWasSeparate(savedWindowIds.value(0)));
 #else
     Shell *shell = new Shell(serializedOptions);
@@ -494,6 +494,7 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     for (const QString &id : savedWindowIds.mid(1)) {
         Shell *additional = new Shell(serializedOptions, id, true);
         if (!additional->isValid()) {
+            Shell::retainFailedWindowSession(id);
             delete additional;
             continue;
         }

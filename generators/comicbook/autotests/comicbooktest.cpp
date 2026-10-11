@@ -5,6 +5,8 @@
 */
 
 #include "../unrarflavours.h"
+#include "../extractedfile_p.h"
+#include <QFile>
 #include <KZip>
 #include <QTemporaryDir>
 #include <QTest>
@@ -27,6 +29,7 @@ private Q_SLOTS:
     void testRotatedImage();
     void testEmptyRarListing();
     void testDeepArchive();
+    void testExtractedFileContainment();
     void cleanupTestCase();
 };
 
@@ -76,6 +79,33 @@ void ComicBookGeneratorTest::testDeepArchive()
     QVERIFY(zip.close());
     ComicBook::Document document;
     QVERIFY(!document.open(file));
+}
+
+void ComicBookGeneratorTest::testExtractedFileContainment()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QDir root(dir.path());
+    QVERIFY(root.mkdir(QStringLiteral("extract")));
+    QVERIFY(root.mkdir(QStringLiteral("elsewhere")));
+    QFile inside(dir.filePath(QStringLiteral("extract/page.png")));
+    QVERIFY(inside.open(QIODevice::WriteOnly));
+    inside.write("page");
+    inside.close();
+    QFile outside(dir.filePath(QStringLiteral("elsewhere/private.png")));
+    QVERIFY(outside.open(QIODevice::WriteOnly));
+    outside.write("private");
+    outside.close();
+    const QString extract = dir.filePath(QStringLiteral("extract"));
+    QCOMPARE(Okular::safeExtractedFilePath(extract, QStringLiteral("page.png")), QFileInfo(inside).canonicalFilePath());
+    for (const QString &name : {QStringLiteral("../elsewhere/private.png"), QStringLiteral("/page.png"), QStringLiteral("sub/../../elsewhere/private.png"),
+                                QStringLiteral("C:private.png"), QStringLiteral("missing.png")}) {
+        QVERIFY2(Okular::safeExtractedFilePath(extract, name).isEmpty(), qPrintable(name));
+    }
+    const QString link = dir.filePath(QStringLiteral("extract/link.png"));
+    if (QFile::link(outside.fileName(), link) && QFileInfo(link).isSymLink()) {
+        QVERIFY(Okular::safeExtractedFilePath(extract, QStringLiteral("link.png")).isEmpty());
+    }
 }
 
 QTEST_MAIN(ComicBookGeneratorTest)

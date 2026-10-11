@@ -12,6 +12,7 @@
 
 #include "debug_dvi.h"
 #include "fontMap.h"
+#include "core/processbudget_p.h"
 #include <QFile>
 #include <QLoggingCategory>
 #include <QProcess>
@@ -38,30 +39,31 @@ fontMap::fontMap()
     // way to give both options at the same time, there is seemingly no
     // other way than to try both options one after another. We use the
     // teTeX 3.0 format first.
+    if (kpsewhichFullPath.isEmpty()) {
+        qCCritical(OkularDviDebug) << "fontMap::fontMap(): kpsewhich is not in path.";
+        return;
+    }
     QProcess kpsewhich;
-    kpsewhich.start(kpsewhichFullPath, {QStringLiteral("--format=map"), QStringLiteral("ps2pk.map")}, QIODevice::ReadOnly | QIODevice::Text);
-
-    if (!kpsewhich.waitForStarted()) {
-        qCCritical(OkularDviDebug) << "fontMap::fontMap(): kpsewhich could not be started.";
+    kpsewhich.setProgram(kpsewhichFullPath);
+    kpsewhich.setArguments({QStringLiteral("--format=map"), QStringLiteral("ps2pk.map")});
+    QByteArray output, errors;
+    if (Okular::runBoundedHelper(kpsewhich, output, errors, 10000) < 0) {
+        qCCritical(OkularDviDebug) << "fontMap::fontMap(): kpsewhich failed or exceeded its resource limit.";
         return;
     }
 
-    // We wait here while the external program runs concurrently.
-    kpsewhich.waitForFinished(-1);
-
-    QString map_fileName = QString::fromLocal8Bit(kpsewhich.readAll()).trimmed();
+    QString map_fileName = QString::fromLocal8Bit(output).trimmed();
     if (map_fileName.isEmpty()) {
         // Map file not found? Then we try the teTeX < 3.0 way of finding
         // the file.
-        kpsewhich.start(kpsewhichFullPath, {QStringLiteral("--format=dvips config"), QStringLiteral("ps2pk.map")}, QIODevice::ReadOnly | QIODevice::Text);
-        if (!kpsewhich.waitForStarted()) {
-            qCCritical(OkularDviDebug) << "fontMap::fontMap(): kpsewhich could not be started.";
+        kpsewhich.setArguments({QStringLiteral("--format=dvips config"), QStringLiteral("ps2pk.map")});
+        output.clear();
+        errors.clear();
+        if (Okular::runBoundedHelper(kpsewhich, output, errors, 10000) < 0) {
+            qCCritical(OkularDviDebug) << "fontMap::fontMap(): kpsewhich failed or exceeded its resource limit.";
             return;
         }
-
-        kpsewhich.waitForFinished(-1);
-
-        map_fileName = QString::fromLocal8Bit(kpsewhich.readAll()).trimmed();
+        map_fileName = QString::fromLocal8Bit(output).trimmed();
         // If both versions fail, then there is nothing left to do.
         if (map_fileName.isEmpty()) {
             qCCritical(OkularDviDebug) << "fontMap::fontMap(): The file 'ps2pk.map' could not be found by kpsewhich.";

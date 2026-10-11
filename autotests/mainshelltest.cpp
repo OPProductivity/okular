@@ -13,6 +13,7 @@
 #include <KActionCollection>
 #include <KLineEdit>
 #include <KLocalizedString>
+#include <KMessageBox>
 #include <KRecentFilesAction>
 
 #if HAVE_DBUS
@@ -156,6 +157,7 @@ private Q_SLOTS:
     void testSeparateWindowSessionsRestore();
     void testRecentlyClosedWindowRestoresRemainingTabs();
     void testCloseAllHiddenWindowsRestoresThreeSessions();
+    void testCloseAllAfterClosingSomeTabsRestoresRemainingTabs();
     void testFiveWindowShutdownSurvivesPartialRestoreSave();
     void testClosedWindowExpiresAfterFifteenMinutes();
     void testClockCorrectionKeepsRecentlyClosedWindow();
@@ -660,6 +662,57 @@ void MainShellTest::testCloseAllHiddenWindowsRestoresThreeSessions()
     }
 }
 
+void MainShellTest::testCloseAllAfterClosingSomeTabsRestoresRemainingTabs()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/tocreload.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/pdf_with_links.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/pdf_with_internal_links.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/visibilitytest.pdf")),
+    };
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    first->openUrl(urls.at(0));
+    Shell *second = new Shell(options, QString(), true);
+    Shell *third = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    QVERIFY(third->isValid());
+    second->show();
+    third->show();
+    second->openUrl(urls.at(1));
+    for (const QUrl &url : urls.mid(2)) {
+        third->openUrl(url);
+    }
+    QVERIFY(third->closeTab(0));
+    QVERIFY(third->closeTab(0));
+    QCOMPARE(third->m_tabs.size(), 3);
+    third->saveOpenDocumentSession();
+
+    for (Shell *window : {first, second, third}) {
+        window->hide();
+    }
+    KMessageBox::saveDontShowAgainTwoActions(QStringLiteral("ShowTabWarning"), KMessageBox::PrimaryAction);
+    for (Shell *window : {first, second, third}) {
+        QVERIFY(window->close());
+    }
+    delete first;
+    delete second;
+    delete third;
+
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    const QList<Shell *> restored = getShells();
+    QCOMPARE(restored.size(), 3);
+    QCOMPARE(restored.at(2)->m_tabs.size(), 3);
+    for (int i = 0; i < 3; ++i) {
+        QCOMPARE(QDir::cleanPath(restored.at(2)->m_tabs.at(i).part->url().toLocalFile()), QDir::cleanPath(urls.at(i + 4).toLocalFile()));
+    }
+}
+
 void MainShellTest::testFiveWindowShutdownSurvivesPartialRestoreSave()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -709,6 +762,12 @@ void MainShellTest::testFiveWindowShutdownSurvivesPartialRestoreSave()
     // startup loop has not constructed yet, even if a timer fires mid-restore.
     Shell::setWindowsSessionRestoreInProgress(true);
     const auto resetRestoreFlag = qScopeGuard([]() { Shell::setWindowsSessionRestoreInProgress(false); });
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), expectedIds);
+    // A concurrent settings write during startup must not change the windows
+    // or tab URLs selected at the beginning of this restore.
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    config->group(QStringLiteral("Shell Open Documents Session Window ") + expectedIds.last()).writePathEntry("Urls", QStringList());
+    config->sync();
     Shell *first = new Shell(options, expectedIds.first(), false);
     QVERIFY(first->isValid());
     first->show();

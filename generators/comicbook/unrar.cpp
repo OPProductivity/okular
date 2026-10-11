@@ -5,6 +5,7 @@
 */
 
 #include "unrar.h"
+#include "extractedfile_p.h"
 
 #include <QDirIterator>
 #include <QFile>
@@ -179,7 +180,7 @@ QStringList Unrar::list()
         // Extract all the files to mTempDir regardless of their path inside the archive
         // This will break if ever an arvhice with two files with the same name in different subfolders
         QFileInfo fi(f);
-        if (QFile::exists(mTempDir->path() + QLatin1Char('/') + subDir + fi.fileName())) {
+        if (!Okular::safeExtractedFilePath(mTempDir->path(), subDir + fi.fileName()).isEmpty()) {
             newList.append(subDir + fi.fileName());
         }
     }
@@ -188,11 +189,14 @@ QStringList Unrar::list()
 
 QByteArray Unrar::contentOf(const QString &fileName) const
 {
-    if (!isSuitableVersionAvailable()) {
+    if (!isSuitableVersionAvailable() || !mTempDir) {
         return QByteArray();
     }
-
-    QFile file(mTempDir->path() + QLatin1Char('/') + fileName);
+    const QString path = Okular::safeExtractedFilePath(mTempDir->path(), fileName);
+    if (path.isEmpty()) {
+        return {};
+    }
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         return QByteArray();
     }
@@ -202,11 +206,14 @@ QByteArray Unrar::contentOf(const QString &fileName) const
 
 QIODevice *Unrar::createDevice(const QString &fileName) const
 {
-    if (!isSuitableVersionAvailable()) {
+    if (!isSuitableVersionAvailable() || !mTempDir) {
         return nullptr;
     }
-
-    std::unique_ptr<QFile> file(new QFile(mTempDir->path() + QLatin1Char('/') + fileName));
+    const QString path = Okular::safeExtractedFilePath(mTempDir->path(), fileName);
+    if (path.isEmpty()) {
+        return nullptr;
+    }
+    std::unique_ptr<QFile> file(new QFile(path));
     if (!file->open(QIODevice::ReadOnly)) {
         return nullptr;
     }

@@ -33,6 +33,11 @@
 
 #include <config.h>
 
+// Windows SDK register fields named X0..X4 must be parsed before dvi.h's
+// legacy opcode macros of the same names are introduced.
+#include "core/documentlimits_p.h"
+#include "core/processbudget_p.h"
+
 #include "debug_dvi.h"
 #include "dvi.h"
 #include "dviFile.h"
@@ -427,7 +432,7 @@ QString dvifile::convertPDFtoPS(const QString &PDFFilename, QString *converrorms
 
     // Make sure pdf2ps is in PATH and not just in the CWD
     static const QString fullPath = QStandardPaths::findExecutable(QStringLiteral("pdf2ps"));
-    if (!fullPath.isEmpty()) {
+    if (fullPath.isEmpty()) {
         pdf2psNotFound(PDFFilename, converrorms);
         return QString();
     }
@@ -443,22 +448,18 @@ QString dvifile::convertPDFtoPS(const QString &PDFFilename, QString *converrorms
 
     // Use pdf2ps to do the conversion
     QProcess pdf2ps;
-    pdf2ps.setProcessChannelMode(QProcess::MergedChannels);
-    pdf2ps.start(fullPath, {PDFFilename, convertedFileName}, QIODevice::ReadOnly | QIODevice::Text);
+    pdf2ps.setProgram(fullPath);
+    pdf2ps.setArguments({PDFFilename, convertedFileName});
+    QByteArray output, errors;
+    const int result = Okular::runBoundedHelper(pdf2ps, output, errors, Okular::MaxDocumentWorkMs, [&]() {
+        return QFileInfo(convertedFileName).size() <= Okular::MaxExpandedDocumentBytes;
+    });
 
-    if (!pdf2ps.waitForStarted()) {
-        pdf2psNotFound(PDFFilename, converrorms);
-        return QString();
-    }
-
-    // We wait here while the external program runs concurrently.
-    pdf2ps.waitForFinished(-1);
-
-    if (!QFile::exists(convertedFileName) || pdf2ps.exitCode() != 0) {
+    if (result != 0 || QFileInfo(convertedFileName).size() == 0) {
         // Indicates that conversion failed, won't try again.
         convertedFiles[PDFFilename].clear();
         if (converrorms != nullptr) {
-            const QString output = QString::fromLocal8Bit(pdf2ps.readAll());
+            const QString helperOutput = QString::fromLocal8Bit(output + errors).toHtmlEscaped();
 
             *converrorms = i18n(
                 "<qt><p>The PDF-file %1 could not be converted to PostScript. Some graphic elements in your "
@@ -467,7 +468,7 @@ QString dvifile::convertPDFtoPS(const QString &PDFFilename, QString *converrorms
                 "This is the output of the <strong>pdf2ps</strong> program that Okular used:</p>"
                 "<p><strong>%2</strong></p></qt>",
                 PDFFilename,
-                output);
+                helperOutput);
         }
         return QString();
     }

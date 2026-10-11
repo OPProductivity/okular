@@ -12,6 +12,7 @@
 
 #include "debug_dvi.h"
 #include "fontEncoding.h"
+#include "core/processbudget_p.h"
 
 #include <QFile>
 #include <QLoggingCategory>
@@ -30,7 +31,6 @@ fontEncoding::fontEncoding(const QString &encName)
     _isValid = false;
     // Use kpsewhich to find the encoding file.
     QProcess kpsewhich;
-    kpsewhich.setProcessChannelMode(QProcess::MergedChannels);
 
     // Make sure kpsewhich is in PATH and not just in the CWD
     static const QString fullPath = QStandardPaths::findExecutable(QStringLiteral("kpsewhich"));
@@ -39,17 +39,15 @@ fontEncoding::fontEncoding(const QString &encName)
         return;
     }
 
-    kpsewhich.start(fullPath, {encName}, QIODevice::ReadOnly | QIODevice::Text);
-
-    if (!kpsewhich.waitForStarted()) {
-        qCCritical(OkularDviDebug) << "fontEncoding::fontEncoding(...): kpsewhich could not be started.";
+    kpsewhich.setProgram(fullPath);
+    kpsewhich.setArguments({encName});
+    QByteArray output, errors;
+    if (Okular::runBoundedHelper(kpsewhich, output, errors, 10000) != 0) {
+        qCCritical(OkularDviDebug) << "fontEncoding::fontEncoding(...): kpsewhich failed or exceeded its resource limit.";
         return;
     }
 
-    // We wait here while the external program runs concurrently.
-    kpsewhich.waitForFinished(-1);
-
-    const QString encFileName = QString::fromLocal8Bit(kpsewhich.readAll()).trimmed();
+    const QString encFileName = QString::fromLocal8Bit(output).trimmed();
     if (encFileName.isEmpty()) {
         qCCritical(OkularDviDebug) << QStringLiteral("fontEncoding::fontEncoding(...): The file '%1' could not be found by kpsewhich.").arg(encName);
         return;

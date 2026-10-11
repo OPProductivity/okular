@@ -156,6 +156,26 @@ inline bool boundAsyncHelper(QProcess *process, const QString &outputFile = {}, 
     timer->setInterval(50);
     auto elapsed = std::make_shared<QElapsedTimer>();
     auto bytes = std::make_shared<qint64>(0);
+    constexpr qint64 maxOutput = 8LL * 1024 * 1024;
+    // Drain on readyRead, not only on the timer: a fast child can otherwise
+    // fill QProcess's in-memory buffers between timer ticks.
+    auto drain = [process, tree, timer, bytes]() {
+        const auto originalChannel = process->readChannel();
+        for (const auto channel : {QProcess::StandardOutput, QProcess::StandardError}) {
+            process->setReadChannel(channel);
+            const qint64 available = process->bytesAvailable();
+            if (available > maxOutput - *bytes) {
+                process->setReadChannel(originalChannel);
+                timer->stop();
+                tree->terminate();
+                return;
+            }
+            *bytes += process->read(available).size();
+        }
+        process->setReadChannel(originalChannel);
+    };
+    QObject::connect(process, &QProcess::readyReadStandardOutput, timer, drain);
+    QObject::connect(process, &QProcess::readyReadStandardError, timer, drain);
     QObject::connect(process, &QProcess::started, timer, [process, tree, timer, elapsed]() {
         if (!tree->attach()) {
             tree->terminate();
@@ -164,12 +184,12 @@ inline bool boundAsyncHelper(QProcess *process, const QString &outputFile = {}, 
         elapsed->start();
         timer->start();
     });
-    QObject::connect(timer, &QTimer::timeout, timer, [process, tree, timer, elapsed, bytes, outputFile, timeoutMs]() {
-        *bytes += process->readAllStandardOutput().size() + process->readAllStandardError().size();
+    QObject::connect(timer, &QTimer::timeout, timer, [process, tree, timer, elapsed, drain, outputFile, timeoutMs]() {
+        drain();
         const QFileInfo output(outputFile);
         const QStorageInfo storage(output.absolutePath());
         const bool tooLarge = !outputFile.isEmpty() && (output.size() > 1024LL * 1024 * 1024 || (storage.isValid() && storage.bytesAvailable() < 16 * 1024 * 1024));
-        if (*bytes > 8 * 1024 * 1024 || elapsed->elapsed() >= timeoutMs || tooLarge) {
+        if (elapsed->elapsed() >= timeoutMs || tooLarge) {
             timer->stop();
             tree->terminate();
         }
@@ -187,37 +207,58 @@ inline int runBoundedHelper(QProcess &process, QByteArray &output, QByteArray &e
     }
     QElapsedTimer elapsed;
     elapsed.start();
+    constexpr qsizetype maxOutput = 8 * 1024 * 1024;
+    bool outputExceeded = false;
+    bool attached = false;
+    QObject drainContext;
+    auto drain = [&]() {
+        const auto originalChannel = process.readChannel();
+        for (const auto channel : {QProcess::StandardOutput, QProcess::StandardError}) {
+            process.setReadChannel(channel);
+            const qint64 available = process.bytesAvailable();
+            const qint64 remaining = maxOutput - output.size() - errors.size();
+            if (available > remaining) {
+                process.setReadChannel(originalChannel);
+                outputExceeded = true;
+                return false;
+            }
+            (channel == QProcess::StandardOutput ? output : errors) += process.read(available);
+        }
+        process.setReadChannel(originalChannel);
+        return true;
+    };
+    QObject::connect(&process, &QProcess::readyReadStandardOutput, &drainContext, [&]() {
+        if (!outputExceeded && !drain()) {
+            tree.terminate();
+        }
+    });
+    QObject::connect(&process, &QProcess::readyReadStandardError, &drainContext, [&]() {
+        if (!outputExceeded && !drain()) {
+            tree.terminate();
+        }
+    });
+    QObject::connect(&process, &QProcess::started, &drainContext, [&]() {
+        attached = tree.attach();
+        if (!attached) {
+            tree.terminate();
+        }
+    });
     process.start();
-    if (!process.waitForStarted(qMin(timeoutMs, 5000))) {
+    if (!process.waitForStarted(qMin(timeoutMs, 5000)) || !attached) {
 #ifdef Q_OS_WIN
         process.setCreateProcessArgumentsModifier({});
 #endif
         tree.kill();
         return -1;
     }
-    if (!tree.attach()) {
-        tree.kill();
-        return -1;
-    }
-    constexpr qsizetype maxOutput = 8 * 1024 * 1024;
-    auto drain = [&]() {
-        const QByteArray out = process.readAllStandardOutput();
-        const QByteArray err = process.readAllStandardError();
-        if (out.size() > maxOutput - output.size() || err.size() > maxOutput - errors.size()) {
-            return false;
-        }
-        output += out;
-        errors += err;
-        return true;
-    };
     while (process.state() != QProcess::NotRunning) {
         process.waitForFinished(50);
-        if (!drain() || elapsed.elapsed() >= timeoutMs || (monitor && !monitor())) {
+        if (outputExceeded || !drain() || elapsed.elapsed() >= timeoutMs || (monitor && !monitor())) {
             tree.kill();
             return -1;
         }
     }
-    if (!drain() || (monitor && !monitor())) {
+    if (outputExceeded || !drain() || (monitor && !monitor())) {
         tree.kill();
         return -1;
     }

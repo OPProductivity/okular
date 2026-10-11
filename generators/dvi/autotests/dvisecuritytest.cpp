@@ -9,8 +9,12 @@
 #include "../glyph.h"
 #include "../psgs.h"
 #include <QFile>
+#include <QApplication>
+#include <QDir>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <cstdio>
 Q_LOGGING_CATEGORY(OkularDviDebug, "org.kde.okular.generators.dvi.core", QtWarningMsg)
 Q_LOGGING_CATEGORY(OkularDviShellDebug, "org.kde.okular.generators.dvi.shell", QtWarningMsg)
 
@@ -188,6 +192,51 @@ private Q_SLOTS:
             QVERIFY(!document.errorMsg.isEmpty());
         }
     }
+    void pdf2psAvailableAndBounded()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+#ifdef Q_OS_WIN
+        const QString helper = dir.filePath(QStringLiteral("pdf2ps.exe"));
+#else
+        const QString helper = dir.filePath(QStringLiteral("pdf2ps"));
+#endif
+        QVERIFY(QFile::copy(QCoreApplication::applicationFilePath(), helper));
+        const QByteArray oldPath = qgetenv("PATH");
+        QByteArray helperPath = QFile::encodeName(dir.path());
+        helperPath.append(QDir::listSeparator().toLatin1());
+        helperPath.append(oldPath);
+        qputenv("PATH", helperPath);
+        QVERIFY(!QStandardPaths::findExecutable(QStringLiteral("pdf2ps")).isEmpty());
+        QFile dvi(dir.filePath(QStringLiteral("valid.dvi")));
+        QVERIFY(dvi.open(QIODevice::WriteOnly));
+        dvi.write(minimalDvi(15));
+        dvi.close();
+        dvifile document(dvi.fileName(), nullptr);
+        QVERIFY2(document.errorMsg.isEmpty(), qPrintable(document.errorMsg));
+        const QString converted = document.convertPDFtoPS(dir.filePath(QStringLiteral("normal.pdf")));
+        QVERIFY2(!converted.isEmpty(), "An available pdf2ps helper must be allowed to convert");
+        QFile ps(converted);
+        QVERIFY(ps.open(QIODevice::ReadOnly));
+        QCOMPARE(ps.readAll(), QByteArrayLiteral("%!PS\n"));
+        QString message;
+        QVERIFY(document.convertPDFtoPS(dir.filePath(QStringLiteral("fail.pdf")), &message).isEmpty());
+        QVERIFY(message.contains(QStringLiteral("&lt;helper-error&gt;")));
+        qputenv("PATH", oldPath);
+    }
 };
-QTEST_MAIN(DviSecurityTest)
+int main(int argc, char **argv)
+{
+    QApplication app(argc, argv);
+    if (QFileInfo(QCoreApplication::applicationFilePath()).baseName().compare(QStringLiteral("pdf2ps"), Qt::CaseInsensitive) == 0 && argc == 3) {
+        if (QString::fromLocal8Bit(argv[1]).endsWith(QStringLiteral("fail.pdf"))) {
+            std::fputs("<helper-error>", stderr);
+            return 7;
+        }
+        QFile output(QString::fromLocal8Bit(argv[2]));
+        return output.open(QIODevice::WriteOnly | QIODevice::Truncate) && output.write("%!PS\n") == 5 ? 0 : 1;
+    }
+    DviSecurityTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "dvisecuritytest.moc"

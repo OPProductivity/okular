@@ -61,17 +61,31 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(process.state(), QProcess::NotRunning, 5000);
         QVERIFY(process.exitStatus() == QProcess::CrashExit || process.exitCode() != 0);
     }
+    void asyncHelperOutputBudget()
+    {
+        QProcess process;
+        process.setProgram(QCoreApplication::applicationFilePath());
+        process.setArguments({QStringLiteral("--helper-output-slow")});
+        QVERIFY(Okular::boundAsyncHelper(&process, {}, 5000));
+        process.start();
+        QTRY_COMPARE_WITH_TIMEOUT(process.state(), QProcess::NotRunning, 5000);
+        QVERIFY(process.exitStatus() == QProcess::CrashExit || process.exitCode() != 0);
+    }
     void asyncHelperOwnerCancellation()
     {
+        QTemporaryDir dir;
+        const QString pidFile = dir.filePath(QStringLiteral("child.pid"));
         auto process = std::make_unique<QProcess>();
         process->setProgram(QCoreApplication::applicationFilePath());
-        process->setArguments({QStringLiteral("--helper-tree")});
+        process->setArguments({QStringLiteral("--helper-tree"), pidFile});
         Okular::boundAsyncHelper(process.get());
         process->start();
         QVERIFY(process->waitForStarted());
-        QVERIFY(process->waitForReadyRead());
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(pidFile), 3000);
+        QFile pidSource(pidFile);
+        QVERIFY(pidSource.open(QIODevice::ReadOnly));
         bool ok = false;
-        const qint64 pid = process->readAllStandardOutput().trimmed().toLongLong(&ok);
+        const qint64 pid = pidSource.readAll().trimmed().toLongLong(&ok);
         QVERIFY(ok && pid > 0);
         process.reset();
 #ifdef Q_OS_WIN
@@ -131,6 +145,15 @@ private Q_SLOTS:
         QCOMPARE(Okular::runBoundedHelper(process, output, errors, 5000), -1);
         QVERIFY(output.size() <= 8 * 1024 * 1024);
     }
+    void helperCombinedOutputBudget()
+    {
+        QProcess process;
+        process.setProgram(QCoreApplication::applicationFilePath());
+        process.setArguments({QStringLiteral("--helper-output-both")});
+        QByteArray output, errors;
+        QCOMPARE(Okular::runBoundedHelper(process, output, errors, 5000), -1);
+        QVERIFY(output.size() + errors.size() <= 8 * 1024 * 1024);
+    }
     void helperDescendants()
     {
         QProcess process;
@@ -182,6 +205,25 @@ int main(int argc, char **argv)
         }
         return 0;
     }
+    if (mode == QLatin1String("--helper-output-slow")) {
+        const QByteArray chunk(1024 * 1024, 'x');
+        for (int i = 0; i < 20; ++i) {
+            std::fwrite(chunk.constData(), 1, chunk.size(), stdout);
+            std::fflush(stdout);
+            QThread::msleep(5);
+        }
+        return 0;
+    }
+    if (mode == QLatin1String("--helper-output-both")) {
+        const QByteArray chunk(1024 * 1024, 'x');
+        for (int i = 0; i < 6; ++i) {
+            std::fwrite(chunk.constData(), 1, chunk.size(), stdout);
+            std::fwrite(chunk.constData(), 1, chunk.size(), stderr);
+            std::fflush(stdout);
+            std::fflush(stderr);
+        }
+        return 0;
+    }
     if (mode == QLatin1String("--helper-tree")) {
         QProcess child;
         child.start(app.applicationFilePath(), {QStringLiteral("--helper-spin")});
@@ -190,6 +232,12 @@ int main(int argc, char **argv)
         }
         std::fprintf(stdout, "%lld\n", static_cast<long long>(child.processId()));
         std::fflush(stdout);
+        if (app.arguments().size() > 2) {
+            QFile pidFile(app.arguments().at(2));
+            if (!pidFile.open(QIODevice::WriteOnly) || pidFile.write(QByteArray::number(child.processId())) < 0) {
+                return 1;
+            }
+        }
         QThread::sleep(60);
         return 0;
     }

@@ -167,3 +167,20 @@ all three previously rejected EPUBs at their unchanged original locations,
 including a 347-character path, when launched together into an existing session.
 The original 16 tabs and active article were restored after closing the test
 tabs. MinGW resource embedding is provided but was not built in this MSVC setup.
+
+## October 12 local review
+
+Four locally identified follow-ups were repaired without a cloud scan:
+
+| Finding | Repair |
+| --- | --- |
+| DVI font lookup could wait indefinitely for `kpsewhich` | Both font-map and font-encoding lookups now use the owned helper runner with a ten-second limit and bounded output. |
+| Helper output could exceed the intended in-memory budget between checks | Synchronous and asynchronous helpers drain promptly on Qt output notifications, limit combined stdout/stderr to 8 MiB, and stop the helper tree on overflow. |
+| RAR listing names could lead to reads outside the extraction directory | Resolve existing regular files through the canonical extraction root before listing or opening them; reject parent paths, absolute paths, drive syntax, and symlinks. |
+| DVI `pdf2ps` presence check was inverted | Run the converter only when found, with the owned helper's time/output limits and a generated-file size limit. Escape its diagnostic text before inserting it into the message. |
+
+The focused Windows tests passed: helper budgets 14, DVI 9, comic archives 6,
+and document security 20 cases, with two archive MIME cases skipped by this
+Craft environment. A fake `pdf2ps` executable verified both conversion and
+the failed-helper message. These tests do not establish behavior on Linux or
+macOS, where the helper process-group implementation differs.

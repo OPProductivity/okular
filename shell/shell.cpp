@@ -371,6 +371,30 @@ static QString WindowSessionGroupKey(const QString &id)
     return OpenDocumentSessionGroupKey() + QStringLiteral(" Window ") + id;
 }
 
+struct SavedWindowSession {
+    QStringList urls;
+    int activeTab = 0;
+    QString activeUrl;
+    bool intentionalSeparateWindow = false;
+    QByteArray geometry;
+};
+
+static QHash<QString, SavedWindowSession> s_startupWindowSessions;
+static QStringList s_startupWindowIds;
+static QSet<QString> s_failedWindowRestores;
+static bool s_startupWindowSnapshotCaptured = false;
+
+static SavedWindowSession readWindowSession(const KConfigGroup &group)
+{
+    SavedWindowSession session;
+    session.urls = group.readPathEntry(SESSION_URL_KEY, QStringList());
+    session.activeTab = group.readEntry<int>(SESSION_TAB_KEY, 0);
+    session.activeUrl = group.readPathEntry(SESSION_ACTIVE_URL_KEY, QString());
+    session.intentionalSeparateWindow = group.readEntry("IntentionalSeparateWindow", false);
+    session.geometry = group.readEntry("WindowGeometry", QByteArray());
+    return session;
+}
+
 static QStringList savedWindowIds(const KSharedConfigPtr &config)
 {
     const QStringList stored = config->group(WindowSessionIndexGroupKey()).readEntry("WindowIds", QStringList());
@@ -1637,10 +1661,19 @@ bool Shell::openDocumentSessionRestoreEnabled() const
 void Shell::setWindowsSessionRestoreInProgress(bool inProgress)
 {
     s_windowsSessionRestoreInProgress = inProgress;
+    s_startupWindowSessions.clear();
+    s_startupWindowIds.clear();
+    s_startupWindowSnapshotCaptured = false;
+    if (inProgress) {
+        s_failedWindowRestores.clear();
+    }
 }
 
 QStringList Shell::savedOpenDocumentSessionWindowIds()
 {
+    if (s_windowsSessionRestoreInProgress && s_startupWindowSnapshotCaptured) {
+        return s_startupWindowIds;
+    }
     const QString configFilePath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QLatin1String("/okularpartrc");
     if (!KSharedConfig::openConfig(configFilePath)->group(GeneralGroupKey()).readEntry("ShellRestoreOpenDocuments", true)) {
         return {};
@@ -1648,20 +1681,38 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     const KSharedConfigPtr config = ShellSessionConfig();
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     QStringList restorable;
+    const bool capture = s_windowsSessionRestoreInProgress && !s_startupWindowSnapshotCaptured;
     for (const QString &id : savedWindowIds(config)) {
         const KConfigGroup group = config->group(WindowSessionGroupKey(id));
         const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
         if (closedAt == 0 || wasWindowClosedRecently(closedAt, now)) {
             restorable.append(id);
+            if (capture) {
+                s_startupWindowSessions.insert(id, readWindowSession(group));
+            }
         }
     }
+    if (capture) {
+        s_startupWindowIds = restorable;
+        s_startupWindowSnapshotCaptured = true;
+    }
     return restorable;
+}
+
+void Shell::retainFailedWindowSession(const QString &sessionWindowId)
+{
+    if (!sessionWindowId.isEmpty()) {
+        s_failedWindowRestores.insert(sessionWindowId);
+    }
 }
 
 bool Shell::savedWindowWasSeparate(const QString &sessionWindowId)
 {
     if (sessionWindowId.isEmpty()) {
         return false;
+    }
+    if (const auto saved = s_startupWindowSessions.constFind(sessionWindowId); saved != s_startupWindowSessions.cend()) {
+        return saved->intentionalSeparateWindow;
     }
     return ShellSessionConfig()->group(WindowSessionGroupKey(sessionWindowId)).readEntry("IntentionalSeparateWindow", false);
 }
@@ -1671,7 +1722,8 @@ void Shell::restoreSavedWindowGeometry()
     if (!m_intentionalSeparateWindow) {
         return;
     }
-    const QByteArray geometry = ShellSessionConfig()->group(WindowSessionGroupKey(m_sessionWindowId)).readEntry("WindowGeometry", QByteArray());
+    const auto saved = s_startupWindowSessions.constFind(m_sessionWindowId);
+    const QByteArray geometry = saved != s_startupWindowSessions.cend() ? saved->geometry : ShellSessionConfig()->group(WindowSessionGroupKey(m_sessionWindowId)).readEntry("WindowGeometry", QByteArray());
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
         QTimer::singleShot(0, this, [this]() {
@@ -1772,7 +1824,7 @@ void Shell::saveOpenDocumentSession()
         } else {
             const KConfigGroup group = config->group(WindowSessionGroupKey(id));
             const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
-            if (wasWindowClosedRecently(closedAt, now) && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
+            if ((wasWindowClosedRecently(closedAt, now) || s_failedWindowRestores.contains(id)) && !group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty()) {
                 ids.append(id);
             }
         }
@@ -1797,7 +1849,7 @@ void Shell::saveOpenDocumentSession()
     indexGroup.writeEntry("Version", 2);
     indexGroup.writeEntry("WindowIds", ids);
     for (const QString &oldId : previousIds) {
-        if (!ids.contains(oldId)) {
+        if (!ids.contains(oldId) && !s_failedWindowRestores.contains(oldId)) {
             config->group(WindowSessionGroupKey(oldId)).deleteGroup();
         }
     }
@@ -1821,18 +1873,35 @@ bool Shell::restoreOpenDocumentSession()
     KSharedConfigPtr config = ShellSessionConfig();
 #if defined(Q_OS_WIN)
     const QStringList ids = savedWindowIds(config);
-    const QString groupName = ids.contains(m_sessionWindowId) ? WindowSessionGroupKey(m_sessionWindowId) : OpenDocumentSessionGroupKey();
+    const bool hasSavedWindow = s_startupWindowSessions.contains(m_sessionWindowId) || ids.contains(m_sessionWindowId);
+    const QString groupName = hasSavedWindow ? WindowSessionGroupKey(m_sessionWindowId) : OpenDocumentSessionGroupKey();
 #else
     const QString groupName = OpenDocumentSessionGroupKey();
 #endif
     const KConfigGroup group = config->group(groupName);
+#if defined(Q_OS_WIN)
+    const auto saved = s_startupWindowSessions.constFind(m_sessionWindowId);
+    const SavedWindowSession session = saved != s_startupWindowSessions.cend() ? *saved : readWindowSession(group);
+    const QStringList urls = session.urls;
+#else
     const QStringList urls = group.readPathEntry(SESSION_URL_KEY, QStringList());
+#endif
     if (urls.isEmpty()) {
+#if defined(Q_OS_WIN)
+        if (hasSavedWindow) {
+            s_failedWindowRestores.insert(m_sessionWindowId);
+        }
+#endif
         return false;
     }
 
+#if defined(Q_OS_WIN)
+    const int desiredTab = session.activeTab;
+    const QUrl desiredUrl(session.activeUrl);
+#else
     const int desiredTab = group.readEntry<int>(SESSION_TAB_KEY, 0);
     const QUrl desiredUrl(group.readPathEntry(SESSION_ACTIVE_URL_KEY, QString()));
+#endif
 
     bool restoredAny = false;
     int targetTab = -1;
@@ -1882,6 +1951,12 @@ bool Shell::restoreOpenDocumentSession()
         setActiveTab(targetTab);
     }
 
+#if defined(Q_OS_WIN)
+    if (!restoredAny && hasSavedWindow) {
+        s_failedWindowRestores.insert(m_sessionWindowId);
+        qWarning() << "Could not restore saved Okular window" << m_sessionWindowId;
+    }
+#endif
     return restoredAny;
 }
 
