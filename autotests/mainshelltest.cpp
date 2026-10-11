@@ -154,11 +154,18 @@ private Q_SLOTS:
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
     void testSeparateWindowSessionsRestore();
     void testRecentlyClosedWindowRestoresRemainingTabs();
+    void testCloseAllHiddenWindowsRestoresThreeSessions();
     void testClosedWindowExpiresAfterFifteenMinutes();
     void testClosingPrimaryTransfersForwarding();
     void testElevatedRequestDeclinesUnreadableFile();
     void testNewWindowActionAppearsInFileMenu();
     void testMoveTabToNewWindowPreservesPart();
+    void testSelectAndCloseSeveralTabs();
+    void testCloseSelectedTabsWithCloseButton();
+    void testControlClickSelectsSeparateTabs();
+    void testMoveSelectedTabsBetweenWindows();
+    void testMoveSelectedTabsViaMenu();
+    void testMoveToExistingWindowMenu();
     void testOrdinaryOpenFocusesTabInOtherWindow();
     void testDragTabOutsideWindowDetaches();
     void testDroppedFileOpensNewTab();
@@ -600,6 +607,54 @@ void MainShellTest::testRecentlyClosedWindowRestoresRemainingTabs()
     QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(closedTab.toLocalFile()));
 }
 
+void MainShellTest::testCloseAllHiddenWindowsRestoresThreeSessions()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    first->openUrl(urls.at(0));
+    Shell *second = new Shell(options, QString(), true);
+    Shell *third = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    QVERIFY(third->isValid());
+    second->show();
+    third->show();
+    second->openUrl(urls.at(1));
+    third->openUrl(urls.at(2));
+    third->saveOpenDocumentSession();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 3);
+
+    // Windows taskbar "Close all windows" may hide every window before its
+    // queued close events have been handled.
+    first->hide();
+    second->hide();
+    third->hide();
+    QVERIFY(first->close());
+    QVERIFY(second->close());
+    QVERIFY(third->close());
+    const QStringList savedIds = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(savedIds.size(), 3);
+    for (const QString &id : savedIds) {
+        QCOMPARE(KSharedConfig::openConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id).readEntry("ClosedAt", qint64(0)), qint64(0));
+    }
+    delete first;
+    delete second;
+    delete third;
+
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    const QList<Shell *> restored = getShells();
+    QCOMPARE(restored.size(), 3);
+    for (int i = 0; i < restored.size(); ++i) {
+        QCOMPARE(QDir::cleanPath(restored.at(i)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(urls.at(i).toLocalFile()));
+    }
+}
+
 void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -747,6 +802,181 @@ void MainShellTest::testMoveTabToNewWindowPreservesPart()
     const QList<Shell *> afterSecondMove = getShells();
     QCOMPARE(afterSecondMove.size(), 3);
     QVERIFY(std::any_of(afterSecondMove.cbegin(), afterSecondMove.cend(), [lastPart](Shell *shell) { return shell->m_tabs.first().part == lastPart; }));
+}
+
+void MainShellTest::testSelectAndCloseSeveralTabs()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    for (const QUrl &url : urls) {
+        shell->openUrl(url);
+    }
+    QTabBar *bar = shell->m_tabWidget->tabBar();
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::ShiftModifier, bar->tabRect(1).center());
+    QCOMPARE(shell->selectedTabsFor(1), (QList<int> {0, 1}));
+    shell->closeUrl();
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(shell->m_tabs.first().part->url(), urls.at(2));
+}
+
+void MainShellTest::testCloseSelectedTabsWithCloseButton()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    for (const QUrl &url : urls) {
+        shell->openUrl(url);
+    }
+    QTabBar *bar = shell->m_tabWidget->tabBar();
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::ShiftModifier, bar->tabRect(1).center());
+    QPointer<QWidget> closeButton = bar->tabButton(1, QTabBar::RightSide);
+    if (!closeButton) {
+        closeButton = bar->tabButton(1, QTabBar::LeftSide);
+    }
+    QVERIFY(closeButton);
+    QTest::mouseClick(closeButton, Qt::LeftButton);
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(shell->m_tabs.first().part->url(), urls.at(2));
+}
+
+void MainShellTest::testControlClickSelectsSeparateTabs()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    for (const QUrl &url : urls) {
+        shell->openUrl(url);
+    }
+    QTabBar *bar = shell->m_tabWidget->tabBar();
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::ControlModifier, bar->tabRect(2).center());
+    QCOMPARE(shell->selectedTabsFor(2), (QList<int> {0, 2}));
+    QVERIFY(shell->m_closeAction->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::Key_W)));
+    QVERIFY(shell->m_closeAction->isEnabled());
+    shell->m_closeAction->trigger();
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(shell->m_tabs.first().part->url(), urls.at(1));
+}
+
+void MainShellTest::testMoveSelectedTabsBetweenWindows()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *source = findShell();
+    QVERIFY(source);
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    for (const QUrl &url : urls) {
+        source->openUrl(url);
+    }
+    QTabBar *bar = source->m_tabWidget->tabBar();
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::ShiftModifier, bar->tabRect(1).center());
+    QCOMPARE(source->selectedTabsFor(1), (QList<int> {0, 1}));
+    KParts::ReadWritePart *firstPart = source->m_tabs.at(0).part;
+    KParts::ReadWritePart *secondPart = source->m_tabs.at(1).part;
+    QVERIFY(source->moveTabsToWindow(source->selectedTabsFor(1)));
+    QCOMPARE(source->m_tabs.size(), 1);
+    QCOMPARE(source->m_tabs.first().part->url(), urls.at(2));
+    const QList<Shell *> windows = getShells();
+    QCOMPARE(windows.size(), 2);
+    Shell *destination = windows.at(0) == source ? windows.at(1) : windows.at(0);
+    QCOMPARE(destination->m_tabs.size(), 2);
+    QCOMPARE(destination->m_tabs.at(0).part, firstPart);
+    QCOMPARE(destination->m_tabs.at(1).part, secondPart);
+    QCOMPARE(destination->m_tabs.at(0).part->url(), urls.at(0));
+    QCOMPARE(destination->m_tabs.at(1).part->url(), urls.at(1));
+    QVERIFY(source->moveTabsToWindow({0}, destination));
+    QCOMPARE(destination->m_tabs.size(), 3);
+    QCOMPARE(destination->m_tabs.at(2).part->url(), urls.at(2));
+    QVERIFY(source->m_tabs.first().part->url().isEmpty());
+}
+
+void MainShellTest::testMoveSelectedTabsViaMenu()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *source = findShell();
+    QVERIFY(source);
+    const QList<QUrl> urls = {
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")),
+        QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")),
+    };
+    for (const QUrl &url : urls) {
+        source->openUrl(url);
+    }
+    QTabBar *bar = source->m_tabWidget->tabBar();
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+    QTest::mouseClick(bar, Qt::LeftButton, Qt::ShiftModifier, bar->tabRect(1).center());
+    QTimer::singleShot(0, source, []() {
+        if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+            QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(menu->actions().first()).center());
+        }
+    });
+    QContextMenuEvent context(QContextMenuEvent::Mouse, bar->tabRect(1).center(), bar->mapToGlobal(bar->tabRect(1).center()));
+    QApplication::sendEvent(bar, &context);
+    const QList<Shell *> windows = getShells();
+    QCOMPARE(windows.size(), 2);
+    Shell *destination = windows.at(0) == source ? windows.at(1) : windows.at(0);
+    QCOMPARE(source->m_tabs.size(), 1);
+    QCOMPARE(destination->m_tabs.size(), 2);
+    QCOMPARE(destination->m_tabs.at(0).part->url().toLocalFile(), urls.at(0).toLocalFile());
+    QCOMPARE(destination->m_tabs.at(1).part->url().toLocalFile(), urls.at(1).toLocalFile());
+}
+
+void MainShellTest::testMoveToExistingWindowMenu()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *source = findShell();
+    QVERIFY(source);
+    source->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    Shell *target = new Shell(options, QString(), true);
+    QVERIFY(target->isValid());
+    target->show();
+    target->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    QTabBar *bar = source->m_tabWidget->tabBar();
+    bool found = false;
+    QTimer::singleShot(0, source, [&found]() {
+        if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+            found = menu->actions().size() == 2 && menu->actions().at(1)->text().contains(QStringLiteral("file2.pd"));
+            if (found) {
+                QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(menu->actions().at(1)).center());
+            } else {
+                menu->close();
+            }
+        }
+    });
+    QContextMenuEvent context(QContextMenuEvent::Mouse, bar->tabRect(0).center(), bar->mapToGlobal(bar->tabRect(0).center()));
+    QApplication::sendEvent(bar, &context);
+    QVERIFY(found);
+    QCOMPARE(target->m_tabs.size(), 2);
+    QCOMPARE(target->m_tabs.at(1).part->url().toLocalFile(), QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")).toLocalFile());
 }
 
 void MainShellTest::testOrdinaryOpenFocusesTabInOtherWindow()

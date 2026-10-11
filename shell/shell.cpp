@@ -55,6 +55,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #if defined(Q_OS_WIN)
@@ -65,6 +66,7 @@
 #include <QMenuBar>
 #include <QMimeData>
 #include <QObject>
+#include <QPainter>
 #include <QPointer>
 #include <QProxyStyle>
 #include <QScreen>
@@ -402,13 +404,24 @@ class ThreeButtonTabBarStyle : public QProxyStyle
 public:
     void drawControl(ControlElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget = nullptr) const override
     {
-        if (option && qobject_cast<const QTabBar *>(widget) && baseStyle()->name() == QLatin1String("windows11") && (element == CE_TabBarTabLabel || (element == CE_TabBarTabShape && (option->state & State_Selected)))) {
+        const auto *bar = qobject_cast<const QTabBar *>(widget);
+        if (option && bar && baseStyle()->name() == QLatin1String("windows11") && (element == CE_TabBarTabLabel || (element == CE_TabBarTabShape && (option->state & State_Selected)))) {
             // The Windows 11 proxy loses native dark-theme label colors and the
             // selected tab's accent edge. Keep native painting for both.
             QApplication::style()->drawControl(element, option, painter, widget);
-            return;
+        } else {
+            QProxyStyle::drawControl(element, option, painter, widget);
         }
-        QProxyStyle::drawControl(element, option, painter, widget);
+        if (bar && option && element == CE_TabBarTabShape) {
+            const int tab = bar->tabAt(option->rect.center());
+            if (tab >= 0 && bar->tabData(tab).toBool() && !(option->state & State_Selected)) {
+                painter->save();
+                painter->setPen(QPen(option->palette.highlight().color(), 2));
+                painter->setBrush(Qt::NoBrush);
+                painter->drawRect(option->rect.adjusted(1, 1, -2, -2));
+                painter->restore();
+            }
+        }
     }
 
     int pixelMetric(PixelMetric metric, const QStyleOption *option, const QWidget *widget) const override
@@ -638,7 +651,11 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_centralStackedWidget->addWidget(m_tabWidget);
 
         connect(m_tabWidget, &QTabWidget::currentChanged, this, &Shell::setActiveTab);
+#if defined(Q_OS_WIN)
+        connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &Shell::closeRequestedTabs);
+#else
         connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &Shell::closeTab);
+#endif
         connect(m_tabWidget->tabBar(), &QTabBar::tabMoved, this, &Shell::moveTabData);
 
         m_openDocumentSessionSaveTimer = new QTimer(this);
@@ -756,16 +773,47 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
             auto *context = static_cast<QContextMenuEvent *>(event);
             const int tab = bar->tabAt(context->pos());
             if (tab >= 0 && !m_tabs.at(tab).part->url().isEmpty()) {
+                if (!bar->tabData(tab).toBool()) {
+                    selectTabsForClick(tab, Qt::NoModifier);
+                }
                 QMenu menu(bar);
                 QAction *move = menu.addAction(i18n("Move to New Window"));
-                if (menu.exec(context->globalPos()) == move) {
-                    moveTabToNewWindow(tab, context->globalPos());
+                QHash<QAction *, QPointer<Shell>> otherWindows;
+                const auto containsPdf = [](const Shell *window) {
+                    return std::any_of(window->m_tabs.cbegin(), window->m_tabs.cend(), [](const TabState &state) {
+                        return state.part->url().path().endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive);
+                    });
+                };
+                if (containsPdf(this)) {
+                    QHash<QString, int> labelCounts;
+                    for (QWidget *widget : QApplication::topLevelWidgets()) {
+                        Shell *other = qobject_cast<Shell *>(widget);
+                        if (!other || other == this || !other->isVisible() || other->m_sessionClosed || other->m_unique || !containsPdf(other)) {
+                            continue;
+                        }
+                        const int active = other->m_tabWidget->currentIndex();
+                        const QString title = other->m_tabWidget->tabText(active).left(8);
+                        const int instance = ++labelCounts[title];
+                        QAction *action = menu.addAction(i18n("Move to Window %1", title) + (instance > 1 ? QStringLiteral(" (%1)").arg(instance) : QString()));
+                        action->setToolTip(other->m_tabWidget->tabToolTip(active));
+                        otherWindows.insert(action, other);
+                    }
+                }
+                QAction *chosen = menu.exec(context->globalPos());
+                if (chosen == move) {
+                    moveTabsToWindow(selectedTabsFor(tab), nullptr, context->globalPos());
+                } else if (otherWindows.contains(chosen) && otherWindows.value(chosen)) {
+                    moveTabsToWindow(selectedTabsFor(tab), otherWindows.value(chosen));
                 }
                 return true;
             }
         } else if (event->type() == QEvent::MouseButtonPress) {
             auto *mouse = static_cast<QMouseEvent *>(event);
-            m_draggedTabPart = mouse->button() == Qt::LeftButton && bar->tabAt(mouse->pos()) >= 0 ? m_tabs.at(bar->tabAt(mouse->pos())).part : nullptr;
+            const int tab = bar->tabAt(mouse->pos());
+            if (mouse->button() == Qt::LeftButton && tab >= 0) {
+                selectTabsForClick(tab, mouse->modifiers());
+            }
+            m_draggedTabPart = mouse->button() == Qt::LeftButton && tab >= 0 && mouse->modifiers() == Qt::NoModifier ? m_tabs.at(tab).part : nullptr;
             m_tabDragStart = mouse->globalPosition().toPoint();
         } else if (event->type() == QEvent::MouseButtonRelease) {
             auto *mouse = static_cast<QMouseEvent *>(event);
@@ -811,7 +859,7 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
         if (mEvent->button() == Qt::MiddleButton) {
             int tabIndex = m_tabWidget->tabBar()->tabAt(mEvent->pos());
             if (tabIndex != -1) {
-                closeTab(tabIndex);
+                closeRequestedTabs(tabIndex);
                 return true;
             }
         }
@@ -1262,7 +1310,18 @@ void Shell::openRecentDocuments(const QList<QUrl> &urls)
 
 void Shell::closeUrl()
 {
+#if defined(Q_OS_WIN)
+    int requestedTab = m_tabWidget->currentIndex();
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        if (m_tabWidget->tabBar()->tabData(i).toBool()) {
+            requestedTab = i;
+            break;
+        }
+    }
+    closeRequestedTabs(requestedTab);
+#else
     closeTab(m_tabWidget->currentIndex());
+#endif
 
     // When closing the current tab two things can happen:
     //  * the focus was on the tab
@@ -1276,6 +1335,78 @@ void Shell::closeUrl()
         newPart->widget()->setFocus();
     }
 }
+
+#if defined(Q_OS_WIN)
+QList<int> Shell::selectedTabsFor(int tab) const
+{
+    QList<int> selected;
+    if (tab < 0 || tab >= m_tabs.size()) {
+        return selected;
+    }
+    if (m_tabWidget->tabBar()->tabData(tab).toBool()) {
+        for (int i = 0; i < m_tabs.size(); ++i) {
+            if (m_tabWidget->tabBar()->tabData(i).toBool()) {
+                selected.append(i);
+            }
+        }
+    } else {
+        selected.append(tab);
+    }
+    return selected;
+}
+
+void Shell::selectTabsForClick(int tab, Qt::KeyboardModifiers modifiers)
+{
+    if (tab < 0 || tab >= m_tabs.size()) {
+        return;
+    }
+    QTabBar *bar = m_tabWidget->tabBar();
+    int anchor = findTabIndex(m_tabSelectionAnchor);
+    if (modifiers & Qt::ShiftModifier) {
+        if (anchor < 0) {
+            anchor = m_tabWidget->currentIndex();
+        }
+        if (anchor < 0) {
+            anchor = tab;
+        }
+        if (!(modifiers & Qt::ControlModifier)) {
+            for (int i = 0; i < bar->count(); ++i) {
+                bar->setTabData(i, false);
+            }
+        }
+        for (int i = qMin(anchor, tab); i <= qMax(anchor, tab); ++i) {
+            bar->setTabData(i, true);
+        }
+        m_tabSelectionAnchor = m_tabs.at(anchor).part;
+    } else if (modifiers & Qt::ControlModifier) {
+        bar->setTabData(tab, !bar->tabData(tab).toBool());
+        m_tabSelectionAnchor = m_tabs.at(tab).part;
+    } else {
+        for (int i = 0; i < bar->count(); ++i) {
+            bar->setTabData(i, i == tab);
+        }
+        m_tabSelectionAnchor = m_tabs.at(tab).part;
+    }
+    bar->update();
+}
+
+void Shell::closeRequestedTabs(int tab)
+{
+    const QList<int> selected = selectedTabsFor(tab);
+    for (auto it = selected.crbegin(); it != selected.crend(); ++it) {
+        const bool closed = closeTab(*it);
+        // A modified document can veto closeUrl(). Leave the remaining tabs alone.
+        if (!closed) {
+            break;
+        }
+    }
+    m_tabSelectionAnchor = nullptr;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        m_tabWidget->tabBar()->setTabData(i, false);
+    }
+    m_tabWidget->tabBar()->update();
+}
+#endif
 
 void Shell::readSettings()
 {
@@ -1716,97 +1847,135 @@ void Shell::fileOpenInNewWindow()
 
 bool Shell::moveTabToNewWindow(int tab, const QPoint &dropPosition)
 {
-    if (tab < 0 || tab >= m_tabs.size() || m_tabs.at(tab).part->url().isEmpty()) {
+    return moveTabsToWindow({tab}, nullptr, dropPosition);
+}
+
+bool Shell::moveTabsToWindow(const QList<int> &tabs, Shell *destination, const QPoint &dropPosition)
+{
+    if (tabs.isEmpty() || destination == this || (destination && (!destination->isValid() || destination->m_sessionClosed))) {
         return false;
     }
-    // Never close and reload a document to detach it: annotations and the
-    // current reading position belong to the existing Part instance.
+    QList<int> indexes = tabs;
+    std::sort(indexes.begin(), indexes.end());
+    indexes.erase(std::unique(indexes.begin(), indexes.end()), indexes.end());
+    for (int tab : std::as_const(indexes)) {
+        if (tab < 0 || tab >= m_tabs.size() || m_tabs.at(tab).part->url().isEmpty()) {
+            return false;
+        }
+    }
+    // Transfer the existing Parts, including unsaved annotations and reading
+    // position. Keep a blank Part in the source if all of its tabs move.
     KParts::ReadWritePart *replacement = nullptr;
-    if (m_tabs.size() == 1) {
+    if (indexes.size() == m_tabs.size()) {
         replacement = m_partFactory->create<KParts::ReadWritePart>(this);
         if (!replacement) {
             return false;
         }
     }
-    Shell *destination = new Shell(QString(), QString(), true);
-    if (!destination->isValid()) {
-        delete destination;
-        delete replacement;
-        return false;
+    const bool newWindow = !destination;
+    if (newWindow) {
+        destination = new Shell(QString(), QString(), true);
+        if (!destination->isValid()) {
+            delete destination;
+            delete replacement;
+            return false;
+        }
     }
 
-    QScreen *targetScreen = dropPosition.isNull() ? screen() : QGuiApplication::screenAt(dropPosition);
+    QScreen *targetScreen = newWindow ? (dropPosition.isNull() ? screen() : QGuiApplication::screenAt(dropPosition)) : nullptr;
     QRect targetFrame;
-    if (!targetScreen) {
+    if (newWindow && !targetScreen) {
         targetScreen = screen() ? screen() : QGuiApplication::primaryScreen();
     }
     if (targetScreen) {
         targetFrame = targetScreen->availableGeometry();
     }
 
-    const int oldActive = m_tabWidget->currentIndex();
-    const TabState moved = m_tabs.at(tab);
-    const QString tabText = m_tabWidget->tabText(tab);
-    const QString tabTip = m_tabWidget->tabToolTip(tab);
-    const QIcon tabIcon = m_tabWidget->tabIcon(tab);
-    auto *movedSide = qobject_cast<Okular::ViewerInterface *>(moved.part)->getSideContainer();
-
-    KParts::ReadWritePart *emptyPart = destination->m_tabs.first().part;
-    auto *emptySide = qobject_cast<Okular::ViewerInterface *>(emptyPart)->getSideContainer();
-    destination->createGUI(nullptr);
-    destination->m_sidebar->removeWidget(emptySide);
-    destination->m_showSidebarAction->disconnect(destination->m_sidebar);
-    destination->m_showSidebarAction = nullptr;
-    {
-        QSignalBlocker blocked(destination->m_tabWidget);
-        destination->m_tabWidget->removeTab(0);
-        destination->m_tabs.clear();
-    }
-    if (emptyPart->factory()) {
-        emptyPart->factory()->removeClient(emptyPart);
-    }
-    emptyPart->deleteLater();
-
-    if (m_showSidebarAction) {
-        m_showSidebarAction->disconnect(m_sidebar);
-    }
-    if (moved.part->factory()) {
-        moved.part->factory()->removeClient(moved.part);
-    }
-    moved.part->disconnect(this);
-    disconnect(moved.part);
-    m_sidebar->removeWidget(movedSide);
-    {
-        QSignalBlocker blocked(m_tabWidget);
-        m_tabWidget->removeTab(tab);
-        m_tabs.removeAt(tab);
-        if (replacement) {
-            m_tabs.append(TabState(replacement));
-            connectPart(replacement);
-            m_tabWidget->addTab(replacement->widget(), QString());
+    if (destination->m_tabs.size() == 1 && destination->m_tabs.first().part->url().isEmpty()) {
+        KParts::ReadWritePart *emptyPart = destination->m_tabs.first().part;
+        auto *emptySide = qobject_cast<Okular::ViewerInterface *>(emptyPart)->getSideContainer();
+        destination->createGUI(nullptr);
+        destination->m_sidebar->removeWidget(emptySide);
+        if (destination->m_showSidebarAction) {
+            destination->m_showSidebarAction->disconnect(destination->m_sidebar);
         }
+        destination->m_showSidebarAction = nullptr;
+        {
+            QSignalBlocker blocked(destination->m_tabWidget);
+            destination->m_tabWidget->removeTab(0);
+            destination->m_tabs.clear();
+        }
+        if (emptyPart->factory()) {
+            emptyPart->factory()->removeClient(emptyPart);
+        }
+        emptyPart->deleteLater();
     }
-    moved.part->setParent(destination);
-    destination->connectPart(moved.part);
-    destination->m_tabs.append(moved);
-    destination->m_tabWidget->addTab(moved.part->widget(), tabIcon, tabText);
-    destination->m_tabWidget->setTabToolTip(0, tabTip);
-    destination->setActiveTab(0);
+    QList<KParts::ReadWritePart *> orderedParts;
+    for (int tab : std::as_const(indexes)) {
+        orderedParts.append(m_tabs.at(tab).part);
+    }
+    for (auto it = indexes.crbegin(); it != indexes.crend(); ++it) {
+        const int tab = *it;
+        const TabState moved = m_tabs.at(tab);
+        const QString tabText = m_tabWidget->tabText(tab);
+        const QString tabTip = m_tabWidget->tabToolTip(tab);
+        const QIcon tabIcon = m_tabWidget->tabIcon(tab);
+        auto *movedSide = qobject_cast<Okular::ViewerInterface *>(moved.part)->getSideContainer();
+        if (m_showSidebarAction) {
+            m_showSidebarAction->disconnect(m_sidebar);
+        }
+        if (moved.part->factory()) {
+            moved.part->factory()->removeClient(moved.part);
+        }
+        moved.part->disconnect(this);
+        disconnect(moved.part);
+        m_sidebar->removeWidget(movedSide);
+        const int oldActive = m_tabWidget->currentIndex();
+        {
+            QSignalBlocker blocked(m_tabWidget);
+            m_tabWidget->removeTab(tab);
+            m_tabs.removeAt(tab);
+            if (m_tabs.isEmpty() && replacement) {
+                m_tabs.append(TabState(replacement));
+                connectPart(replacement);
+                m_tabWidget->addTab(replacement->widget(), QString());
+                replacement = nullptr;
+            }
+        }
+        moved.part->setParent(destination);
+        destination->connectPart(moved.part);
+        destination->m_tabs.append(moved);
+        const int addedTab = destination->m_tabWidget->addTab(moved.part->widget(), tabIcon, tabText);
+        destination->m_tabWidget->setTabToolTip(addedTab, tabTip);
+        const int nextActive = oldActive > tab ? oldActive - 1 : qMin(oldActive, m_tabs.size() - 1);
+        setActiveTab(nextActive);
+    }
+    // The reverse removal keeps source indexes valid. Put the destination's
+    // tabs back in their original left-to-right order.
+    const int firstAdded = destination->m_tabs.size() - orderedParts.size();
+    for (int offset = 0; offset < orderedParts.size(); ++offset) {
+        destination->m_tabWidget->tabBar()->moveTab(destination->findTabIndex(orderedParts.at(offset)), firstAdded + offset);
+    }
+    destination->setActiveTab(destination->findTabIndex(orderedParts.last()));
     destination->hideWelcomeScreen();
-
-    const int nextActive = oldActive > tab ? oldActive - 1 : qMin(oldActive, m_tabs.size() - 1);
-    setActiveTab(nextActive);
-    if (replacement) {
+    if (m_tabs.size() == 1 && m_tabs.first().part->url().isEmpty()) {
         showWelcomeScreen();
     }
     m_nextTabAction->setEnabled(m_tabs.size() > 1);
     m_prevTabAction->setEnabled(m_tabs.size() > 1);
+    destination->m_nextTabAction->setEnabled(destination->m_tabs.size() > 1);
+    destination->m_prevTabAction->setEnabled(destination->m_tabs.size() > 1);
     updateOpenTabButtonGeometry();
-    destination->show();
-    if (targetScreen) {
+    destination->updateOpenTabButtonGeometry();
+    if (newWindow) {
+        destination->show();
+    }
+    if (newWindow && targetScreen) {
         placeIntentionalWindowFrame(destination, targetFrame, targetScreen->availableGeometry());
     }
     destination->saveOpenDocumentSession();
+    destination->raise();
+    destination->activateWindow();
     return true;
 }
 #endif
@@ -2159,7 +2328,9 @@ void Shell::closeEvent(QCloseEvent *event)
     Shell *survivor = nullptr;
     for (QWidget *widget : QApplication::topLevelWidgets()) {
         Shell *window = qobject_cast<Shell *>(widget);
-        if (window && window != this && window->isVisible() && !window->m_sessionClosed && !window->m_unique) {
+        // Windows can hide all taskbar windows before delivering their close
+        // events. A hidden Shell still owns tabs until its close is processed.
+        if (window && window != this && !window->m_sessionClosed && !window->m_unique) {
             survivor = window;
             break;
         }
@@ -2192,6 +2363,26 @@ void Shell::closeEvent(QCloseEvent *event)
         survivor->saveOpenDocumentSession();
     } else {
         saveOpenDocumentSession();
+        // The last window completes a coordinated shutdown. Windows closed
+        // shortly before it are part of that finished session, even if the
+        // user does not start Okular again until much later.
+        if (!m_unique && openDocumentSessionRestoreEnabled() && (s_windowsTabOpenPrimaryServer || QStandardPaths::isTestModeEnabled())) {
+            const KSharedConfigPtr config = ShellSessionConfig();
+            const qint64 now = QDateTime::currentSecsSinceEpoch();
+            bool changed = false;
+            for (const QString &id : savedWindowIds(config)) {
+                KConfigGroup group = config->group(WindowSessionGroupKey(id));
+                const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
+                if (closedAt > 0 && closedAt <= now && now - closedAt <= CLOSED_WINDOW_RESTORE_GRACE_SECONDS) {
+                    group.deleteEntry("ClosedAt");
+                    changed = true;
+                }
+            }
+            if (changed) {
+                config->sync();
+                saveSessionRecoveryCopy(config);
+            }
+        }
     }
 #endif
 }
@@ -2250,8 +2441,11 @@ void Shell::setActiveTab(int tab)
     scheduleOpenDocumentSessionSave();
 }
 
-void Shell::closeTab(int tab)
+bool Shell::closeTab(int tab)
 {
+    if (tab < 0 || tab >= m_tabs.size()) {
+        return false;
+    }
     KParts::ReadWritePart *const part = m_tabs[tab].part;
     QUrl url = part->url();
     bool closeSuccess = part->closeUrl();
@@ -2287,6 +2481,7 @@ void Shell::closeTab(int tab)
     if (closeSuccess) {
         scheduleOpenDocumentSessionSave();
     }
+    return closeSuccess;
 }
 
 void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)

@@ -157,7 +157,10 @@ private Q_SLOTS:
 
     // Tab event handlers
     void setActiveTab(int tab);
-    void closeTab(int tab);
+    bool closeTab(int tab);
+#if defined(Q_OS_WIN)
+    void closeRequestedTabs(int tab);
+#endif
     void activateNextTab();
     void activatePrevTab();
     void undoCloseTab();
@@ -204,6 +207,9 @@ private:
     void raisePrivateWindowsShell();
     void applyPrivateWindowsStartupGeometry();
     bool moveTabToNewWindow(int tab, const QPoint &dropPosition = QPoint());
+    bool moveTabsToWindow(const QList<int> &tabs, Shell *destination = nullptr, const QPoint &dropPosition = QPoint());
+    QList<int> selectedTabsFor(int tab) const;
+    void selectTabsForClick(int tab, Qt::KeyboardModifiers modifiers);
 #endif
 
 private:
@@ -256,6 +262,7 @@ private:
     QPointer<Shell> m_windowsBatchSummaryTarget;
     bool m_privateWindowsStartupGeometryApplied = false;
     QPointer<KParts::ReadWritePart> m_draggedTabPart;
+    QPointer<KParts::ReadWritePart> m_tabSelectionAnchor;
     QPoint m_tabDragStart;
 #endif
     bool m_openDocumentSessionReady = false;
