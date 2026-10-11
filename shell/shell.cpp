@@ -1330,6 +1330,7 @@ void Shell::setupActions()
 #if defined(Q_OS_WIN)
     QAction *openNewWindow = actionCollection()->addAction(QStringLiteral("file_open_new_window"));
     openNewWindow->setText(i18n("Open in New Window..."));
+    openNewWindow->setIcon(QIcon::fromTheme(QStringLiteral("document-open")));
     connect(openNewWindow, &QAction::triggered, this, &Shell::fileOpenInNewWindow);
 #endif
     m_recent = KStandardAction::openRecent(this, SLOT(openUrl(QUrl)), actionCollection());
