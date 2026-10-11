@@ -1337,7 +1337,11 @@ bool Part::slotImportPSFile()
         p->setProperty("okularImportOutput", m_temporaryLocalFile);
         const QString importOutput = m_temporaryLocalFile;
         connect(p, &QObject::destroyed, [importOutput]() { QFile::remove(importOutput); });
-        Okular::boundAsyncHelper(p, m_temporaryLocalFile);
+        if (!Okular::boundAsyncHelper(p, m_temporaryLocalFile)) {
+            p->deleteLater();
+            m_temporaryLocalFile.clear();
+            return false;
+        }
         connect(p, &QProcess::errorOccurred, this, [p, importOutput](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) {
                 QFile::remove(importOutput);

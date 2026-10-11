@@ -104,25 +104,36 @@ private Q_SLOTS:
     void testPrintD_data();
 
 private:
-    Okular::Document *m_document;
+    bool reopenDocument();
+    Okular::Document *m_document = nullptr;
     QMap<QString, Okular::FormField *> m_fields;
 };
 
 void JSFunctionsTest::initTestCase()
 {
     Okular::SettingsCore::instance(QStringLiteral("jsfunctionstest"));
+    QVERIFY(reopenDocument());
+}
+
+bool JSFunctionsTest::reopenDocument()
+{
+    delete m_document;
     m_document = new Okular::Document(nullptr);
+    m_fields.clear();
 
     const QString testFile = QStringLiteral(KDESRCDIR "data/kjsfunctionstest.pdf");
     QMimeDatabase db;
     const QMimeType mime = db.mimeTypeForFile(testFile);
-    QCOMPARE(m_document->openDocument(testFile, QUrl(), mime), Okular::Document::OpenSuccess);
+    if (m_document->openDocument(testFile, QUrl(), mime) != Okular::Document::OpenSuccess) {
+        return false;
+    }
 
     const Okular::Page *page = m_document->page(0);
     const QList<Okular::FormField *> pageFormFields = page->formFields();
     for (Okular::FormField *ff : pageFormFields) {
         m_fields.insert(ff->name(), ff);
     }
+    return true;
 }
 
 void JSFunctionsTest::testNthFieldName()
@@ -182,6 +193,7 @@ void JSFunctionsTest::testRecurringCallbackBudget()
 
 void JSFunctionsTest::testInterruptedTimerCancelled()
 {
+    QVERIFY(reopenDocument()); // A previous document exhausted its timer quota.
     Okular::ScriptAction start(Okular::JavaScript, QStringLiteral("var attacks=0; app.setInterval('++attacks; while(true) {}', 10);"));
     m_document->processAction(&start);
     QTest::qWait(2600);
@@ -191,6 +203,7 @@ void JSFunctionsTest::testInterruptedTimerCancelled()
 }
 void JSFunctionsTest::testReplacingTimeoutBudget()
 {
+    QVERIFY(reopenDocument());
     Okular::ScriptAction start(Okular::JavaScript, QStringLiteral("var replacements=0; function again() { ++replacements; app.setTimeOut('again()',0); } app.setTimeOut('again()',0);"));
     m_document->processAction(&start);
     QTest::qWait(2600);
@@ -248,6 +261,7 @@ void delay()
 
 void JSFunctionsTest::testSetClearInterval()
 {
+    QVERIFY(reopenDocument());
     Okular::ScriptAction *action = new Okular::ScriptAction(Okular::JavaScript, QStringLiteral("obj = new Object();obj.idx=0;\
         obj.inc=function(){field = Doc.getField(Doc.getNthFieldName(obj.idx));\
         field.display = display.visible;\

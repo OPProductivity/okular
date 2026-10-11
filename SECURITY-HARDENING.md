@@ -83,8 +83,14 @@ clicked HTTP/HTTPS/mail links remain available. Embedded sound is unchanged.
 Additional follow-up limits:
 
 - Helper process trees: 1 GiB memory; Unix also limits CPU and generated file size.
-  Asynchronous output is polled every 50 ms. Windows job attachment occurs after
-  startup, so this is resource hardening, not a sandbox guarantee.
+  Asynchronous output is polled every 50 ms. On Windows, helpers enter the Job
+  Object at process creation, before their first instruction. These limits are
+  resource hardening, not a complete sandbox.
+- Windows tab forwarding: the server authenticates each named-pipe client's
+  user and integrity level before parsing a size-limited request. Elevated
+  clients may still hand a readable file down to a standard Okular window.
+- Windows session recovery: the backup directory's ACL is set through a
+  validated directory handle; reparse-point redirects are rejected.
 - TIFF/EPUB/XPS raster images: at most 32,768 pixels per dimension and 64 million
   pixels. EPUB/XPS archives: 64 MiB per binary member, 16 MiB per text member,
   256 MiB aggregate expanded/retained resources, 10,000 entries and 128 levels.

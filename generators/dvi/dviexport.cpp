@@ -68,7 +68,11 @@ void DVIExport::start(const QString &command, const QStringList &args, const QSt
 
     error_message_ = error_message;
 
-    Okular::boundAsyncHelper(process_, outputPath_);
+    if (!Okular::boundAsyncHelper(process_, outputPath_)) {
+        qCCritical(OkularDviDebug) << "Could not constrain" << command;
+        Q_EMIT error(error_message_, -1);
+        return;
+    }
     process_->start();
     if (!process_->waitForStarted(5000)) {
         qCCritical(OkularDviDebug) << command << " failed to start";

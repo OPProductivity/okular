@@ -17,6 +17,8 @@
 #include <QList>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QPoint>
+#include <QPointer>
 #include <kparts/mainwindow.h>
 #include <kparts/readwritepart.h>
 
@@ -197,6 +199,7 @@ private:
     void handleWindowsTabOpenConnection();
     void raisePrivateWindowsShell();
     void applyPrivateWindowsStartupGeometry();
+    bool moveTabToNewWindow(int tab, const QPoint &dropPosition = QPoint());
 #endif
 
 private:
@@ -244,6 +247,8 @@ private:
 #if defined(Q_OS_WIN)
     QLocalServer *m_windowsTabOpenServer = nullptr;
     bool m_privateWindowsStartupGeometryApplied = false;
+    QPointer<KParts::ReadWritePart> m_draggedTabPart;
+    QPoint m_tabDragStart;
 #endif
     bool m_openDocumentSessionReady = false;
     bool m_restoringOpenDocumentSession = false;

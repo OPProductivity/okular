@@ -4,6 +4,7 @@
 #ifndef OKULAR_PROCESSBUDGET_P_H
 #define OKULAR_PROCESSBUDGET_P_H
 
+#include <QByteArray>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QProcess>
@@ -13,6 +14,7 @@
 #include <memory>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
+#include <processthreadsapi.h>
 #else
 #include <signal.h>
 #include <sys/resource.h>
@@ -39,7 +41,27 @@ public:
                 m_job = nullptr;
             }
         }
-        process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) { args->flags |= CREATE_NO_WINDOW; });
+        if (m_job) {
+            SIZE_T size = 0;
+            InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+            m_attributeStorage.resize(qsizetype(size));
+            m_attributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(m_attributeStorage.data());
+            if (!size || !InitializeProcThreadAttributeList(m_attributeList, 1, 0, &size)) {
+                m_attributeList = nullptr;
+            } else if (!UpdateProcThreadAttribute(m_attributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &m_job, sizeof(m_job), nullptr, nullptr)) {
+                DeleteProcThreadAttributeList(m_attributeList);
+                m_attributeList = nullptr;
+            }
+        }
+        if (m_attributeList) {
+            process.setCreateProcessArgumentsModifier([this](QProcess::CreateProcessArguments *args) {
+                args->flags |= CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
+                m_startupInfo.StartupInfo = *reinterpret_cast<STARTUPINFOW *>(args->startupInfo);
+                m_startupInfo.StartupInfo.cb = sizeof(m_startupInfo);
+                m_startupInfo.lpAttributeList = m_attributeList;
+                args->startupInfo = reinterpret_cast<Q_STARTUPINFO *>(&m_startupInfo);
+            });
+        }
 #else
         process.setChildProcessModifier([]() {
             const rlimit memory {1024ULL * 1024 * 1024, 1024ULL * 1024 * 1024};
@@ -51,12 +73,22 @@ public:
         });
 #endif
     }
+    bool ready() const
+    {
+#ifdef Q_OS_WIN
+        return m_job && m_attributeList;
+#else
+        return true;
+#endif
+    }
     bool attach()
     {
         m_pid = m_process.processId();
 #ifdef Q_OS_WIN
-        HANDLE child = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, DWORD(m_pid));
-        const bool ok = m_job && child && AssignProcessToJobObject(m_job, child);
+        m_process.setCreateProcessArgumentsModifier({});
+        HANDLE child = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(m_pid));
+        BOOL assigned = FALSE;
+        const bool ok = m_job && child && IsProcessInJob(child, m_job, &assigned) && assigned;
         if (child) {
             CloseHandle(child);
         }
@@ -86,6 +118,9 @@ public:
     ~HelperProcessTree()
     {
 #ifdef Q_OS_WIN
+        if (m_attributeList) {
+            DeleteProcThreadAttributeList(m_attributeList);
+        }
         if (m_job) {
             CloseHandle(m_job);
         }
@@ -103,14 +138,20 @@ private:
     qint64 m_pid = 0;
 #ifdef Q_OS_WIN
     HANDLE m_job = nullptr;
+    QByteArray m_attributeStorage;
+    LPPROC_THREAD_ATTRIBUTE_LIST m_attributeList = nullptr;
+    STARTUPINFOEXW m_startupInfo {};
 #endif
 };
 
 // Install before start(). The timer is owned by the process, so closing its owner
 // cancels the complete helper tree without leaving a detached conversion running.
-inline void boundAsyncHelper(QProcess *process, const QString &outputFile = {}, int timeoutMs = 120000)
+inline bool boundAsyncHelper(QProcess *process, const QString &outputFile = {}, int timeoutMs = 120000)
 {
     auto tree = std::make_shared<HelperProcessTree>(*process);
+    if (!tree->ready()) {
+        return false;
+    }
     auto timer = new QTimer(process);
     timer->setInterval(50);
     auto elapsed = std::make_shared<QElapsedTimer>();
@@ -134,16 +175,23 @@ inline void boundAsyncHelper(QProcess *process, const QString &outputFile = {}, 
         }
     });
     QObject::connect(process, &QProcess::finished, timer, [timer, tree](int, QProcess::ExitStatus) { timer->stop(); });
+    return true;
 }
 
 // The monitor may additionally bound generated files or extracted archives.
 inline int runBoundedHelper(QProcess &process, QByteArray &output, QByteArray &errors, int timeoutMs = 120000, const std::function<bool()> &monitor = {})
 {
     HelperProcessTree tree(process);
+    if (!tree.ready()) {
+        return -1;
+    }
     QElapsedTimer elapsed;
     elapsed.start();
     process.start();
     if (!process.waitForStarted(qMin(timeoutMs, 5000))) {
+#ifdef Q_OS_WIN
+        process.setCreateProcessArgumentsModifier({});
+#endif
         tree.kill();
         return -1;
     }

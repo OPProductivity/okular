@@ -50,6 +50,8 @@
 #include <QToolButton>
 #include <qwidget.h>
 
+#include <algorithm>
+
 #include "../core/document_p.h"
 #include "../part/findbar.h"
 #include "../part/part.h"
@@ -140,12 +142,15 @@ private Q_SLOTS:
     void testEpubAtLongWindowsPath();
     void testForwardedWindowReturnsFromOffscreen();
     void testForwardedFileOpensInExistingTabs();
+    void testForwardingRejectsOversizeRequest();
     void testShortcutLaunchReusesExistingWindow();
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
     void testSeparateWindowSessionsRestore();
     void testClosingPrimaryTransfersForwarding();
     void testElevatedRequestDeclinesUnreadableFile();
     void testNewWindowActionAppearsInFileMenu();
+    void testMoveTabToNewWindowPreservesPart();
+    void testDragTabOutsideWindowDetaches();
     void testDroppedFileOpensNewTab();
 #endif
     void testOpenDocumentSessionRestoresTabs();
@@ -201,6 +206,21 @@ Shell *findShell(Shell *ignore = nullptr)
     }
     return nullptr;
 }
+
+#if defined(Q_OS_WIN)
+static QByteArray tabOpenRequest(quint32 magic, const QString &options, const QStringList &paths)
+{
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << magic << options << paths;
+    QByteArray request;
+    QDataStream frame(&request, QIODevice::WriteOnly);
+    frame.setVersion(QDataStream::Qt_6_0);
+    frame << quint32(payload.size());
+    return request + payload;
+}
+#endif
 
 void MainShellTest::initTestCase()
 {
@@ -399,10 +419,7 @@ void MainShellTest::testForwardedFileOpensInExistingTabs()
     QLocalSocket socket;
     socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
     QVERIFY(socket.waitForConnected(1000));
-    QByteArray payload;
-    QDataStream stream(&payload, QIODevice::WriteOnly);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream << quint32(0x4f4b5450) << options << QStringList {secondUrl.toLocalFile()};
+    const QByteArray payload = tabOpenRequest(0x4f4b5450, options, {secondUrl.toLocalFile()});
     QCOMPARE(socket.write(payload), payload.size());
     socket.flush();
 
@@ -412,6 +429,25 @@ void MainShellTest::testForwardedFileOpensInExistingTabs()
     QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
     QVERIFY(findShell(shell) == nullptr);
     socket.disconnectFromServer();
+}
+
+void MainShellTest::testForwardingRejectsOversizeRequest()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QLocalSocket socket;
+    socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
+    QVERIFY(socket.waitForConnected(1000));
+    QByteArray oversized;
+    QDataStream stream(&oversized, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(4 * 1024 * 1024 + 1);
+    QCOMPARE(socket.write(oversized), oversized.size());
+    socket.flush();
+    QTRY_COMPARE_WITH_TIMEOUT(socket.state(), QLocalSocket::UnconnectedState, 1000);
+    QVERIFY(shell->m_tabs.first().part->url().isEmpty());
 }
 
 void MainShellTest::testShortcutLaunchReusesExistingWindow()
@@ -503,10 +539,7 @@ void MainShellTest::testClosingPrimaryTransfersForwarding()
     QLocalSocket socket;
     socket.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
     QVERIFY(socket.waitForConnected(1000));
-    QByteArray payload;
-    QDataStream stream(&payload, QIODevice::WriteOnly);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream << quint32(0x4f4b5450) << options << QStringList {url.toLocalFile()};
+    const QByteArray payload = tabOpenRequest(0x4f4b5450, options, {url.toLocalFile()});
     QCOMPARE(socket.write(payload), payload.size());
     socket.flush();
     QTRY_COMPARE(additional->m_tabs.first().part->url(), url);
@@ -537,10 +570,7 @@ void MainShellTest::testElevatedRequestDeclinesUnreadableFile()
     ULONG serverPid = 0;
     QVERIFY(GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket.socketDescriptor()), &serverPid));
     QCOMPARE(serverPid, ULONG(QCoreApplication::applicationPid()));
-    QByteArray payload;
-    QDataStream stream(&payload, QIODevice::WriteOnly);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream << quint32(0x4f4b5445) << options << QStringList {missingPath};
+    const QByteArray payload = tabOpenRequest(0x4f4b5445, options, {missingPath});
     QCOMPARE(socket.write(payload), payload.size());
     socket.flush();
     QTRY_VERIFY_WITH_TIMEOUT(socket.bytesAvailable() > 0, 1000);
@@ -550,11 +580,8 @@ void MainShellTest::testElevatedRequestDeclinesUnreadableFile()
     QLocalSocket readableSocket;
     readableSocket.connectToServer(ShellUtils::windowsStandardTabOpenServerName(), QIODevice::ReadWrite);
     QVERIFY(readableSocket.waitForConnected(1000));
-    QByteArray readablePayload;
-    QDataStream readableStream(&readablePayload, QIODevice::WriteOnly);
-    readableStream.setVersion(QDataStream::Qt_6_0);
     const QUrl readableUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
-    readableStream << quint32(0x4f4b5445) << options << QStringList {readableUrl.toLocalFile()};
+    const QByteArray readablePayload = tabOpenRequest(0x4f4b5445, options, {readableUrl.toLocalFile()});
     QCOMPARE(readableSocket.write(readablePayload), readablePayload.size());
     readableSocket.flush();
     QTRY_COMPARE(QDir::cleanPath(shell->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(readableUrl.toLocalFile()));
@@ -577,6 +604,57 @@ void MainShellTest::testNewWindowActionAppearsInFileMenu()
         }
     }
     QVERIFY(inFileMenu);
+}
+
+void MainShellTest::testMoveTabToNewWindowPreservesPart()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *source = findShell();
+    QVERIFY(source);
+    const QUrl first = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl second = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    source->openUrl(first);
+    source->openUrl(second);
+    QCOMPARE(source->m_tabs.size(), 2);
+    KParts::ReadWritePart *movedPart = source->m_tabs.at(1).part;
+    QVERIFY(source->moveTabToNewWindow(1));
+    QCOMPARE(source->m_tabs.size(), 1);
+    QCOMPARE(source->m_tabs.first().part->url(), first);
+    const QList<Shell *> afterFirstMove = getShells();
+    QCOMPARE(afterFirstMove.size(), 2);
+    Shell *destination = afterFirstMove.at(0) == source ? afterFirstMove.at(1) : afterFirstMove.at(0);
+    QCOMPARE(destination->m_tabs.first().part, movedPart);
+    QCOMPARE(destination->m_tabs.first().part->url(), second);
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 2);
+
+    KParts::ReadWritePart *lastPart = source->m_tabs.first().part;
+    QVERIFY(source->moveTabToNewWindow(0));
+    QCOMPARE(source->m_tabs.size(), 1);
+    QVERIFY(source->m_tabs.first().part->url().isEmpty());
+    const QList<Shell *> afterSecondMove = getShells();
+    QCOMPARE(afterSecondMove.size(), 3);
+    QVERIFY(std::any_of(afterSecondMove.cbegin(), afterSecondMove.cend(), [lastPart](Shell *shell) { return shell->m_tabs.first().part == lastPart; }));
+}
+
+void MainShellTest::testDragTabOutsideWindowDetaches()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *source = findShell();
+    QVERIFY(source);
+    source->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    source->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    auto *bar = source->m_tabWidget->tabBar();
+    KParts::ReadWritePart *part = source->m_tabs.at(1).part;
+    QTest::mousePress(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(1).center());
+    const QPoint outside = source->frameGeometry().bottomRight() + QPoint(100, 100);
+    QTest::mouseRelease(bar, Qt::LeftButton, Qt::NoModifier, bar->mapFromGlobal(outside));
+    QTRY_COMPARE(getShells().size(), 2);
+    QCOMPARE(source->m_tabs.size(), 1);
+    const QList<Shell *> windows = getShells();
+    Shell *destination = windows.at(0) == source ? windows.at(1) : windows.at(0);
+    QCOMPARE(destination->m_tabs.first().part, part);
 }
 
 void MainShellTest::testDroppedFileOpensNewTab()

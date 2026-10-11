@@ -169,7 +169,15 @@ static bool sendWindowsTabOpenRequest(const QStringList &paths, const QString &s
     stream.setVersion(QDataStream::Qt_6_0);
     stream << (crossingDown ? WINDOWS_TAB_OPEN_ELEVATED_MAGIC : WINDOWS_TAB_OPEN_MAGIC) << serializedOptions << paths;
 
-    if (socket.write(payload) != payload.size() || !socket.waitForBytesWritten(1000)) {
+    if (payload.size() > 4 * 1024 * 1024) {
+        return false;
+    }
+    QByteArray request;
+    QDataStream frame(&request, QIODevice::WriteOnly);
+    frame.setVersion(QDataStream::Qt_6_0);
+    frame << quint32(payload.size());
+    request += payload;
+    if (socket.write(request) != request.size() || !socket.waitForBytesWritten(1000)) {
         return false;
     }
 

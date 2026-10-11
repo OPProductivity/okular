@@ -91,6 +91,17 @@ private Q_SLOTS:
         QCOMPARE(Okular::runBoundedHelper(process, output, errors, 5000), 0);
         QCOMPARE(output, QByteArray("ready"));
     }
+#ifdef Q_OS_WIN
+    void helperStartsInsideJob()
+    {
+        QProcess process;
+        process.setProgram(QCoreApplication::applicationFilePath());
+        process.setArguments({QStringLiteral("--helper-job-at-entry")});
+        QByteArray output, errors;
+        QCOMPARE(Okular::runBoundedHelper(process, output, errors, 5000), 0);
+        QCOMPARE(output, QByteArrayLiteral("in-job"));
+    }
+#endif
     void helperExitCode()
     {
         QProcess process;
@@ -154,6 +165,16 @@ int main(int argc, char **argv)
     if (mode == QLatin1String("--helper-fail")) {
         return 7;
     }
+#ifdef Q_OS_WIN
+    if (mode == QLatin1String("--helper-job-at-entry")) {
+        BOOL inJob = FALSE;
+        if (!IsProcessInJob(GetCurrentProcess(), nullptr, &inJob) || !inJob) {
+            return 1;
+        }
+        std::fwrite("in-job", 1, 6, stdout);
+        return 0;
+    }
+#endif
     if (mode == QLatin1String("--helper-output")) {
         const QByteArray chunk(1024 * 1024, 'x');
         for (int i = 0; i < 10; ++i) {

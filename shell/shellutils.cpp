@@ -179,10 +179,9 @@ static QString windowsTabOpenIntegritySuffix()
     if (!queried) {
         return QStringLiteral("unknown");
     }
-    // A normal Explorer launch cannot write to a pipe owned by an elevated
-    // Okular. Keep both the pipe and its primary mutex in the same integrity
-    // level so ordinary launches can still join one another without waiting
-    // for an inaccessible elevated instance.
+    // Separate normal and elevated instances. The server verifies each
+    // client's token because Qt's same-user pipe ACL alone does not separate
+    // Windows integrity levels.
     return elevation.TokenIsElevated ? QStringLiteral("elevated") : QStringLiteral("standard");
 }
 
@@ -193,7 +192,7 @@ bool windowsProcessIsElevated()
 
 static QString windowsTabOpenServerNameForSuffix(const QString &suffix)
 {
-    const QString baseName = QStringLiteral("okular-private-tab-open-v3-%1").arg(suffix);
+    const QString baseName = QStringLiteral("okular-private-tab-open-v4-%1").arg(suffix);
     const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
     if (!testInstance.isEmpty()) {
         return baseName + QStringLiteral("-test-%1").arg(testInstance);

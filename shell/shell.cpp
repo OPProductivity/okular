@@ -40,6 +40,7 @@
 #include <QAbstractSocket>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QContextMenuEvent>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -69,6 +70,7 @@
 #include <QScreen>
 #include <QSaveFile>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
@@ -108,7 +110,72 @@ static constexpr int MAX_RECENT_FILES = 50;
 #if defined(Q_OS_WIN)
 static constexpr quint32 WINDOWS_TAB_OPEN_MAGIC = 0x4f4b5450; // OKTP
 static constexpr quint32 WINDOWS_TAB_OPEN_ELEVATED_MAGIC = 0x4f4b5445; // OKTE
+static constexpr quint32 WINDOWS_TAB_OPEN_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 static QPointer<QLocalServer> s_windowsTabOpenPrimaryServer;
+
+static QByteArray tokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS kind)
+{
+    DWORD length = 0;
+    GetTokenInformation(token, kind, nullptr, 0, &length);
+    if (!length) {
+        return {};
+    }
+    QByteArray result(length, '\0');
+    if (!GetTokenInformation(token, kind, result.data(), length, &length)) {
+        return {};
+    }
+    return result;
+}
+
+static DWORD tokenIntegrityLevel(HANDLE token)
+{
+    const QByteArray data = tokenInformation(token, TokenIntegrityLevel);
+    if (data.isEmpty()) {
+        return 0;
+    }
+    const PSID sid = reinterpret_cast<const TOKEN_MANDATORY_LABEL *>(data.constData())->Label.Sid;
+    if (!IsValidSid(sid)) {
+        return 0;
+    }
+    const PUCHAR count = GetSidSubAuthorityCount(sid);
+    return count && *count ? *GetSidSubAuthority(sid, *count - 1) : 0;
+}
+
+// Authenticate the token attached to the pipe, not the process ID reported by
+// the client. In particular, a standard process must not command an elevated
+// Okular through Qt's same-user named pipe ACL.
+static bool trustedWindowsTabOpenClient(QLocalSocket *socket)
+{
+    const HANDLE pipe = reinterpret_cast<HANDLE>(socket->socketDescriptor());
+    if (!pipe || pipe == INVALID_HANDLE_VALUE || !ImpersonateNamedPipeClient(pipe)) {
+        return false;
+    }
+    HANDLE clientToken = nullptr;
+    const bool openedClient = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &clientToken);
+    if (!RevertToSelf()) {
+        if (clientToken) {
+            CloseHandle(clientToken);
+        }
+        qFatal("Could not restore Okular's security context after pipe authentication");
+    }
+    if (!openedClient) {
+        return false;
+    }
+    HANDLE ownToken = nullptr;
+    const bool openedOwn = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &ownToken);
+    bool trusted = false;
+    if (openedOwn) {
+        const QByteArray client = tokenInformation(clientToken, TokenUser);
+        const QByteArray own = tokenInformation(ownToken, TokenUser);
+        const DWORD clientIntegrity = tokenIntegrityLevel(clientToken);
+        const DWORD ownIntegrity = tokenIntegrityLevel(ownToken);
+        trusted = !client.isEmpty() && !own.isEmpty() && clientIntegrity && ownIntegrity && clientIntegrity >= ownIntegrity
+            && EqualSid(reinterpret_cast<const TOKEN_USER *>(client.constData())->User.Sid, reinterpret_cast<const TOKEN_USER *>(own.constData())->User.Sid);
+        CloseHandle(ownToken);
+    }
+    CloseHandle(clientToken);
+    return trusted;
+}
 #endif
 
 static constexpr char SIDEBAR_LOCKED_KEY[] = "LockSidebar";
@@ -168,8 +235,29 @@ static KSharedConfigPtr ShellSessionConfig()
 // local recovery copies, never project files or inputs to ordinary startup.
 static bool secureSessionBackupDirectory(const QString &path)
 {
+    // Use the opened directory object for both validation and the ACL update.
+    // A junction under the user's config tree must not redirect an elevated
+    // Okular into changing the permissions of an unrelated directory.
+    const std::wstring directory = QDir::toNativeSeparators(path).toStdWString();
+    HANDLE directoryHandle = CreateFileW(directory.c_str(), FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (directoryHandle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    BY_HANDLE_FILE_INFORMATION fileInfo = {};
+    const DWORD pathLength = GetFinalPathNameByHandleW(directoryHandle, nullptr, 0, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    std::wstring resolved(pathLength, L'\0');
+    const DWORD resolvedLength = pathLength ? GetFinalPathNameByHandleW(directoryHandle, resolved.data(), pathLength, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS) : 0;
+    const QString resolvedPath = QString::fromWCharArray(resolved.data(), resolvedLength);
+    const QString expectedPath = QStringLiteral("\\\\?\\") + QDir::toNativeSeparators(QDir::cleanPath(path));
+    if (!GetFileInformationByHandle(directoryHandle, &fileInfo) || (fileInfo.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !resolvedLength || resolvedLength >= pathLength
+        || resolvedPath.compare(expectedPath, Qt::CaseInsensitive) != 0) {
+        CloseHandle(directoryHandle);
+        return false;
+    }
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        CloseHandle(directoryHandle);
         return false;
     }
     DWORD length = 0;
@@ -178,11 +266,13 @@ static bool secureSessionBackupDirectory(const QString &path)
     const bool hasUser = length && GetTokenInformation(token, TokenUser, user.data(), length, &length);
     CloseHandle(token);
     if (!hasUser) {
+        CloseHandle(directoryHandle);
         return false;
     }
 
     LPWSTR userSid = nullptr;
     if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(user.data())->User.Sid, &userSid)) {
+        CloseHandle(directoryHandle);
         return false;
     }
     const QString descriptor = QStringLiteral("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%1)").arg(QString::fromWCharArray(userSid));
@@ -190,15 +280,16 @@ static bool secureSessionBackupDirectory(const QString &path)
     PSECURITY_DESCRIPTOR securityDescriptor = nullptr;
     const std::wstring descriptorString = descriptor.toStdWString();
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptorString.c_str(), SDDL_REVISION_1, &securityDescriptor, nullptr)) {
+        CloseHandle(directoryHandle);
         return false;
     }
     BOOL present = FALSE;
     BOOL defaulted = FALSE;
     PACL dacl = nullptr;
     const bool hasDacl = GetSecurityDescriptorDacl(securityDescriptor, &present, &dacl, &defaulted) && present && dacl;
-    const std::wstring directory = path.toStdWString();
-    const bool secured = hasDacl && SetNamedSecurityInfoW(const_cast<LPWSTR>(directory.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl, nullptr) == ERROR_SUCCESS;
+    const bool secured = hasDacl && SetSecurityInfo(directoryHandle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl, nullptr) == ERROR_SUCCESS;
     LocalFree(securityDescriptor);
+    CloseHandle(directoryHandle);
     return secured;
 }
 
@@ -635,6 +726,40 @@ void Shell::keyPressEvent(QKeyEvent *e)
 
 bool Shell::eventFilter(QObject *obj, QEvent *event)
 {
+#if defined(Q_OS_WIN)
+    if (m_tabWidget && obj == m_tabWidget->tabBar()) {
+        QTabBar *bar = m_tabWidget->tabBar();
+        if (event->type() == QEvent::ContextMenu) {
+            auto *context = static_cast<QContextMenuEvent *>(event);
+            const int tab = bar->tabAt(context->pos());
+            if (tab >= 0 && !m_tabs.at(tab).part->url().isEmpty()) {
+                QMenu menu(bar);
+                QAction *move = menu.addAction(i18n("Move to New Window"));
+                if (menu.exec(context->globalPos()) == move) {
+                    moveTabToNewWindow(tab, context->globalPos());
+                }
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseButtonPress) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            m_draggedTabPart = mouse->button() == Qt::LeftButton && bar->tabAt(mouse->pos()) >= 0 ? m_tabs.at(bar->tabAt(mouse->pos())).part : nullptr;
+            m_tabDragStart = mouse->globalPosition().toPoint();
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            QPointer<KParts::ReadWritePart> dragged = m_draggedTabPart;
+            m_draggedTabPart = nullptr;
+            const QPoint drop = mouse->globalPosition().toPoint();
+            if (mouse->button() == Qt::LeftButton && dragged && !frameGeometry().contains(drop) && (drop - m_tabDragStart).manhattanLength() >= QApplication::startDragDistance()) {
+                // Let QTabBar finish its own mouse release before moving the page.
+                QTimer::singleShot(0, this, [this, dragged, drop]() {
+                    if (dragged) {
+                        moveTabToNewWindow(findTabIndex(dragged), drop);
+                    }
+                });
+            }
+        }
+    }
+#endif
     QDragMoveEvent *dmEvent = dynamic_cast<QDragMoveEvent *>(event);
     if (dmEvent) {
         bool accept = dmEvent->mimeData()->hasUrls();
@@ -789,19 +914,42 @@ void Shell::handleWindowsTabOpenConnection()
     while (m_windowsTabOpenServer && m_windowsTabOpenServer->hasPendingConnections()) {
         QLocalSocket *socket = m_windowsTabOpenServer->nextPendingConnection();
         socket->setParent(this);
+        socket->setReadBufferSize(WINDOWS_TAB_OPEN_MAX_REQUEST_BYTES + sizeof(quint32));
         connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+        QTimer::singleShot(10000, socket, [socket]() { socket->disconnectFromServer(); });
 
         const auto readRequest = [this, socket]() {
-            QDataStream stream(socket);
+            if (!trustedWindowsTabOpenClient(socket)) {
+                socket->disconnectFromServer();
+                return;
+            }
+            if (socket->bytesAvailable() < qint64(sizeof(quint32))) {
+                return;
+            }
+            QByteArray header = socket->peek(sizeof(quint32));
+            QDataStream headerStream(&header, QIODevice::ReadOnly);
+            headerStream.setVersion(QDataStream::Qt_6_0);
+            quint32 length = 0;
+            headerStream >> length;
+            if (length > WINDOWS_TAB_OPEN_MAX_REQUEST_BYTES || length < sizeof(quint32)) {
+                socket->disconnectFromServer();
+                return;
+            }
+            if (socket->bytesAvailable() < qint64(sizeof(quint32)) + length) {
+                return;
+            }
+            socket->read(sizeof(quint32));
+            QByteArray payload = socket->read(length);
+            QDataStream stream(&payload, QIODevice::ReadOnly);
             stream.setVersion(QDataStream::Qt_6_0);
-            stream.startTransaction();
 
             quint32 magic = 0;
             QString serializedOptions;
             QStringList paths;
             stream >> magic >> serializedOptions >> paths;
 
-            if (!stream.commitTransaction()) {
+            if (stream.status() != QDataStream::Ok || !stream.atEnd() || paths.size() > 1024 || serializedOptions.size() > 4096) {
+                socket->disconnectFromServer();
                 return;
             }
 
@@ -1447,6 +1595,101 @@ void Shell::fileOpen()
 void Shell::fileOpenInNewWindow()
 {
     fileOpenImpl(true);
+}
+
+bool Shell::moveTabToNewWindow(int tab, const QPoint &dropPosition)
+{
+    if (tab < 0 || tab >= m_tabs.size() || m_tabs.at(tab).part->url().isEmpty()) {
+        return false;
+    }
+    // Never close and reload a document to detach it: annotations and the
+    // current reading position belong to the existing Part instance.
+    KParts::ReadWritePart *replacement = nullptr;
+    if (m_tabs.size() == 1) {
+        replacement = m_partFactory->create<KParts::ReadWritePart>(this);
+        if (!replacement) {
+            return false;
+        }
+    }
+    Shell *destination = new Shell(QString(), QString(), true);
+    if (!destination->isValid()) {
+        delete destination;
+        delete replacement;
+        return false;
+    }
+
+    QScreen *targetScreen = dropPosition.isNull() ? screen() : QGuiApplication::screenAt(dropPosition);
+    if (!targetScreen) {
+        targetScreen = screen() ? screen() : QGuiApplication::primaryScreen();
+    }
+    if (targetScreen) {
+        const QRect area = targetScreen->availableGeometry();
+        const int width = qMin(area.width(), qMax(320, area.width() / 2));
+        const int left = dropPosition.isNull() ? area.x() + area.width() - width : qBound(area.left(), dropPosition.x() - width / 2, area.right() - width + 1);
+        destination->setGeometry(left, area.y(), width, area.height());
+    }
+
+    const int oldActive = m_tabWidget->currentIndex();
+    const TabState moved = m_tabs.at(tab);
+    const QString tabText = m_tabWidget->tabText(tab);
+    const QString tabTip = m_tabWidget->tabToolTip(tab);
+    const QIcon tabIcon = m_tabWidget->tabIcon(tab);
+    auto *movedSide = qobject_cast<Okular::ViewerInterface *>(moved.part)->getSideContainer();
+
+    KParts::ReadWritePart *emptyPart = destination->m_tabs.first().part;
+    auto *emptySide = qobject_cast<Okular::ViewerInterface *>(emptyPart)->getSideContainer();
+    destination->createGUI(nullptr);
+    destination->m_sidebar->removeWidget(emptySide);
+    destination->m_showSidebarAction->disconnect(destination->m_sidebar);
+    destination->m_showSidebarAction = nullptr;
+    {
+        QSignalBlocker blocked(destination->m_tabWidget);
+        destination->m_tabWidget->removeTab(0);
+        destination->m_tabs.clear();
+    }
+    if (emptyPart->factory()) {
+        emptyPart->factory()->removeClient(emptyPart);
+    }
+    emptyPart->deleteLater();
+
+    if (m_showSidebarAction) {
+        m_showSidebarAction->disconnect(m_sidebar);
+    }
+    if (moved.part->factory()) {
+        moved.part->factory()->removeClient(moved.part);
+    }
+    moved.part->disconnect(this);
+    disconnect(moved.part);
+    m_sidebar->removeWidget(movedSide);
+    {
+        QSignalBlocker blocked(m_tabWidget);
+        m_tabWidget->removeTab(tab);
+        m_tabs.removeAt(tab);
+        if (replacement) {
+            m_tabs.append(TabState(replacement));
+            connectPart(replacement);
+            m_tabWidget->addTab(replacement->widget(), QString());
+        }
+    }
+    moved.part->setParent(destination);
+    destination->connectPart(moved.part);
+    destination->m_tabs.append(moved);
+    destination->m_tabWidget->addTab(moved.part->widget(), tabIcon, tabText);
+    destination->m_tabWidget->setTabToolTip(0, tabTip);
+    destination->setActiveTab(0);
+    destination->hideWelcomeScreen();
+
+    const int nextActive = oldActive > tab ? oldActive - 1 : qMin(oldActive, m_tabs.size() - 1);
+    setActiveTab(nextActive);
+    if (replacement) {
+        showWelcomeScreen();
+    }
+    m_nextTabAction->setEnabled(m_tabs.size() > 1);
+    m_prevTabAction->setEnabled(m_tabs.size() > 1);
+    updateOpenTabButtonGeometry();
+    destination->show();
+    destination->saveOpenDocumentSession();
+    return true;
 }
 #endif
 
