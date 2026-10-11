@@ -395,6 +395,16 @@ static SavedWindowSession readWindowSession(const KConfigGroup &group)
     return session;
 }
 
+static bool sameSavedDocumentUrl(const QString &saved, const QUrl &opened)
+{
+    const QUrl savedUrl(saved);
+    if (savedUrl == opened) {
+        return true;
+    }
+    return savedUrl.isLocalFile() && opened.isLocalFile()
+        && QDir::cleanPath(savedUrl.toLocalFile()).compare(QDir::cleanPath(opened.toLocalFile()), Qt::CaseInsensitive) == 0;
+}
+
 static QStringList savedWindowIds(const KSharedConfigPtr &config)
 {
     const QStringList stored = config->group(WindowSessionIndexGroupKey()).readEntry("WindowIds", QStringList());
@@ -699,6 +709,9 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_windowsBatchOpenSummaryTimer = new QTimer(this);
         m_windowsBatchOpenSummaryTimer->setSingleShot(true);
         connect(m_windowsBatchOpenSummaryTimer, &QTimer::timeout, this, &Shell::showWindowsBatchOpenSummary);
+        m_windowsPrimaryRetryTimer = new QTimer(this);
+        m_windowsPrimaryRetryTimer->setSingleShot(true);
+        connect(m_windowsPrimaryRetryTimer, &QTimer::timeout, this, &Shell::startWindowsTabOpenServer);
 #endif
 
         m_sidebar = new Sidebar;
@@ -986,7 +999,14 @@ bool Shell::openDocument(const QString &urlString, const QString &serializedOpti
 #if defined(Q_OS_WIN)
 void Shell::startWindowsTabOpenServer()
 {
-    if (m_unique || m_windowsTabOpenServer || s_windowsTabOpenPrimaryServer || !Okular::claimWindowsTabOpenPrimary()) {
+    if (m_unique || m_sessionClosed || m_windowsTabOpenServer || s_windowsTabOpenPrimaryServer) {
+        return;
+    }
+    if (!Okular::claimWindowsTabOpenPrimary()) {
+        // A previous process may still own the mutex while its endpoint is
+        // shutting down. A fallback window must claim the endpoint once it is
+        // free, so its later tab changes can be saved normally.
+        m_windowsPrimaryRetryTimer->start(2000);
         return;
     }
 
@@ -996,6 +1016,9 @@ void Shell::startWindowsTabOpenServer()
 
     if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
         s_windowsTabOpenPrimaryServer = m_windowsTabOpenServer;
+        if (m_openDocumentSessionReady) {
+            saveOpenDocumentSession();
+        }
         return;
     }
 
@@ -1014,12 +1037,16 @@ void Shell::startWindowsTabOpenServer()
         QLocalServer::removeServer(ShellUtils::windowsTabOpenServerName());
         if (m_windowsTabOpenServer->listen(ShellUtils::windowsTabOpenServerName())) {
             s_windowsTabOpenPrimaryServer = m_windowsTabOpenServer;
+            if (m_openDocumentSessionReady) {
+                saveOpenDocumentSession();
+            }
             return;
         }
     }
 
     m_windowsTabOpenServer->deleteLater();
     m_windowsTabOpenServer = nullptr;
+    m_windowsPrimaryRetryTimer->start(2000);
 }
 
 void Shell::handleWindowsTabOpenConnection()
@@ -1524,6 +1551,13 @@ void Shell::saveRecents()
 
 void Shell::addRecentUrl(const QUrl &url)
 {
+#if defined(Q_OS_WIN)
+    for (int i = m_unrestoredSessionUrls.size() - 1; i >= 0; --i) {
+        if (sameSavedDocumentUrl(m_unrestoredSessionUrls.at(i).second, url)) {
+            m_unrestoredSessionUrls.removeAt(i);
+        }
+    }
+#endif
     m_recent->addUrl(url);
     if (m_recent->urls().contains(url)) {
         ShellSessionConfig()->group(RecentOpenTimesGroupKey()).writeEntry(recentOpenTimeKey(url).constData(), QDateTime::currentSecsSinceEpoch());
@@ -1685,7 +1719,9 @@ QStringList Shell::savedOpenDocumentSessionWindowIds()
     for (const QString &id : savedWindowIds(config)) {
         const KConfigGroup group = config->group(WindowSessionGroupKey(id));
         const qint64 closedAt = group.readEntry("ClosedAt", qint64(0));
-        if (closedAt == 0 || wasWindowClosedRecently(closedAt, now)) {
+        // A window whose last tab was deliberately closed must not produce an
+        // extra blank window, even when it occupied the first saved slot.
+        if (!group.readPathEntry(SESSION_URL_KEY, QStringList()).isEmpty() && (closedAt == 0 || wasWindowClosedRecently(closedAt, now))) {
             restorable.append(id);
             if (capture) {
                 s_startupWindowSessions.insert(id, readWindowSession(group));
@@ -1762,6 +1798,17 @@ void Shell::writeOpenDocumentSession(KConfigGroup &group) const
         urls.append(url.url());
     }
 
+#if defined(Q_OS_WIN)
+    for (const auto &unrestored : m_unrestoredSessionUrls) {
+        if (std::none_of(urls.cbegin(), urls.cend(), [&unrestored](const QString &opened) { return sameSavedDocumentUrl(unrestored.second, QUrl(opened)); })) {
+            urls.insert(qBound(0, unrestored.first, urls.size()), unrestored.second);
+        }
+    }
+    if (!activeUrl.isEmpty()) {
+        activeTab = urls.indexOf(activeUrl.url());
+    }
+#endif
+
     if (activeUrl.isEmpty() && !urls.isEmpty()) {
         activeUrl = QUrl(urls.value(activeTab));
     }
@@ -1798,7 +1845,10 @@ void Shell::saveOpenDocumentSession()
     // One process owns the tab endpoint. A timed-out fallback process must not
     // overwrite that owner's session when both are using the same account.
     if (!s_windowsTabOpenPrimaryServer && !QStandardPaths::isTestModeEnabled()) {
-        return;
+        startWindowsTabOpenServer();
+        if (!s_windowsTabOpenPrimaryServer) {
+            return;
+        }
     }
 
     QList<Shell *> windows;
@@ -1909,20 +1959,33 @@ bool Shell::restoreOpenDocumentSession()
     int targetTab = -1;
 
     m_restoringOpenDocumentSession = true;
+#if defined(Q_OS_WIN)
+    m_unrestoredSessionUrls.clear();
+    const auto retainUnrestoredUrl = [this, &urls](int index) { m_unrestoredSessionUrls.append({index, urls.at(index)}); };
+#endif
     for (int oldIndex = 0; oldIndex < urls.size(); ++oldIndex) {
         const QUrl url(urls.at(oldIndex));
         if (!url.isValid() || url.isEmpty()) {
             qWarning() << "Skipping invalid Okular open document session URL:" << urls.at(oldIndex);
+#if defined(Q_OS_WIN)
+            retainUnrestoredUrl(oldIndex);
+#endif
             continue;
         }
 
         if (!url.isLocalFile()) {
             qWarning() << "Skipping non-local Okular open document session URL for v1:" << url;
+#if defined(Q_OS_WIN)
+            retainUnrestoredUrl(oldIndex);
+#endif
             continue;
         }
 
         if (!QFile::exists(url.toLocalFile())) {
             qWarning() << "Skipping missing Okular open document session file:" << url.toLocalFile();
+#if defined(Q_OS_WIN)
+            retainUnrestoredUrl(oldIndex);
+#endif
             continue;
         }
 
@@ -1936,6 +1999,9 @@ bool Shell::restoreOpenDocumentSession()
         const int openedTab = m_tabWidget->currentIndex();
         if (openedTab < 0 || m_tabs[openedTab].part->url() != url) {
             qWarning() << "Failed to restore Okular open document session URL:" << url;
+#if defined(Q_OS_WIN)
+            retainUnrestoredUrl(oldIndex);
+#endif
             continue;
         }
 
@@ -2491,6 +2557,9 @@ void Shell::closeEvent(QCloseEvent *event)
         if (m_openDocumentSessionSaveTimer) {
             m_openDocumentSessionSaveTimer->stop();
         }
+        if (m_windowsPrimaryRetryTimer) {
+            m_windowsPrimaryRetryTimer->stop();
+        }
         survivor->saveOpenDocumentSession();
     } else {
         saveOpenDocumentSession();
@@ -2517,6 +2586,9 @@ void Shell::closeEvent(QCloseEvent *event)
         m_sessionClosed = true;
         if (m_openDocumentSessionSaveTimer) {
             m_openDocumentSessionSaveTimer->stop();
+        }
+        if (m_windowsPrimaryRetryTimer) {
+            m_windowsPrimaryRetryTimer->stop();
         }
     }
 #endif

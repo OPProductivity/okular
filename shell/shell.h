@@ -17,6 +17,7 @@
 #include <QList>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QPair>
 #include <QPoint>
 #include <QPointer>
 #include <kparts/mainwindow.h>
@@ -258,6 +259,7 @@ private:
     QTimer *m_openDocumentSessionSaveTimer = nullptr;
 #if defined(Q_OS_WIN)
     QLocalServer *m_windowsTabOpenServer = nullptr;
+    QTimer *m_windowsPrimaryRetryTimer = nullptr;
     QTimer *m_windowsBatchOpenSummaryTimer = nullptr;
     int m_windowsBatchOpenedCount = 0;
     int m_windowsBatchAlreadyOpenCount = 0;
@@ -274,6 +276,9 @@ private:
     quint64 m_sessionWindowOrder = 0;
     bool m_sessionClosed = false;
     bool m_intentionalSeparateWindow = false;
+    // Tabs whose files were unavailable during restore retain their saved
+    // positions until the same URL opens successfully in this window.
+    QList<QPair<int, QString>> m_unrestoredSessionUrls;
 #endif
 
     bool m_isValid;

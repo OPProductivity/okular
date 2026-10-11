@@ -160,6 +160,9 @@ private Q_SLOTS:
     void testCloseAllAfterClosingSomeTabsRestoresRemainingTabs();
     void testFiveWindowShutdownSurvivesPartialRestoreSave();
     void testClosedWindowsCannotOverwriteCompletedShutdown();
+    void testEmptyFirstWindowDoesNotRestore();
+    void testTemporarilyMissingTabSurvivesRestore();
+    void testReopeningMissingTabClearsPendingEntry();
     void testClosedWindowExpiresAfterFifteenMinutes();
     void testClockCorrectionKeepsRecentlyClosedWindow();
     void testClosingPrimaryTransfersForwarding();
@@ -830,6 +833,116 @@ void MainShellTest::testClosedWindowsCannotOverwriteCompletedShutdown()
     }
 }
 
+void MainShellTest::testEmptyFirstWindowDoesNotRestore()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    first->openUrl(firstUrl);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    second->openUrl(secondUrl);
+    second->saveOpenDocumentSession();
+    QVERIFY(first->closeTab(0));
+    QVERIFY(first->m_tabs.first().part->url().isEmpty());
+    QVERIFY(second->close());
+    QVERIFY(first->close());
+    delete second;
+    delete first;
+
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    const QList<Shell *> restored = getShells();
+    QCOMPARE(restored.size(), 1);
+    QCOMPARE(QDir::cleanPath(restored.first()->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
+}
+
+void MainShellTest::testTemporarilyMissingTabSurvivesRestore()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString intermittentPath = temporary.filePath(QStringLiteral("intermittent.pdf"));
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file2.pdf"), intermittentPath));
+    const QUrl stableUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl intermittentUrl = QUrl::fromLocalFile(intermittentPath);
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openUrl(stableUrl);
+    shell->openUrl(intermittentUrl);
+    shell->saveOpenDocumentSession();
+    const QString id = Shell::savedOpenDocumentSessionWindowIds().first();
+    delete shell;
+
+    QVERIFY(QFile::remove(intermittentPath));
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 1);
+    KConfigGroup group = KSharedConfig::openConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id);
+    const auto containsIntermittent = [&]() {
+        const QStringList saved = group.readPathEntry("Urls", QStringList());
+        return std::any_of(saved.cbegin(), saved.cend(), [&intermittentPath](const QString &entry) {
+            return QDir::cleanPath(QUrl(entry).toLocalFile()) == QDir::cleanPath(intermittentPath);
+        });
+    };
+    QVERIFY(containsIntermittent());
+    delete shell;
+
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file2.pdf"), intermittentPath));
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(intermittentPath));
+    QVERIFY(shell->closeTab(1));
+    shell->saveOpenDocumentSession();
+    QVERIFY(!containsIntermittent());
+    delete shell;
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QCOMPARE(findShell()->m_tabs.size(), 1);
+}
+
+void MainShellTest::testReopeningMissingTabClearsPendingEntry()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString intermittentPath = temporary.filePath(QStringLiteral("intermittent.pdf"));
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file2.pdf"), intermittentPath));
+    const QUrl intermittentUrl = QUrl::fromLocalFile(intermittentPath);
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    shell->openUrl(intermittentUrl);
+    shell->saveOpenDocumentSession();
+    delete shell;
+
+    QVERIFY(QFile::remove(intermittentPath));
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    shell = findShell();
+    QVERIFY(shell);
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(shell->m_unrestoredSessionUrls.size(), 1);
+
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file2.pdf"), intermittentPath));
+    shell->openUrl(intermittentUrl);
+    QCOMPARE(shell->m_tabs.size(), 2);
+    QVERIFY(shell->m_unrestoredSessionUrls.isEmpty());
+    shell->saveOpenDocumentSession();
+    const QString id = Shell::savedOpenDocumentSessionWindowIds().first();
+    const QStringList urls = KSharedConfig::openConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id).readPathEntry("Urls", QStringList());
+    QCOMPARE(urls.size(), 2);
+    delete shell;
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    QCOMPARE(findShell()->m_tabs.size(), 2);
+}
+
 void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
@@ -896,6 +1009,7 @@ void MainShellTest::testClosingPrimaryTransfersForwarding()
     QVERIFY(additional->isValid());
     additional->show();
     const QUrl url = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    additional->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
     QVERIFY(primary->close());
     QCOMPARE(additional->m_windowsTabOpenServer->isListening(), true);
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 1);
@@ -907,7 +1021,7 @@ void MainShellTest::testClosingPrimaryTransfersForwarding()
     const QByteArray payload = tabOpenRequest(0x4f4b5450, options, {url.toLocalFile()});
     QCOMPARE(socket.write(payload), payload.size());
     socket.flush();
-    QTRY_COMPARE(additional->m_tabs.first().part->url(), url);
+    QTRY_COMPARE(additional->m_tabs.at(additional->m_tabWidget->currentIndex()).part->url(), url);
     QVERIFY(socket.bytesAvailable() > 0 || socket.waitForReadyRead(1000));
     QCOMPARE(socket.read(1), QByteArrayLiteral("A"));
     additional->saveOpenDocumentSession();
@@ -916,7 +1030,7 @@ void MainShellTest::testClosingPrimaryTransfersForwarding()
     Shell *restored = findShell();
     QVERIFY(restored);
     QVERIFY(restored->m_intentionalSeparateWindow);
-    QCOMPARE(QDir::cleanPath(restored->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(url.toLocalFile()));
+    QCOMPARE(QDir::cleanPath(restored->m_tabs.at(restored->m_tabWidget->currentIndex()).part->url().toLocalFile()), QDir::cleanPath(url.toLocalFile()));
 }
 
 void MainShellTest::testElevatedRequestDeclinesUnreadableFile()
