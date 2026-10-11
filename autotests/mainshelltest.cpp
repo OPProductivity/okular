@@ -137,6 +137,11 @@ private Q_SLOTS:
     void testSessionRestore();
     void testOpenInvalidFiles_data();
     void testOpenInvalidFiles();
+    void testCorruptPdfDoesNotDiscardValidTab();
+#if defined(Q_OS_WIN)
+    void testCorruptPdfWithSeparateWindows();
+    void testForwardedCorruptPdfAfterClientDisconnect();
+#endif
     void testOpenTheSameFileSeveralTimes();
 #if defined(Q_OS_WIN)
     void testEpubAtLongWindowsPath();
@@ -150,6 +155,7 @@ private Q_SLOTS:
     void testElevatedRequestDeclinesUnreadableFile();
     void testNewWindowActionAppearsInFileMenu();
     void testMoveTabToNewWindowPreservesPart();
+    void testOrdinaryOpenFocusesTabInOtherWindow();
     void testDragTabOutsideWindowDetaches();
     void testDroppedFileOpensNewTab();
 #endif
@@ -333,6 +339,9 @@ void MainShellTest::testEpubAtLongWindowsPath()
 
 void MainShellTest::testForwardedWindowReturnsFromOffscreen()
 {
+    if (QGuiApplication::platformName() == QLatin1String("offscreen")) {
+        QSKIP("Native window frame placement requires a desktop window manager");
+    }
     const QString uniqueOptions = ShellUtils::serializeOptions(false, false, false, true, false, QString(), QString(), QString());
     QCOMPARE(Okular::main(QStringList(), uniqueOptions), Okular::Success);
     Shell *shell = findShell();
@@ -518,7 +527,9 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
     QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
     QCOMPARE(restored.at(1)->geometry().height(), 480);
-    QVERIFY(restored.at(1)->geometry().width() < restored.at(0)->geometry().width());
+    if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
+        QVERIFY(restored.at(1)->geometry().width() < restored.at(0)->geometry().width());
+    }
 }
 
 void MainShellTest::testClosingPrimaryTransfersForwarding()
@@ -626,6 +637,10 @@ void MainShellTest::testMoveTabToNewWindowPreservesPart()
     Shell *destination = afterFirstMove.at(0) == source ? afterFirstMove.at(1) : afterFirstMove.at(0);
     QCOMPARE(destination->m_tabs.first().part, movedPart);
     QCOMPARE(destination->m_tabs.first().part->url(), second);
+    if (QScreen *screen = destination->screen(); screen && QGuiApplication::platformName() != QLatin1String("offscreen")) {
+        const QRect available = screen->availableGeometry();
+        QVERIFY(available.contains(destination->frameGeometry()));
+    }
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds().size(), 2);
 
     KParts::ReadWritePart *lastPart = source->m_tabs.first().part;
@@ -635,6 +650,37 @@ void MainShellTest::testMoveTabToNewWindowPreservesPart()
     const QList<Shell *> afterSecondMove = getShells();
     QCOMPARE(afterSecondMove.size(), 3);
     QVERIFY(std::any_of(afterSecondMove.cbegin(), afterSecondMove.cend(), [lastPart](Shell *shell) { return shell->m_tabs.first().part == lastPart; }));
+}
+
+void MainShellTest::testOrdinaryOpenFocusesTabInOtherWindow()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *source = findShell();
+    QVERIFY(source);
+    const QUrl first = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl second = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    source->openUrl(first);
+    source->openUrl(second);
+    QVERIFY(source->moveTabToNewWindow(1));
+    const QList<Shell *> windows = getShells();
+    QCOMPARE(windows.size(), 2);
+    Shell *detached = windows.at(0) == source ? windows.at(1) : windows.at(0);
+    const KParts::ReadWritePart *const movedPart = detached->m_tabs.first().part;
+
+    source->openUrl(second);
+    QCOMPARE(source->m_tabs.size(), 1);
+    QCOMPARE(source->m_tabs.first().part->url(), first);
+    QCOMPARE(detached->m_tabs.size(), 1);
+    QCOMPARE(detached->m_tabs.first().part, movedPart);
+    QCOMPARE(detached->m_tabWidget->currentIndex(), 0);
+
+    // Explicitly opening a document in an intentional new window remains possible.
+    Shell *intentional = new Shell(QString(), QString(), true);
+    QVERIFY(intentional->isValid());
+    intentional->show();
+    QVERIFY(intentional->openDocumentInTab(second, QString()));
+    QCOMPARE(intentional->m_tabs.first().part->url(), second);
 }
 
 void MainShellTest::testDragTabOutsideWindowDetaches()
@@ -1921,6 +1967,95 @@ void MainShellTest::testOpenInvalidFiles()
 
     QVERIFY(recentFiles.size() == 2);
 }
+
+void MainShellTest::testCorruptPdfDoesNotDiscardValidTab()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString invalidPath = directory.filePath(QStringLiteral("corrupt.pdf"));
+    QFile invalidFile(invalidPath);
+    QVERIFY(invalidFile.open(QIODevice::WriteOnly));
+    invalidFile.close();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QUrl valid = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    shell->openUrl(valid);
+    QScopedPointer<TestingUtils::CloseDialogHelper> closeDialogHelper {new TestingUtils::CloseDialogHelper(QDialogButtonBox::StandardButton::Ok)};
+    shell->openUrl(QUrl::fromLocalFile(invalidPath));
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(shell->m_tabs.first().part->url(), valid);
+}
+
+#if defined(Q_OS_WIN)
+void MainShellTest::testCorruptPdfWithSeparateWindows()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString invalidPath = directory.filePath(QStringLiteral("corrupt.pdf"));
+    QFile invalidFile(invalidPath);
+    QVERIFY(invalidFile.open(QIODevice::WriteOnly));
+    invalidFile.close();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *primary = findShell();
+    QVERIFY(primary);
+    const QUrl valid = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    primary->openUrl(valid);
+    Shell *separate = new Shell(QString(), QString(), true);
+    QVERIFY(separate->isValid());
+    separate->show();
+    separate->openDocumentInTab(valid, QString());
+    Shell *detached = new Shell(QString(), QString(), true);
+    QVERIFY(detached->isValid());
+    detached->show();
+    detached->openDocumentInTab(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")), QString());
+
+    QScopedPointer<TestingUtils::CloseDialogHelper> closeDialogHelper {new TestingUtils::CloseDialogHelper(QDialogButtonBox::StandardButton::Ok)};
+    primary->openUrl(QUrl::fromLocalFile(invalidPath));
+    QCOMPARE(primary->m_tabs.size(), 1);
+    QCOMPARE(primary->m_tabs.first().part->url(), valid);
+    QCOMPARE(getShells().size(), 3);
+}
+
+void MainShellTest::testForwardedCorruptPdfAfterClientDisconnect()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString invalidPath = directory.filePath(QStringLiteral("corrupt.pdf"));
+    QFile invalidFile(invalidPath);
+    QVERIFY(invalidFile.open(QIODevice::WriteOnly));
+    invalidFile.close();
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QUrl valid = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    shell->openUrl(valid);
+    const QUrl following = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+
+    QLocalSocket launcher;
+    launcher.connectToServer(ShellUtils::windowsTabOpenServerName(), QIODevice::ReadWrite);
+    QVERIFY(launcher.waitForConnected(1000));
+    bool acknowledged = false;
+    connect(&launcher, &QLocalSocket::readyRead, &launcher, [&]() {
+        acknowledged = launcher.read(1) == QByteArrayLiteral("A");
+        launcher.disconnectFromServer();
+    });
+    const QByteArray payload = tabOpenRequest(0x4f4b5450, options, {invalidPath, following.toLocalFile()});
+    QCOMPARE(launcher.write(payload), payload.size());
+    launcher.flush();
+    QScopedPointer<TestingUtils::CloseDialogHelper> closeDialogHelper {new TestingUtils::CloseDialogHelper(QDialogButtonBox::StandardButton::Ok)};
+    QTRY_VERIFY_WITH_TIMEOUT(acknowledged, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(shell->m_tabs.size(), 2, 5000);
+    QCOMPARE(shell->m_tabs.first().part->url(), valid);
+    QCOMPARE(shell->m_tabs.last().part->url(), following);
+}
+#endif
 
 void MainShellTest::testOpenTheSameFileSeveralTimes()
 {

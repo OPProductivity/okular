@@ -187,6 +187,9 @@ private:
     void connectPart(const KParts::ReadWritePart *part);
     int findTabIndex(QObject *sender) const;
     int findTabIndex(const QUrl &url) const;
+#if defined(Q_OS_WIN)
+    Shell *otherWindowWithUrl(const QUrl &url) const;
+#endif
     void readRecentFilesSettings();
     bool openDocumentSessionRestoreEnabled() const;
     void writeOpenDocumentSession(KConfigGroup &group) const;

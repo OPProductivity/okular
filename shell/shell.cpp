@@ -176,6 +176,21 @@ static bool trustedWindowsTabOpenClient(QLocalSocket *socket)
     CloseHandle(clientToken);
     return trusted;
 }
+
+// QWidget::setGeometry positions the client area. Account for the native title
+// bar after show(), so an intentional half-screen window stays wholly visible.
+static void placeIntentionalWindowFrame(QWidget *window, QRect frame, const QRect &available)
+{
+    QWindow *handle = window->windowHandle();
+    if (!handle || available.isEmpty()) {
+        return;
+    }
+    const QMargins margins = handle->frameMargins();
+    frame.setSize(QSize(qMin(frame.width(), available.width()), qMin(frame.height(), available.height())));
+    frame.moveLeft(qBound(available.left(), frame.left(), available.right() - frame.width() + 1));
+    frame.moveTop(qBound(available.top(), frame.top(), available.bottom() - frame.height() + 1));
+    window->setGeometry(frame.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom()));
+}
 #endif
 
 static constexpr char SIDEBAR_LOCKED_KEY[] = "LockSidebar";
@@ -832,7 +847,9 @@ bool Shell::openDocument(const QUrl &url, const QString &serializedOptions)
         return false;
     }
 
+#if !defined(Q_OS_WIN)
     hideWelcomeScreen();
+#endif
 
 #if !defined(Q_OS_WIN)
     KParts::ReadWritePart *const part = m_tabs[0].part;
@@ -913,12 +930,17 @@ void Shell::handleWindowsTabOpenConnection()
 {
     while (m_windowsTabOpenServer && m_windowsTabOpenServer->hasPendingConnections()) {
         QLocalSocket *socket = m_windowsTabOpenServer->nextPendingConnection();
+        const QPointer<QLocalSocket> socketGuard(socket);
         socket->setParent(this);
         socket->setReadBufferSize(WINDOWS_TAB_OPEN_MAX_REQUEST_BYTES + sizeof(quint32));
         connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
         QTimer::singleShot(10000, socket, [socket]() { socket->disconnectFromServer(); });
 
-        const auto readRequest = [this, socket]() {
+        const auto readRequest = [this, socketGuard]() {
+            QLocalSocket *socket = socketGuard.data();
+            if (!socket) {
+                return;
+            }
             if (!trustedWindowsTabOpenClient(socket)) {
                 socket->disconnectFromServer();
                 return;
@@ -973,21 +995,32 @@ void Shell::handleWindowsTabOpenConnection()
                 socket->write("A", 1);
                 socket->flush();
                 const QString page = ShellUtils::page(serializedOptions);
+                Shell *raiseTarget = this;
                 for (const QString &path : std::as_const(paths)) {
                     if (path == QLatin1String("-")) {
                         continue;
                     }
-                    openDocument(ShellUtils::urlFromArg(path, ShellUtils::qfileExistFunc(), page), serializedOptions);
+                    const QUrl url = ShellUtils::urlFromArg(path, ShellUtils::qfileExistFunc(), page);
+                    openDocument(url, serializedOptions);
+                    if (findTabIndex(url) >= 0) {
+                        raiseTarget = this;
+                    } else if (Shell *other = otherWindowWithUrl(url)) {
+                        raiseTarget = other;
+                    }
                 }
 
                 if (!ShellUtils::noRaise(serializedOptions)) {
-                    raisePrivateWindowsShell();
-                    QTimer::singleShot(150, this, &Shell::raisePrivateWindowsShell);
+                    raiseTarget->raisePrivateWindowsShell();
+                    QTimer::singleShot(150, raiseTarget, &Shell::raisePrivateWindowsShell);
                 }
             }
 
-            socket->disconnectFromServer();
-            socket->deleteLater();
+            // The acknowledged launcher can disconnect while a document error
+            // dialog runs a nested event loop, deleting this socket mid-open.
+            if (socketGuard) {
+                socketGuard->disconnectFromServer();
+                socketGuard->deleteLater();
+            }
         };
 
         connect(socket, &QLocalSocket::readyRead, this, readRequest);
@@ -1099,8 +1132,6 @@ bool Shell::canOpenDocs(int numDocs, int desktop)
 
 void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
 {
-    hideWelcomeScreen();
-
     const int activeTab = m_tabWidget->currentIndex();
     KParts::ReadWritePart *const activePart = m_tabs[activeTab].part;
 #if defined(Q_OS_WIN)
@@ -1111,8 +1142,20 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
             addRecentUrl(url);
             return;
         }
+        // A detached document still belongs to this process. Ordinary opens
+        // should focus that tab, while an intentional separate window may
+        // display another view of the same document.
+        if (!m_intentionalSeparateWindow && !m_restoringOpenDocumentSession) {
+            if (Shell *other = otherWindowWithUrl(url)) {
+                other->setActiveTab(other->findTabIndex(url));
+                other->raisePrivateWindowsShell();
+                other->addRecentUrl(url);
+                return;
+            }
+        }
     }
 #endif
+    hideWelcomeScreen();
     if (!activePart->url().isEmpty()) {
         if (m_unique) {
             applyOptionsToPart(activePart, serializedOptions);
@@ -1411,6 +1454,18 @@ void Shell::restoreSavedWindowGeometry()
     const QByteArray geometry = ShellSessionConfig()->group(WindowSessionGroupKey(m_sessionWindowId)).readEntry("WindowGeometry", QByteArray());
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
+        QTimer::singleShot(0, this, [this]() {
+            if (!isVisible() || isMaximized() || isFullScreen()) {
+                return;
+            }
+            QScreen *target = QGuiApplication::screenAt(frameGeometry().center());
+            if (!target) {
+                target = screen() ? screen() : QGuiApplication::primaryScreen();
+            }
+            if (target) {
+                placeIntentionalWindowFrame(this, frameGeometry(), target->availableGeometry());
+            }
+        });
     }
 }
 #endif
@@ -1619,6 +1674,7 @@ bool Shell::moveTabToNewWindow(int tab, const QPoint &dropPosition)
     }
 
     QScreen *targetScreen = dropPosition.isNull() ? screen() : QGuiApplication::screenAt(dropPosition);
+    QRect targetFrame;
     if (!targetScreen) {
         targetScreen = screen() ? screen() : QGuiApplication::primaryScreen();
     }
@@ -1626,7 +1682,7 @@ bool Shell::moveTabToNewWindow(int tab, const QPoint &dropPosition)
         const QRect area = targetScreen->availableGeometry();
         const int width = qMin(area.width(), qMax(320, area.width() / 2));
         const int left = dropPosition.isNull() ? area.x() + area.width() - width : qBound(area.left(), dropPosition.x() - width / 2, area.right() - width + 1);
-        destination->setGeometry(left, area.y(), width, area.height());
+        targetFrame = QRect(left, area.y(), width, area.height());
     }
 
     const int oldActive = m_tabWidget->currentIndex();
@@ -1688,6 +1744,9 @@ bool Shell::moveTabToNewWindow(int tab, const QPoint &dropPosition)
     m_prevTabAction->setEnabled(m_tabs.size() > 1);
     updateOpenTabButtonGeometry();
     destination->show();
+    if (targetScreen) {
+        placeIntentionalWindowFrame(destination, targetFrame, targetScreen->availableGeometry());
+    }
     destination->saveOpenDocumentSession();
     return true;
 }
@@ -1778,9 +1837,11 @@ void Shell::fileOpenImpl(bool newWindow)
                 if (targetScreen) {
                     QRect area = targetScreen->availableGeometry();
                     const int leftWidth = area.width() / 2;
-                    destination->setGeometry(area.x() + leftWidth, area.y(), area.width() - leftWidth, area.height());
+                    destination->show();
+                    placeIntentionalWindowFrame(destination, QRect(area.x() + leftWidth, area.y(), area.width() - leftWidth, area.height()), area);
+                } else {
+                    destination->show();
                 }
-                destination->show();
             }
         }
         if (destination) {
@@ -2351,6 +2412,19 @@ int Shell::findTabIndex(const QUrl &url) const
 #endif
     return (it != m_tabs.end()) ? std::distance(m_tabs.begin(), it) : -1;
 }
+
+#if defined(Q_OS_WIN)
+Shell *Shell::otherWindowWithUrl(const QUrl &url) const
+{
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        Shell *other = qobject_cast<Shell *>(widget);
+        if (other && other != this && other->isVisible() && !other->m_sessionClosed && !other->m_unique && other->findTabIndex(url) >= 0) {
+            return other;
+        }
+    }
+    return nullptr;
+}
+#endif
 
 void Shell::handleDroppedUrls(const QList<QUrl> &urls)
 {
