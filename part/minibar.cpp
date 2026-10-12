@@ -96,22 +96,9 @@ void MiniBarLogic::notifySetup(const QList<Okular::Page *> &pageVector, int setu
 
     const QString pagesString = QString::number(pages);
 
-    // In some documents, there may be labels which are longer than pagesString. Here, we check all the page labels, and if any of the labels are longer than pagesString, we use that string for sizing m_pageLabelEdit
-    QString pagesOrLabelString = pagesString;
-    if (labelsDiffer) {
-        for (const Okular::Page *page : pageVector) {
-            if (!page->label().isEmpty()) {
-                MiniBar *miniBar = *m_miniBars.constBegin(); // We assume all the minibars have the same font, font size etc, so we just take one minibar for the purpose of calculating the displayed length of the page labels.
-                if (miniBar->fontMetrics().horizontalAdvance(page->label()) > miniBar->fontMetrics().horizontalAdvance(pagesOrLabelString)) {
-                    pagesOrLabelString = page->label();
-                }
-            }
-        }
-    }
-
     for (MiniBar *miniBar : std::as_const(m_miniBars)) {
         // resize width of widgets
-        miniBar->resizeForPage(pages, pagesOrLabelString);
+        miniBar->resizeForPage(pages);
 
         // update child widgets
         miniBar->m_pageLabelEdit->setPageLabels(pageVector);
@@ -177,6 +164,7 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
     horLayout->addWidget(m_prevButton);
     // bottom: left lineEdit (current page box)
     m_pageNumberEdit = new PageNumberEdit(this);
+    m_pageNumberEdit->setObjectName(QStringLiteral("pageNumberEdit"));
     horLayout->addWidget(m_pageNumberEdit);
     m_pageNumberEdit->installEventFilter(this);
     // bottom: left labelWidget (current page label)
@@ -205,7 +193,7 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
     setSizePolicy(sp);
 
     // resize width of widgets
-    resizeForPage(0, QString());
+    resizeForPage(0);
 
     // connect signals from child widgets to internal handlers / signals bouncers
     connect(m_pageNumberEdit, &PageNumberEdit::returnKeyPressed, this, &MiniBar::slotChangePageFromReturn);
@@ -296,18 +284,17 @@ void MiniBar::slotToolBarIconSizeChanged()
     m_nextButton->setIconSize(buttonSize);
 }
 
-void MiniBar::resizeForPage(int pages, const QString &pagesOrLabelString)
+void MiniBar::resizeForPage(int pages)
 {
-    const int numberWidth = 10 + fontMetrics().horizontalAdvance(QString::number(pages));
-    const int labelWidth = 10 + fontMetrics().horizontalAdvance(pagesOrLabelString);
-    m_pageNumberEdit->setMinimumWidth(numberWidth);
-    m_pageNumberEdit->setMaximumWidth(2 * numberWidth);
-    m_pageLabelEdit->setMinimumWidth(labelWidth);
-    m_pageLabelEdit->setMaximumWidth(2 * labelWidth);
-    m_pageNumberLabel->setMinimumWidth(numberWidth);
-    m_pageNumberLabel->setMaximumWidth(2 * numberWidth);
-    m_pagesButton->setMinimumWidth(numberWidth);
-    m_pagesButton->setMaximumWidth(2 * numberWidth);
+    // Keep ordinary page navigation the same size across documents and page
+    // changes. Reserve four digits; only unusually large page counts grow.
+    const int digits = qMax(4, QString::number(pages).size());
+    const int numberWidth = 14 + fontMetrics().horizontalAdvance(QString(digits, QLatin1Char('8')));
+    const int labelWidth = 14 + fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMM"));
+    m_pageNumberEdit->setFixedWidth(numberWidth);
+    m_pageLabelEdit->setFixedWidth(labelWidth);
+    m_pageNumberLabel->setFixedWidth(numberWidth);
+    m_pagesButton->setFixedWidth(numberWidth);
 }
 
 /** PageLabelEdit **/
@@ -322,6 +309,7 @@ PageLabelEdit::PageLabelEdit(MiniBar *parent)
 void PageLabelEdit::setText(const QString &newText)
 {
     m_lastLabel = newText;
+    setToolTip(newText);
     PagesEdit::setText(newText);
 }
 

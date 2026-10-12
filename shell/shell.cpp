@@ -838,13 +838,14 @@ void Shell::updateTabPalette()
     const QString base = palette.color(QPalette::Base).name();
     const QString text = palette.color(QPalette::WindowText).name();
     const QString accent = palette.color(QPalette::Highlight).name();
+    const int tabWidth = m_tabWidget->count() < 5 ? 180 : 128;
     QString tabStyle = QStringLiteral("QTabBar { background-color: %1; }"
-                                      "QTabBar::tab { min-width: 128px; max-width: 260px; min-height: 25px; }"
+                                      "QTabBar::tab { min-width: %4px; max-width: %4px; min-height: 25px; }"
                                       "QTabBar::tab:selected { border-top: 2px solid %3; }"
                                       "QTabBar QToolButton { background: %1; border: 1px solid transparent; border-radius: 2px; padding: 0px; margin: 0px; }"
                                       "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: %3; border: 1px solid %3; }"
                                       "QTabBar QToolButton:pressed { color: %3; border: 1px solid %3; background-color: %2; }")
-                            .arg(window, button, accent);
+                            .arg(window, button, accent, QString::number(tabWidth));
     if (palette.color(QPalette::Window).lightness() < 128) {
         // The Windows tab painter retains light tab surfaces after a live
         // palette switch, so specify both tab states in dark schemes.
@@ -3196,6 +3197,13 @@ void Shell::updateOpenTabButtonGeometry()
     }
 
     QTabBar *const tabBar = m_tabWidget->tabBar();
+#if defined(Q_OS_WIN)
+    const bool compactTabs = tabBar->count() >= 5;
+    if (tabBar->property("okularCompactTabs").toBool() != compactTabs) {
+        tabBar->setProperty("okularCompactTabs", compactTabs);
+        updateTabPalette();
+    }
+#endif
     if (tabBar->maximumWidth() != QWIDGETSIZE_MAX) {
         tabBar->setMaximumWidth(QWIDGETSIZE_MAX);
         m_tabWidget->updateGeometry();

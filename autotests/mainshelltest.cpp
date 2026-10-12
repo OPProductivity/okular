@@ -167,6 +167,8 @@ private Q_SLOTS:
     void testSeparateWindowSessionsRestore();
     void testColorSchemeMenuTracksOtherWindow();
     void testTabPaletteTracksColorScheme();
+    void testTabWidthsStayStableAcrossSelection();
+    void testPageNumberControlWidthStaysStable();
     void testDuplicateOpenShowsPageNotice();
     void testSharedViewerSettingsAcrossWindows();
     void testSavedViewModeDoesNotChangeOtherWindow();
@@ -705,6 +707,68 @@ void MainShellTest::testColorSchemeMenuTracksOtherWindow()
 }
 
 #if defined(Q_OS_WIN)
+void MainShellTest::testPageNumberControlWidthStaysStable()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+
+    const auto pageControlWidth = [shell](const QString &path) {
+        shell->openUrl(QUrl::fromLocalFile(path));
+        QCoreApplication::processEvents();
+        QWidget *bar = shell->m_tabs.at(shell->m_tabWidget->currentIndex()).part->widget()->findChild<QWidget *>(QStringLiteral("miniBar"));
+        if (!bar) {
+            return -1;
+        }
+        QWidget *edit = bar->findChild<QWidget *>(QStringLiteral("pageNumberEdit"));
+        return edit ? edit->width() : -1;
+    };
+
+    const int singlePageWidth = pageControlWidth(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    QVERIFY(singlePageWidth > 0);
+    const int multipageWidth = pageControlWidth(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"));
+    QCOMPARE(multipageWidth, singlePageWidth);
+    QVERIFY(singlePageWidth < shell->fontMetrics().horizontalAdvance(QStringLiteral("8888888")) + 14);
+}
+
+void MainShellTest::testTabWidthsStayStableAcrossSelection()
+{
+    QTemporaryDir directory(QDir::currentPath() + QStringLiteral("/okular-tab-widths-XXXXXX"));
+    QVERIFY(directory.isValid());
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    QTabBar *bar = shell->m_tabWidget->tabBar();
+
+    for (int count = 1; count <= 5; ++count) {
+        const QString path = directory.filePath(QStringLiteral("document-%1.pdf").arg(count));
+        QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file1.pdf"), path));
+        shell->openUrl(QUrl::fromLocalFile(path));
+        QCoreApplication::processEvents();
+        QCOMPARE(bar->count(), count);
+        const int width = bar->tabRect(0).width();
+        for (int selected = 0; selected < count; ++selected) {
+            shell->setActiveTab(selected);
+            QCoreApplication::processEvents();
+            for (int tab = 0; tab < count; ++tab) {
+                QCOMPARE(bar->tabRect(tab).width(), width);
+            }
+        }
+        if (count == 4) {
+            QVERIFY(width >= 180);
+        } else if (count == 5) {
+            QVERIFY(width < 180);
+        }
+    }
+
+    QVERIFY(shell->closeTab(4));
+    QCoreApplication::processEvents();
+    QCOMPARE(bar->count(), 4);
+    QVERIFY(bar->tabRect(0).width() >= 180);
+}
+
 void MainShellTest::testTabPaletteTracksColorScheme()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
