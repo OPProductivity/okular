@@ -754,7 +754,9 @@ void MainShellTest::testTabWidthsStayStableAcrossSelection()
     QVERIFY(shell);
     QTabBar *bar = shell->m_tabWidget->tabBar();
 
-    for (int count = 1; count <= 5; ++count) {
+    int roomyWidth = 0;
+    int compactWidth = 0;
+    for (int count = 1; count <= 6; ++count) {
         const QString path = directory.filePath(QStringLiteral("document-%1.pdf").arg(count));
         QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file1.pdf"), path));
         shell->openUrl(QUrl::fromLocalFile(path));
@@ -777,17 +779,27 @@ void MainShellTest::testTabWidthsStayStableAcrossSelection()
                 }
             }
         }
-        if (count == 4) {
-            QVERIFY(width >= 180);
+        if (count == 1) {
+            roomyWidth = width;
+            QVERIFY(roomyWidth >= 220);
+        } else if (count < 5) {
+            QCOMPARE(width, roomyWidth);
         } else if (count == 5) {
-            QVERIFY(width < 180);
+            compactWidth = width;
+            QVERIFY(compactWidth < roomyWidth);
+        } else {
+            QCOMPARE(width, compactWidth);
         }
     }
 
+    QVERIFY(shell->closeTab(5));
+    QCoreApplication::processEvents();
+    QCOMPARE(bar->count(), 5);
+    QCOMPARE(bar->tabRect(0).width(), compactWidth);
     QVERIFY(shell->closeTab(4));
     QCoreApplication::processEvents();
     QCOMPARE(bar->count(), 4);
-    QVERIFY(bar->tabRect(0).width() >= 180);
+    QCOMPARE(bar->tabRect(0).width(), roomyWidth);
     delete shell;
 }
 
