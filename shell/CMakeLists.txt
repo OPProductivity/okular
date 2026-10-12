@@ -39,7 +39,7 @@ if(WIN32)
     endif()
 endif()
 
-target_link_libraries(okular KF6::I18n KF6::Parts KF6::WindowSystem KF6::Crash KF6::IconThemes KF6::KIOGui)
+target_link_libraries(okular KF6::I18n KF6::Parts KF6::WindowSystem KF6::Crash KF6::IconThemes KF6::KIOGui KF6::ColorScheme)
 if (TARGET Qt6::DBus)
     target_link_libraries(okular Qt6::DBus)
 endif()

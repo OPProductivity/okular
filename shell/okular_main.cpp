@@ -28,6 +28,10 @@
 #include <QTemporaryFile>
 #include <QTextStream>
 #include <QThread>
+#include <QTimer>
+#include <QEventLoop>
+
+#include <KColorScheme>
 
 #include "config-okular.h"
 #if HAVE_X11
@@ -486,8 +490,30 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     }
 #if defined(Q_OS_WIN)
     shell->restoreSavedWindowGeometry();
+    Shell *const foregroundShell = shell;
 #endif
     shell->show();
+#if defined(Q_OS_WIN)
+    // Keep the same window in front while its central view is populated.
+    // Paint the shell's own background with the active KDE color scheme.
+    QWidget *const loadingCentralWidget = shell->centralWidget();
+    const bool loadingCentralWasVisible = loadingCentralWidget && loadingCentralWidget->isVisible();
+    const QPalette shellPalette = shell->palette();
+    const bool shellAutoFillBackground = shell->autoFillBackground();
+    bool paintingLoadingBackground = false;
+    if (!paths.isEmpty() || !savedWindowIds.isEmpty()) {
+        paintingLoadingBackground = true;
+        QPalette loadingPalette = shellPalette;
+        loadingPalette.setColor(QPalette::Window, KColorScheme(QPalette::Active, KColorScheme::Window).background().color());
+        shell->setPalette(loadingPalette);
+        shell->setAutoFillBackground(true);
+        if (loadingCentralWidget) {
+            loadingCentralWidget->hide();
+        }
+        shell->repaint();
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers);
+    }
+#endif
     const bool restoredOpenDocumentSession = shouldRestoreOpenDocumentSession(serializedOptions) && shell->restoreOpenDocumentSession();
 
 #if defined(Q_OS_WIN)
@@ -499,9 +525,13 @@ Status main(const QStringList &paths, const QString &serializedOptions)
             continue;
         }
         additional->restoreSavedWindowGeometry();
-        additional->show();
+        additional->setAttribute(Qt::WA_ShowWithoutActivating);
+        additional->setUpdatesEnabled(false);
         if (!additional->restoreOpenDocumentSession()) {
             delete additional;
+        } else {
+            additional->show();
+            additional->setUpdatesEnabled(true);
         }
     }
 #endif
@@ -527,6 +557,26 @@ Status main(const QStringList &paths, const QString &serializedOptions)
 
 #if defined(Q_OS_WIN)
     Shell::setWindowsSessionRestoreInProgress(false);
+    if (paintingLoadingBackground) {
+        shell->setPalette(shellPalette);
+        shell->setAutoFillBackground(shellAutoFillBackground);
+        if (loadingCentralWasVisible) {
+            loadingCentralWidget->show();
+        }
+    }
+    // Qt can activate a secondary shell after show() even with
+    // WA_ShowWithoutActivating. Restore the first shell's foreground position
+    // after queued show events, but only if one of our other shells owns it.
+    QTimer::singleShot(0, foregroundShell, [foregroundShell]() {
+        const HWND active = GetForegroundWindow();
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            Shell *other = qobject_cast<Shell *>(widget);
+            if (other && other != foregroundShell && reinterpret_cast<HWND>(other->winId()) == active) {
+                SetForegroundWindow(reinterpret_cast<HWND>(foregroundShell->winId()));
+                break;
+            }
+        }
+    });
 #endif
     shell->saveOpenDocumentSession();
 

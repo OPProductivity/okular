@@ -1341,7 +1341,9 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
         if (!m_intentionalSeparateWindow && !m_restoringOpenDocumentSession) {
             if (Shell *other = otherWindowWithUrl(url)) {
                 other->setActiveTab(other->findTabIndex(url));
-                other->raisePrivateWindowsShell();
+                if (!s_windowsSessionRestoreInProgress) {
+                    other->raisePrivateWindowsShell();
+                }
                 other->addRecentUrl(url);
                 return;
             }

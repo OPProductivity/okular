@@ -576,6 +576,8 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     const QList<Shell *> restored = getShells();
     QCOMPARE(restored.size(), 2);
+    QVERIFY(restored.at(0)->updatesEnabled());
+    QVERIFY(restored.at(1)->updatesEnabled());
     QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
     QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
     QCOMPARE(restored.at(1)->geometry().height(), 480);
