@@ -30,6 +30,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QEventLoop>
+#include <QLabel>
 
 #include <KColorScheme>
 
@@ -498,19 +499,35 @@ Status main(const QStringList &paths, const QString &serializedOptions)
     // Paint the shell's own background with the active KDE color scheme.
     QWidget *const loadingCentralWidget = shell->centralWidget();
     const bool loadingCentralWasVisible = loadingCentralWidget && loadingCentralWidget->isVisible();
+    const QRect loadingArea = loadingCentralWidget ? loadingCentralWidget->geometry() : shell->rect();
     const QPalette shellPalette = shell->palette();
+    const bool shellHadExplicitPalette = shell->testAttribute(Qt::WA_SetPalette);
     const bool shellAutoFillBackground = shell->autoFillBackground();
+    std::unique_ptr<QLabel> loadingLabel;
     bool paintingLoadingBackground = false;
     if (!paths.isEmpty() || !savedWindowIds.isEmpty()) {
         paintingLoadingBackground = true;
+        const KColorScheme loadingScheme(QPalette::Active, KColorScheme::Window);
         QPalette loadingPalette = shellPalette;
-        loadingPalette.setColor(QPalette::Window, KColorScheme(QPalette::Active, KColorScheme::Window).background().color());
+        loadingPalette.setColor(QPalette::Window, loadingScheme.background().color());
         shell->setPalette(loadingPalette);
         shell->setAutoFillBackground(true);
         if (loadingCentralWidget) {
             loadingCentralWidget->hide();
         }
+        loadingLabel = std::make_unique<QLabel>(i18n("Loading documents…"), shell);
+        loadingLabel->setAlignment(Qt::AlignCenter);
+        QFont loadingFont = loadingLabel->font();
+        loadingFont.setPointSize(12);
+        loadingLabel->setFont(loadingFont);
+        QPalette labelPalette = loadingLabel->palette();
+        labelPalette.setColor(QPalette::WindowText, loadingScheme.foreground().color());
+        loadingLabel->setPalette(labelPalette);
+        loadingLabel->setGeometry(loadingArea);
+        loadingLabel->show();
+        loadingLabel->raise();
         shell->repaint();
+        loadingLabel->repaint();
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers);
     }
 #endif
@@ -558,8 +575,12 @@ Status main(const QStringList &paths, const QString &serializedOptions)
 #if defined(Q_OS_WIN)
     Shell::setWindowsSessionRestoreInProgress(false);
     if (paintingLoadingBackground) {
-        shell->setPalette(shellPalette);
-        shell->setAutoFillBackground(shellAutoFillBackground);
+        loadingLabel.reset();
+        // setPalette() makes a widget's palette explicit. If it originally
+        // inherited the application palette, resume inheritance so a saved
+        // Okular color scheme can finish applying during startup.
+        foregroundShell->setPalette(shellHadExplicitPalette ? shellPalette : QPalette());
+        foregroundShell->setAutoFillBackground(shellAutoFillBackground);
         if (loadingCentralWasVisible) {
             loadingCentralWidget->show();
         }

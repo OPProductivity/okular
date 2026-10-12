@@ -555,6 +555,7 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *first = findShell();
     QVERIFY(first);
+    const bool originalExplicitPalette = first->testAttribute(Qt::WA_SetPalette);
     first->openUrl(firstUrl);
     Shell *second = new Shell(options, QString(), true);
     QVERIFY(second->isValid());
@@ -578,6 +579,8 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(restored.size(), 2);
     QVERIFY(restored.at(0)->updatesEnabled());
     QVERIFY(restored.at(1)->updatesEnabled());
+    QCOMPARE(restored.at(0)->testAttribute(Qt::WA_SetPalette), originalExplicitPalette);
+    QVERIFY(restored.at(0)->centralWidget()->isVisible());
     QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
     QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
     QCOMPARE(restored.at(1)->geometry().height(), 480);
