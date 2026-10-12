@@ -823,7 +823,9 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
                 if (!bar->tabData(tab).toBool()) {
                     selectTabsForClick(tab, Qt::NoModifier);
                 }
-                QMenu menu(bar);
+                // The tab bar has its own style sheet. Parenting a popup to it
+                // lets that style override the application's dark menu palette.
+                QMenu menu(this);
                 menu.setMaximumWidth(450);
                 QAction *move = menu.addAction(i18n("Move to New Window"));
                 QHash<QAction *, QPointer<Shell>> otherWindows;
