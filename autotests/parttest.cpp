@@ -40,6 +40,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QStandardPaths>
 #include <QTabletEvent>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -2612,14 +2613,19 @@ int main(int argc, char *argv[])
     qputenv("LC_ALL", "en_US.UTF-8"); // For UNIX, third-party libraries
 
     // Ensure consistent configs/caches
+    // On Windows changing USERPROFILE while Qt initializes moves
+    // GenericDataLocation between the real and temporary profile. Keep one
+    // stable test location for the lifetime of the process.
+#ifndef Q_OS_WIN
     QTemporaryDir homeDir; // QTemporaryDir automatically cleans up when it goes out of scope
     Q_ASSERT(homeDir.isValid());
     QByteArray homePath = QFile::encodeName(homeDir.path());
-    qDebug() << homePath;
     qputenv("USERPROFILE", homePath);
     qputenv("HOME", homePath);
     qputenv("XDG_DATA_HOME", QByteArray(homePath + "/.local"));
     qputenv("XDG_CONFIG_HOME", QByteArray(homePath + "/.kde-unit-test/xdg/config"));
+#endif
+    QStandardPaths::setTestModeEnabled(true);
 
     // Disable fancy debug output
     qunsetenv("QT_MESSAGE_PATTERN");

@@ -13,6 +13,7 @@
 #include "core/observer.h"
 
 class ThumbnailListPrivate;
+class PageView;
 
 namespace Okular
 {
@@ -30,6 +31,7 @@ class ThumbnailList : public QScrollArea, public Okular::DocumentObserver
 public:
     ThumbnailList(QWidget *parent, Okular::Document *document);
     ~ThumbnailList() override;
+    void setPageView(PageView *pageView);
 
     // inherited: create thumbnails ( inherited as a DocumentObserver )
     void notifySetup(const QList<Okular::Page *> &pages, int setupFlags) override;

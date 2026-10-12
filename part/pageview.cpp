@@ -36,6 +36,7 @@
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QScroller>
 #include <QScrollerProperties>
 #include <QSet>
@@ -850,7 +851,13 @@ void PageView::setupActions(KActionCollection *ac)
 
 bool PageView::canFitPageWidth() const
 {
-    return Okular::Settings::viewMode() != Okular::Settings::EnumViewMode::Single || d->zoomMode != ZoomFitWidth;
+    return currentViewMode() != Okular::Settings::EnumViewMode::Single || d->zoomMode != ZoomFitWidth;
+}
+
+int PageView::currentViewMode() const
+{
+    const QVariant mode = capability(ViewModeModality);
+    return mode.isValid() ? mode.toInt() : Okular::Settings::viewMode();
 }
 
 void PageView::fitPageWidth(int page)
@@ -944,7 +951,7 @@ void PageView::reparseConfig()
         setVerticalScrollBarPolicy(scrollBarMode);
     }
 
-    if (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Summary && ((int)Okular::Settings::viewColumns() != d->setting_viewCols)) {
+    if (currentViewMode() == Okular::Settings::EnumViewMode::Summary && ((int)Okular::Settings::viewColumns() != d->setting_viewCols)) {
         d->setting_viewCols = Okular::Settings::viewColumns();
 
         slotRelayoutPages();
@@ -1736,7 +1743,12 @@ void PageView::setCapability(ViewCapability capability, const QVariant &option)
         int mode = option.toInt(&ok);
         if (ok) {
             if (mode >= 0 && mode < Okular::Settings::EnumViewMode::COUNT) {
+                // Saved document state changes this view, not the shared default.
+                const QSignalBlocker blocker(d->viewModeActionGroup);
                 updateViewMode(mode);
+                if (d->document->pages() > 0) {
+                    slotRelayoutPages();
+                }
             }
         }
         break;
@@ -4010,7 +4022,7 @@ double PageView::zoomFactorFitMode(ZoomMode mode)
     if (pageCount == 0) {
         return 0;
     }
-    const bool facingCentered = Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered || (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Facing && pageCount == 1);
+    const bool facingCentered = currentViewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered || (currentViewMode() == Okular::Settings::EnumViewMode::Facing && pageCount == 1);
     const bool overrideCentering = facingCentered && pageCount < 3;
     const int nCols = overrideCentering ? 1 : viewColumns();
     const int colWidth = viewport()->width() / nCols - kcolWidthMargin;
@@ -4413,7 +4425,7 @@ void PageView::updateMagnifier(const QPoint p) // scaled point
 
 int PageView::viewColumns() const
 {
-    int vm = Okular::Settings::viewMode();
+    int vm = currentViewMode();
     if (vm == Okular::Settings::EnumViewMode::Single) {
         return 1;
     } else if (vm == Okular::Settings::EnumViewMode::Facing || vm == Okular::Settings::EnumViewMode::FacingFirstCentered) {
@@ -4745,15 +4757,15 @@ void PageView::slotRelayoutPages()
     int viewportWidth = viewport()->width(), viewportHeight = viewport()->height(), fullWidth = 0, fullHeight = 0;
 
     // handle the 'center first page in row' stuff
-    const bool facing = Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Facing && pageCount > 1;
-    const bool facingCentered = Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered || (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Facing && pageCount == 1);
+    const bool facing = currentViewMode() == Okular::Settings::EnumViewMode::Facing && pageCount > 1;
+    const bool facingCentered = currentViewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered || (currentViewMode() == Okular::Settings::EnumViewMode::Facing && pageCount == 1);
     const bool overrideCentering = facingCentered && pageCount < 3;
     const bool centerFirstPage = facingCentered && !overrideCentering;
     const bool facingPages = facing || centerFirstPage;
     const bool centerLastPage = centerFirstPage && pageCount % 2 == 0;
     const bool continuousView = getContinuousMode();
     const int nCols = overrideCentering ? 1 : viewColumns();
-    const bool singlePageViewMode = Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Single;
+    const bool singlePageViewMode = currentViewMode() == Okular::Settings::EnumViewMode::Single;
 
     if (d->aFitWindowToPage) {
         d->aFitWindowToPage->setEnabled(!continuousView && singlePageViewMode);

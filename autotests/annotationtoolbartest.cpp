@@ -9,13 +9,18 @@
 #include <QTest>
 
 #include <QMenu>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QToolBar>
 #include <QWidget>
 
 #include <KActionCollection>
+#include <KConfigGroup>
 #include <KSelectAction>
+#include <KSharedConfig>
 
 #include "../core/page.h"
 #include "../part/pageview.h"
@@ -48,7 +53,6 @@ class AnnotationToolBarTest : public QObject, public Okular::PartTest
     Q_OBJECT
 
 public:
-    static void initMain();
     static QTabWidget *tabWidget(Shell *s)
     {
         return s->m_tabWidget;
@@ -82,21 +86,18 @@ Shell *findShell(Shell *ignore = nullptr)
     return nullptr;
 }
 
-void AnnotationToolBarTest::initMain()
-{
-    // Ensure consistent configs/caches and Default UI
-    QTemporaryDir homeDir;
-    Q_ASSERT(homeDir.isValid());
-    QByteArray homePath = QFile::encodeName(homeDir.path());
-    qputenv("USERPROFILE", homePath);
-    qputenv("HOME", homePath);
-    qputenv("XDG_DATA_HOME", QByteArray(homePath + "/.local"));
-    qputenv("XDG_CONFIG_HOME", QByteArray(homePath + "/.kde-unit-test/xdg/config"));
-}
-
 void AnnotationToolBarTest::initTestCase()
 {
     QStandardPaths::setTestModeEnabled(true);
+    // Settings reads these XML defaults on first use. Stage the fixtures in
+    // Qt's test data location so the suite does not depend on installation.
+    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/okular");
+    QVERIFY(QDir().mkpath(dataDir));
+    for (const QString &name : {QStringLiteral("drawingtools.xml"), QStringLiteral("tools.xml"), QStringLiteral("toolsQuick.xml")}) {
+        const QString target = dataDir + QLatin1Char('/') + name;
+        QFile::remove(target);
+        QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "../part/data/") + name, target));
+    }
     // Don't pollute people's okular settings
     Okular::Settings::instance(QStringLiteral("annotationtoolbartest"));
 }
@@ -105,6 +106,12 @@ void AnnotationToolBarTest::init()
 {
     // Default settings for every test
     Okular::Settings::self()->setDefaults();
+    // This suite tests annotation controls, not saved windows. In the shared
+    // Qt test profile another suite may have left a restorable PDF session.
+    const QString partConfigPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QStringLiteral("/okularpartrc");
+    KSharedConfigPtr partConfig = KSharedConfig::openConfig(partConfigPath);
+    partConfig->group(QStringLiteral("General")).writeEntry("ShellRestoreOpenDocuments", false);
+    partConfig->sync();
 }
 
 void AnnotationToolBarTest::cleanup()
@@ -117,10 +124,16 @@ void AnnotationToolBarTest::cleanup()
 
 bool AnnotationToolBarTest::simulateAddPopupAnnotation(Okular::Part *part, int mouseX, int mouseY)
 {
-    int annotationCount = partDocument(part)->page(0)->annotations().size();
-    QTest::mouseMove(pageView(part)->viewport(), QPoint(mouseX, mouseY));
-    QTest::mouseClick(pageView(part)->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(mouseX, mouseY));
-    bool annotationAdded = partDocument(part)->page(0)->annotations().size() == annotationCount + 1;
+    Q_UNUSED(mouseX);
+    const int pageNumber = partDocument(part)->currentPage();
+    const int annotationCount = partDocument(part)->page(pageNumber)->annotations().size();
+    // Fit-page mode centers the small fixture page in the viewport. Fixed
+    // coordinates can hit the gray margin, especially after the toolbar opens.
+    const QPoint pageCenter = pageView(part)->viewport()->rect().center();
+    const QPoint clickPos(pageCenter.x(), pageCenter.y() + (mouseY - 175) / 5);
+    QTest::mouseMove(pageView(part)->viewport(), clickPos);
+    QTest::mouseClick(pageView(part)->viewport(), Qt::LeftButton, Qt::NoModifier, clickPos);
+    const bool annotationAdded = partDocument(part)->page(pageNumber)->annotations().size() == annotationCount + 1;
     return annotationAdded;
 }
 
@@ -141,10 +154,16 @@ void AnnotationToolBarTest::testAnnotationToolBar()
     }
 
     QVERIFY(QTest::qWaitForWindowExposed(s));
+    s->resize(1200, 800);
     QFETCH(int, tabIndex);
     s->m_tabWidget->tabBar()->setCurrentIndex(tabIndex);
+    QCOMPARE(s->m_tabWidget->currentIndex(), tabIndex);
     Okular::Part *part = dynamic_cast<Okular::Part *>(s->m_tabs[tabIndex].part);
     QVERIFY(part);
+    QVERIFY(partDocument(part)->isOpened());
+    QTRY_VERIFY(part->widget()->isVisible());
+    QTRY_VERIFY(pageView(part)->viewport()->width() > 500);
+    QTRY_VERIFY(partDocument(part)->page(partDocument(part)->currentPage())->hasPixmap(pageView(part)));
 
     QToolBar *annToolBar = s->findChild<QToolBar *>(QStringLiteral("annotationToolBar"));
     QVERIFY(annToolBar);
@@ -272,8 +291,15 @@ void AnnotationToolBarTest::testAnnotationToolBarActionsEnabledState()
 
     QVERIFY(QTest::qWaitForWindowExposed(s));
 
-    Okular::Part *part = s->findChild<Okular::Part *>();
-    QVERIFY(part);
+    Okular::Part *part = nullptr;
+    for (const auto &tab : std::as_const(s->m_tabs)) {
+        auto *candidate = qobject_cast<Okular::Part *>(tab.part);
+        if (candidate && QDir::cleanPath(candidate->url().toLocalFile()) == QDir::cleanPath(document)) {
+            part = candidate;
+            break;
+        }
+    }
+    QVERIFY2(part, "The requested document was not opened in any tab");
 
     KActionCollection *ac = part->actionCollection();
     QAction *aQuickTools = ac->action(QStringLiteral("annotation_favorites"));
@@ -366,8 +392,9 @@ void AnnotationToolBarTest::testAnnotationToolBarConfigActionsEnabledState()
 
     QVERIFY(QTest::qWaitForWindowExposed(s));
 
-    Okular::Part *part = s->findChild<Okular::Part *>();
+    Okular::Part *part = qobject_cast<Okular::Part *>(s->m_tabs.at(s->m_tabWidget->currentIndex()).part);
     QVERIFY(part);
+    QCOMPARE(QDir::cleanPath(part->url().toLocalFile()), QDir::cleanPath(QStringLiteral(KDESRCDIR "data/file1.pdf")));
 
     KActionCollection *ac = part->actionCollection();
     QAction *aWidth = ac->action(QStringLiteral("annotation_settings_width"));

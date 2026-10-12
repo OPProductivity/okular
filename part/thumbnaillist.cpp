@@ -5,12 +5,14 @@
 */
 
 #include "thumbnaillist.h"
+#include "pageview.h"
 
 // qt/kde includes
 #include <QAction>
 #include <QApplication>
 #include <QIcon>
 #include <QPainter>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSizePolicy>
@@ -64,6 +66,11 @@ public:
 
     ThumbnailList *q;
     Okular::Document *m_document;
+    QPointer<PageView> m_pageView;
+    int viewMode() const
+    {
+        return m_pageView ? m_pageView->currentViewMode() : Okular::Settings::viewMode();
+    }
     ThumbnailWidget *m_selected;
     QTimer *m_delayTimer;
     QPixmap m_bookmarkOverlay;
@@ -275,6 +282,11 @@ ThumbnailList::~ThumbnailList()
     d->m_document->removeObserver(this);
 }
 
+void ThumbnailList::setPageView(PageView *pageView)
+{
+    d->m_pageView = pageView;
+}
+
 // BEGIN DocumentObserver inherited methods
 void ThumbnailList::notifySetup(const QList<Okular::Page *> &pages, int setupFlags)
 {
@@ -463,12 +475,12 @@ int ThumbnailListPrivate::getNewPageOffset(int n, ThumbnailListPrivate::ChangePa
 {
     int reason = 1;
     int facingFirst = 0; // facingFirstCentered cornercase
-    if (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Facing) {
+    if (viewMode() == Okular::Settings::EnumViewMode::Facing) {
         reason = 2;
-    } else if (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered) {
+    } else if (viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered) {
         facingFirst = 1;
         reason = 2;
-    } else if (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::Summary) {
+    } else if (viewMode() == Okular::Settings::EnumViewMode::Summary) {
         reason = 3;
     }
     if (dir == ThumbnailListPrivate::Up) {
@@ -849,7 +861,7 @@ void ThumbnailListPrivate::mouseMoveEvent(QMouseEvent *e)
             vp.rePos.normalizedY = origNormalY;
             if (direction == ThumbnailListPrivate::Up) {
                 vp.rePos.normalizedY = 1.0;
-                if (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered && !newPageOn) {
+                if (viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered && !newPageOn) {
                     if (m_pageCurrentlyGrabbed == 1) {
                         vp.rePos.normalizedX = origNormalX - 0.5;
                     } else {
@@ -863,7 +875,7 @@ void ThumbnailListPrivate::mouseMoveEvent(QMouseEvent *e)
                 }
             } else if (direction == ThumbnailListPrivate::Down) {
                 vp.rePos.normalizedY = 0.0;
-                if (Okular::Settings::viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered && !m_pageCurrentlyGrabbed) {
+                if (viewMode() == Okular::Settings::EnumViewMode::FacingFirstCentered && !m_pageCurrentlyGrabbed) {
                     if (origNormalX < 0.5) {
                         vp = Okular::DocumentViewport(--newPageOn);
                         vp.rePos.normalizedX = origNormalX + 0.5;
@@ -876,7 +888,7 @@ void ThumbnailListPrivate::mouseMoveEvent(QMouseEvent *e)
                         vp.rePos.normalizedX = 1.0;
                     }
                 }
-            } else if (Okular::Settings::viewMode() != Okular::Settings::EnumViewMode::Single) {
+            } else if (viewMode() != Okular::Settings::EnumViewMode::Single) {
                 if (direction == ThumbnailListPrivate::Left) {
                     vp.rePos.normalizedX = 1.0;
                 } else {

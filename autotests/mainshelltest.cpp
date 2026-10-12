@@ -167,6 +167,7 @@ private Q_SLOTS:
     void testSeparateWindowSessionsRestore();
     void testColorSchemeMenuTracksOtherWindow();
     void testSharedViewerSettingsAcrossWindows();
+    void testSavedViewModeDoesNotChangeOtherWindow();
     void testSharedReviewAndLayerSettingsAcrossWindows();
     void testRecentlyClosedWindowRestoresRemainingTabs();
     void testCloseAllHiddenWindowsRestoresThreeSessions();
@@ -575,6 +576,15 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     second->show();
     second->resize(640, 480);
     second->openUrl(secondUrl);
+    // Each window may have its own chrome, even though new windows share
+    // defaults from the initial window.
+    if (first->m_lockSidebarAction->isChecked()) {
+        first->m_lockSidebarAction->trigger();
+    }
+    second->m_showSidebarAction->setChecked(false);
+    second->m_sidebar->hide();
+    second->m_fullScreenAction->trigger();
+    QVERIFY(second->isFullScreen());
     second->saveOpenDocumentSession();
 
     KSharedConfigPtr config = KSharedConfig::openConfig();
@@ -584,6 +594,12 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readPathEntry("Urls", QStringList()).size(), 1);
     const QByteArray secondGeometry = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readEntry("WindowGeometry", QByteArray());
     QVERIFY(!secondGeometry.isEmpty());
+    const KConfigGroup firstGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(0));
+    const KConfigGroup secondGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1));
+    QCOMPARE(firstGroup.readEntry("WindowUiStateVersion", 0), 1);
+    QCOMPARE(firstGroup.readEntry("WindowSidebarLocked", true), false);
+    QCOMPARE(secondGroup.readEntry("WindowSidebarVisible", true), false);
+    QCOMPARE(secondGroup.readEntry("WindowFullScreen", false), true);
 
     delete second;
     delete first;
@@ -596,8 +612,14 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QVERIFY(restored.at(0)->centralWidget()->isVisible());
     QCOMPARE(QDir::cleanPath(restored.at(0)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(firstUrl.toLocalFile()));
     QCOMPARE(QDir::cleanPath(restored.at(1)->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(secondUrl.toLocalFile()));
-    QCOMPARE(restored.at(1)->geometry().height(), 480);
-    if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
+    QCOMPARE(restored.at(0)->m_lockSidebarAction->isChecked(), false);
+    QCOMPARE(restored.at(1)->m_showSidebarAction->isChecked(), false);
+    QVERIFY(restored.at(1)->isFullScreen());
+    QVERIFY(restored.at(1)->m_fullScreenAction->isChecked());
+    if (!restored.at(1)->isFullScreen()) {
+        QCOMPARE(restored.at(1)->geometry().height(), 480);
+    }
+    if (QGuiApplication::platformName() != QLatin1String("offscreen") && !restored.at(1)->isFullScreen()) {
         QVERIFY(restored.at(1)->geometry().width() < restored.at(0)->geometry().width());
     }
 }
@@ -699,6 +721,12 @@ void MainShellTest::testSharedViewerSettingsAcrossWindows()
     // The action is per document, while the last selected mode is the shared
     // default. This does not by itself prove the two documents render differently.
     QVERIFY(!otherFacingAction->isChecked());
+    QCOMPARE(pageView(firstPart)->capability(Okular::View::ViewModeModality).toInt(), int(Okular::Settings::EnumViewMode::Facing));
+    QCOMPARE(pageView(secondPart)->capability(Okular::View::ViewModeModality).toInt(), int(Okular::Settings::EnumViewMode::Single));
+    QCOMPARE(Okular::Settings::viewMode(), int(Okular::Settings::EnumViewMode::Facing));
+    pageView(secondPart)->setCapability(Okular::View::ViewModeModality, int(Okular::Settings::EnumViewMode::Summary));
+    QCOMPARE(pageView(secondPart)->capability(Okular::View::ViewModeModality).toInt(), int(Okular::Settings::EnumViewMode::Summary));
+    QCOMPARE(pageView(firstPart)->capability(Okular::View::ViewModeModality).toInt(), int(Okular::Settings::EnumViewMode::Facing));
     QCOMPARE(Okular::Settings::viewMode(), int(Okular::Settings::EnumViewMode::Facing));
     otherFacingAction->trigger();
     QVERIFY(otherFacingAction->isChecked());
@@ -712,6 +740,36 @@ void MainShellTest::testSharedViewerSettingsAcrossWindows()
     QVERIFY(rtlAction && otherRtlAction);
     rtlAction->trigger();
     QTRY_COMPARE(otherRtlAction->isChecked(), rtlAction->isChecked());
+}
+
+void MainShellTest::testSavedViewModeDoesNotChangeOtherWindow()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"));
+    const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    first->openUrl(firstUrl);
+    second->openUrl(secondUrl);
+    auto *firstPart = qobject_cast<Okular::Part *>(first->m_tabs.first().part);
+    auto *secondPart = qobject_cast<Okular::Part *>(second->m_tabs.first().part);
+    QVERIFY(firstPart && secondPart);
+    QAction *facing = firstPart->actionCollection()->action(QStringLiteral("view_render_mode_facing"));
+    QAction *single = secondPart->actionCollection()->action(QStringLiteral("view_render_mode_single"));
+    QVERIFY(facing && single);
+    facing->trigger();
+    single->trigger();
+    QCOMPARE(Okular::Settings::viewMode(), int(Okular::Settings::EnumViewMode::Single));
+    QVERIFY(firstPart->closeUrl());
+    firstPart->openDocument(firstUrl.toLocalFile());
+    QVERIFY(partDocument(firstPart)->isOpened());
+    QVERIFY(facing->isChecked());
+    QCOMPARE(Okular::Settings::viewMode(), int(Okular::Settings::EnumViewMode::Single));
+    QVERIFY(single->isChecked());
 }
 
 void MainShellTest::testSharedReviewAndLayerSettingsAcrossWindows()

@@ -489,6 +489,7 @@ Part::Part(QObject *parent, const QVariantList &args)
     rightLayout->addWidget(m_signatureInProgressMessage);
 #endif
     m_pageView = new PageView(rightContainer, m_document);
+    m_thumbnailList->setPageView(m_pageView);
     rightContainer->setFocusProxy(m_pageView);
     QMetaObject::invokeMethod(m_pageView, "setFocus", Qt::QueuedConnection); // usability setting
     //    m_splitter->setFocusProxy(m_pageView);

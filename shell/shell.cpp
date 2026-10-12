@@ -377,6 +377,12 @@ struct SavedWindowSession {
     QString activeUrl;
     bool intentionalSeparateWindow = false;
     QByteArray geometry;
+    bool hasUiState = false;
+    bool fullScreen = false;
+    bool sidebarVisible = true;
+    bool sidebarLocked = true;
+    bool menuBarWasShown = true;
+    bool toolBarWasShown = true;
 };
 
 static QHash<QString, SavedWindowSession> s_startupWindowSessions;
@@ -392,6 +398,12 @@ static SavedWindowSession readWindowSession(const KConfigGroup &group)
     session.activeUrl = group.readPathEntry(SESSION_ACTIVE_URL_KEY, QString());
     session.intentionalSeparateWindow = group.readEntry("IntentionalSeparateWindow", false);
     session.geometry = group.readEntry("WindowGeometry", QByteArray());
+    session.hasUiState = group.readEntry("WindowUiStateVersion", 0) == 1;
+    session.fullScreen = group.readEntry("WindowFullScreen", false);
+    session.sidebarVisible = group.readEntry("WindowSidebarVisible", true);
+    session.sidebarLocked = group.readEntry("WindowSidebarLocked", true);
+    session.menuBarWasShown = group.readEntry("WindowMenuBarWasShown", true);
+    session.toolBarWasShown = group.readEntry("WindowToolBarWasShown", true);
     return session;
 }
 
@@ -1535,18 +1547,38 @@ void Shell::readSettings()
 
     const KConfigGroup group = KSharedConfig::openConfig()->group(DesktopEntryGroupKey());
     bool fullScreen = group.readEntry("FullScreen", false);
+#if defined(Q_OS_WIN)
+    const SavedWindowSession saved = s_startupWindowSessions.value(m_sessionWindowId);
+    if (saved.hasUiState) {
+        fullScreen = saved.fullScreen;
+    }
+#endif
     setFullScreen(fullScreen);
 
     if (fullScreen) {
         m_menuBarWasShown = group.readEntry(shouldShowMenuBarComingFromFullScreen, true);
         m_toolBarWasShown = group.readEntry(shouldShowToolBarComingFromFullScreen, true);
+#if defined(Q_OS_WIN)
+        if (saved.hasUiState) {
+            m_menuBarWasShown = saved.menuBarWasShown;
+            m_toolBarWasShown = saved.toolBarWasShown;
+        }
+#endif
     }
 
     const KConfigGroup sidebarGroup = KSharedConfig::openConfig()->group(GeneralGroupKey());
-    m_sidebar->setVisible(sidebarGroup.readEntry(SIDEBAR_VISIBLE_KEY, true));
-    m_sidebar->setLocked(sidebarGroup.readEntry(SIDEBAR_LOCKED_KEY, true));
+    bool sidebarVisible = sidebarGroup.readEntry(SIDEBAR_VISIBLE_KEY, true);
+    bool sidebarLocked = sidebarGroup.readEntry(SIDEBAR_LOCKED_KEY, true);
+#if defined(Q_OS_WIN)
+    if (saved.hasUiState) {
+        sidebarVisible = saved.sidebarVisible;
+        sidebarLocked = saved.sidebarLocked;
+    }
+#endif
+    m_sidebar->setVisible(sidebarVisible);
+    m_sidebar->setLocked(sidebarLocked);
 
-    m_showSidebarAction->setChecked(m_sidebar->isVisibleTo(this));
+    m_showSidebarAction->setChecked(sidebarVisible);
     m_lockSidebarAction->setChecked(m_sidebar->isLocked());
 }
 
@@ -1559,6 +1591,13 @@ void Shell::writeSettings()
         return;
     }
 #endif
+#if defined(Q_OS_WIN)
+    // Per-window chrome is stored with each window's session. Only the
+    // initial window supplies defaults for newly created windows.
+    if (m_sessionWindowOrder != 1) {
+        return;
+    }
+#endif
 
     KConfigGroup sidebarGroup = KSharedConfig::openConfig()->group(GeneralGroupKey());
     sidebarGroup.writeEntry(SIDEBAR_LOCKED_KEY, m_sidebar->isLocked());
@@ -1567,8 +1606,8 @@ void Shell::writeSettings()
     sidebarGroup.writeEntry(SIDEBAR_VISIBLE_KEY, m_sidebar->isVisibleTo(this) || m_showSidebarAction->isChecked());
 
     KConfigGroup group = KSharedConfig::openConfig()->group(DesktopEntryGroupKey());
-    group.writeEntry("FullScreen", m_fullScreenAction->isChecked());
-    if (m_fullScreenAction->isChecked()) {
+    group.writeEntry("FullScreen", isFullScreen());
+    if (isFullScreen()) {
         group.writeEntry(shouldShowMenuBarComingFromFullScreen, m_menuBarWasShown);
         group.writeEntry(shouldShowToolBarComingFromFullScreen, m_toolBarWasShown);
     }
@@ -1940,6 +1979,12 @@ void Shell::saveOpenDocumentSession()
         window->writeOpenDocumentSession(windowGroup);
         windowGroup.deleteEntry("ClosedAt");
         windowGroup.writeEntry("IntentionalSeparateWindow", window->m_intentionalSeparateWindow);
+        windowGroup.writeEntry("WindowUiStateVersion", 1);
+        windowGroup.writeEntry("WindowFullScreen", window->isFullScreen());
+        windowGroup.writeEntry("WindowSidebarVisible", window->m_showSidebarAction->isChecked());
+        windowGroup.writeEntry("WindowSidebarLocked", window->m_sidebar->isLocked());
+        windowGroup.writeEntry("WindowMenuBarWasShown", window->m_menuBarWasShown);
+        windowGroup.writeEntry("WindowToolBarWasShown", window->m_toolBarWasShown);
         if (window->m_intentionalSeparateWindow) {
             windowGroup.writeEntry("WindowGeometry", window->saveGeometry());
         }

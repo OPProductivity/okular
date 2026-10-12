@@ -92,6 +92,7 @@ public:
 
     // misc methods (from RMB menu/children)
     bool canFitPageWidth() const;
+    int currentViewMode() const;
     void fitPageWidth(int page);
     // keep in sync with pageviewutils
     void displayMessage(const QString &message, const QString &details = QString(), PageViewMessage::Icon icon = PageViewMessage::Info, int duration = -1);
