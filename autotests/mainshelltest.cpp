@@ -168,6 +168,7 @@ private Q_SLOTS:
     void testColorSchemeMenuTracksOtherWindow();
     void testSharedViewerSettingsAcrossWindows();
     void testSavedViewModeDoesNotChangeOtherWindow();
+    void testClosingTabsKeepsSinglePageCentered();
     void testSharedReviewAndLayerSettingsAcrossWindows();
     void testRecentlyClosedWindowRestoresRemainingTabs();
     void testCloseAllHiddenWindowsRestoresThreeSessions();
@@ -770,6 +771,60 @@ void MainShellTest::testSavedViewModeDoesNotChangeOtherWindow()
     QVERIFY(facing->isChecked());
     QCOMPARE(Okular::Settings::viewMode(), int(Okular::Settings::EnumViewMode::Single));
     QVERIFY(single->isChecked());
+}
+
+void MainShellTest::testClosingTabsKeepsSinglePageCentered()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->show();
+    shell->resize(800, 700);
+    QCoreApplication::processEvents();
+    const QStringList files = {QStringLiteral(KDESRCDIR "data/file1.pdf"), QStringLiteral(KDESRCDIR "data/file2.pdf"), QStringLiteral(KDESRCDIR "data/simple-multipage.pdf")};
+    for (const QString &file : files) {
+        shell->openUrl(QUrl::fromLocalFile(file));
+        auto *part = qobject_cast<Okular::Part *>(shell->m_tabs.at(shell->m_tabWidget->currentIndex()).part);
+        pageView(part)->setCapability(Okular::View::ViewModeModality, int(Okular::Settings::EnumViewMode::Single));
+        pageView(part)->setCapability(Okular::View::Zoom, 1.0);
+    }
+    shell->m_sidebar->hide();
+    shell->showMaximized();
+    QCoreApplication::processEvents();
+    shell->closeUrl();
+    QCOMPARE(shell->m_tabs.size(), 2);
+    auto *nextPart = qobject_cast<Okular::Part *>(shell->m_tabs.at(shell->m_tabWidget->currentIndex()).part);
+    auto *view = pageView(nextPart);
+    const QImage firstFrame = view->viewport()->grab().toImage();
+    auto *resizeTimer = view->findChild<QTimer *>(QStringLiteral("delayResizeEventTimer"));
+    QVERIFY(resizeTimer);
+    QVERIFY(!resizeTimer->isActive()); // the revealed page was laid out before its first paint
+    if (firstFrame.width() >= 1500) {
+        const int y = firstFrame.height() / 2;
+        int left = -1;
+        int right = -1;
+        for (int x = 0; x < firstFrame.width(); ++x) {
+            const QColor color = firstFrame.pixelColor(x, y);
+            if (color.red() > 245 && color.green() > 245 && color.blue() > 245) {
+                if (left < 0) {
+                    left = x;
+                }
+                right = x;
+            }
+        }
+        QVERIFY(left > 0);
+        QVERIFY(right < firstFrame.width() - 1);
+        QVERIFY(qAbs((left + right) / 2 - firstFrame.width() / 2) < 16);
+    }
+    shell->closeUrl();
+    QCOMPARE(shell->m_tabs.size(), 1);
+    nextPart = qobject_cast<Okular::Part *>(shell->m_tabs.at(shell->m_tabWidget->currentIndex()).part);
+    view = pageView(nextPart);
+    view->viewport()->grab();
+    resizeTimer = view->findChild<QTimer *>(QStringLiteral("delayResizeEventTimer"));
+    QVERIFY(resizeTimer);
+    QVERIFY(!resizeTimer->isActive());
 }
 
 void MainShellTest::testSharedReviewAndLayerSettingsAcrossWindows()

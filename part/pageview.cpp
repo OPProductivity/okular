@@ -224,6 +224,7 @@ public:
     // infinite resizing loop prevention
     bool verticalScrollBarVisible = false;
     bool horizontalScrollBarVisible = false;
+    bool relayoutWhenShown = false;
 
     // drag scroll
     QPoint dragScrollVector;
@@ -1772,6 +1773,11 @@ void PageView::setCapability(ViewCapability capability, const QVariant &option)
 // BEGIN widget events
 bool PageView::event(QEvent *event)
 {
+    if (event->type() == QEvent::Show) {
+        // A background tab may still have page geometry from a different
+        // window size. Refresh it before the first visible paint.
+        d->relayoutWhenShown = true;
+    }
     if (event->type() == QEvent::Gesture) {
         return gestureEvent(static_cast<QGestureEvent *>(event));
     } else if (event->type() == QEvent::NativeGesture) {
@@ -1858,6 +1864,12 @@ bool PageView::nativeGestureEvent(QNativeGestureEvent *event)
 
 void PageView::paintEvent(QPaintEvent *pe)
 {
+    if (d->relayoutWhenShown) {
+        d->relayoutWhenShown = false;
+        if (d->delayResizeEventTimer->isActive()) {
+            delayedResizeEvent();
+        }
+    }
     const QPoint areaPos = contentAreaPosition();
     // create the rect into contents from the clipped screen rect
     QRect viewportRect = viewport()->rect();
