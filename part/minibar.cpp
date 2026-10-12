@@ -343,17 +343,35 @@ void PageLabelEdit::pageChosen()
 
 /** PageNumberEdit **/
 
+class PageNumberValidator final : public QIntValidator
+{
+public:
+    using QIntValidator::QIntValidator;
+
+    State validate(QString &input, int &pos) const override
+    {
+        // QIntValidator treats a leading zero as intermediate, allowing an
+        // arbitrary run of zeros in a page number field.
+        if (!input.isEmpty() && input.at(0).digitValue() == 0) {
+            return Invalid;
+        }
+        return QIntValidator::validate(input, pos);
+    }
+};
+
 PageNumberEdit::PageNumberEdit(MiniBar *miniBar)
     : PagesEdit(miniBar)
 {
     // use an integer validator
-    m_validator = new QIntValidator(1, 1, this);
+    m_validator = new PageNumberValidator(1, 1, this);
     setValidator(m_validator);
+    setMaxLength(1);
 }
 
 void PageNumberEdit::setPagesNumber(int pages)
 {
     m_validator->setTop(pages);
+    setMaxLength(QString::number(qMax(1, pages)).size());
 }
 
 /** PagesEdit **/

@@ -34,6 +34,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QItemSelectionModel>
+#include <QLineEdit>
 #include <QListView>
 #include <QMenu>
 #include <QMenuBar>
@@ -730,6 +731,17 @@ void MainShellTest::testPageNumberControlWidthStaysStable()
     const int multipageWidth = pageControlWidth(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"));
     QCOMPARE(multipageWidth, singlePageWidth);
     QVERIFY(singlePageWidth < shell->fontMetrics().horizontalAdvance(QStringLiteral("8888888")) + 14);
+
+    QWidget *bar = shell->m_tabs.at(shell->m_tabWidget->currentIndex()).part->widget()->findChild<QWidget *>(QStringLiteral("miniBar"));
+    QVERIFY(bar);
+    QLineEdit *edit = bar->findChild<QLineEdit *>(QStringLiteral("pageNumberEdit"));
+    QVERIFY(edit);
+    QCOMPARE(edit->maxLength(), 2); // simple-multipage.pdf has 40 pages
+    edit->clear();
+    QTest::keyClicks(edit, QStringLiteral("000000"));
+    QCOMPARE(edit->text(), QString());
+    QTest::keyClicks(edit, QStringLiteral("200000"));
+    QCOMPARE(edit->text(), QStringLiteral("20"));
 }
 
 void MainShellTest::testTabWidthsStayStableAcrossSelection()
