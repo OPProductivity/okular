@@ -204,6 +204,8 @@ private:
     void scheduleOpenTabButtonGeometryUpdate();
     void updateOpenTabButtonGeometry();
 #if defined(Q_OS_WIN)
+    void updateTabPalette();
+    void showAlreadyOpenNotice(int tab);
     void startWindowsTabOpenServer();
     void mergeWindowSessionsWrittenByPreviousOwner();
     void handleWindowsTabOpenConnection();

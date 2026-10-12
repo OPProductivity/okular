@@ -15,6 +15,7 @@
 #include <QUrl>
 
 class KRecentFilesAction;
+class KConfigGroup;
 class QListWidgetItem;
 class RecentItemsModel;
 class RecentsListItemDelegate;
@@ -26,7 +27,7 @@ public:
     explicit WelcomeScreen(QWidget *parent = nullptr);
     ~WelcomeScreen() override;
 
-    void loadRecents();
+    void loadRecents(const KConfigGroup &group);
     void setMaxRecentItems(const int maxItems);
     QList<QUrl> recentUrlsForContextMenu(const QModelIndex &clickedIndex);
 

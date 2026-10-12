@@ -648,11 +648,13 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_tabWidget->setElideMode(Qt::ElideRight);
         m_tabWidget->tabBar()->setExpanding(false);
         m_tabWidget->tabBar()->setUsesScrollButtons(true);
+#if !defined(Q_OS_WIN)
         m_tabWidget->tabBar()->setStyleSheet(QStringLiteral("QTabBar::tab { min-width: 128px; max-width: 260px; }"
                                                              "QTabBar QToolButton { background: palette(window); border: 1px solid transparent; border-radius: 2px; padding: 0px; margin: 0px; }"
                                                              "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: #3daee9; border: 1px solid #3daee9; }"
                                                              "QTabBar QToolButton:pressed { color: #3daee9; border: 1px solid #3daee9; background-color: rgba(61, 174, 233, 35); }"));
         m_tabWidget->setStyleSheet(QStringLiteral("QTabWidget::right-corner { background: palette(window); border: 0px; }"));
+#endif
         auto *const tabBarStyle = new ThreeButtonTabBarStyle;
         tabBarStyle->setParent(m_tabWidget->tabBar());
         m_tabWidget->tabBar()->setStyle(tabBarStyle);
@@ -698,6 +700,10 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         tabCornerLayout->addWidget(m_openTabButton);
         tabCornerWidget->setFixedWidth(m_openTabButton->width() + openButtonGap + 1);
         m_tabWidget->setCornerWidget(tabCornerWidget, Qt::TopRightCorner);
+#if defined(Q_OS_WIN)
+        qApp->installEventFilter(this);
+        updateTabPalette();
+#endif
 
         m_tabWidget->setAcceptDrops(true);
         m_centralStackedWidget->installEventFilter(this);
@@ -816,6 +822,45 @@ void Shell::reloadAllXML()
     }
 }
 
+#if defined(Q_OS_WIN)
+void Shell::updateTabPalette()
+{
+    if (!m_tabWidget) {
+        return;
+    }
+
+    // Style-sheet palette() colors are resolved when the sheet is polished.
+    // Rebuild the tab strip from the current application palette whenever the
+    // Settings > Color Scheme action changes it.
+    const QPalette palette = qApp->palette();
+    const QString window = palette.color(QPalette::Window).name();
+    const QString button = palette.color(QPalette::Button).name();
+    const QString base = palette.color(QPalette::Base).name();
+    const QString text = palette.color(QPalette::WindowText).name();
+    const QString accent = palette.color(QPalette::Highlight).name();
+    QString tabStyle = QStringLiteral("QTabBar { background-color: %1; }"
+                                      "QTabBar::tab { min-width: 128px; max-width: 260px; min-height: 25px; }"
+                                      "QTabBar::tab:selected { border-top: 2px solid %3; }"
+                                      "QTabBar QToolButton { background: %1; border: 1px solid transparent; border-radius: 2px; padding: 0px; margin: 0px; }"
+                                      "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: %3; border: 1px solid %3; }"
+                                      "QTabBar QToolButton:pressed { color: %3; border: 1px solid %3; background-color: %2; }")
+                            .arg(window, button, accent);
+    if (palette.color(QPalette::Window).lightness() < 128) {
+        // The Windows tab painter retains light tab surfaces after a live
+        // palette switch, so specify both tab states in dark schemes.
+        tabStyle += QStringLiteral("QTabBar::tab { background-color: %1; color: %2; }"
+                                   "QTabBar::tab:selected { background-color: %3; }")
+                        .arg(button, text, base);
+    }
+    m_tabWidget->tabBar()->setStyleSheet(tabStyle);
+    m_tabWidget->setStyleSheet(QStringLiteral("QTabWidget::right-corner { background: %1; border: 0px; }").arg(window));
+    if (QWidget *corner = m_tabWidget->cornerWidget(Qt::TopRightCorner)) {
+        corner->setPalette(palette);
+        corner->setAutoFillBackground(true);
+    }
+}
+#endif
+
 void Shell::keyPressEvent(QKeyEvent *e)
 {
     if (e->key() == Qt::Key_Escape && window()->isFullScreen()) {
@@ -825,6 +870,11 @@ void Shell::keyPressEvent(QKeyEvent *e)
 
 bool Shell::eventFilter(QObject *obj, QEvent *event)
 {
+#if defined(Q_OS_WIN)
+    if (obj == qApp && event->type() == QEvent::ApplicationPaletteChange) {
+        updateTabPalette();
+    }
+#endif
 #if defined(Q_OS_WIN)
     if (m_tabWidget && obj == m_tabWidget->tabBar()) {
         QTabBar *bar = m_tabWidget->tabBar();
@@ -991,6 +1041,22 @@ bool Shell::openDocumentInTab(const QUrl &url, const QString &serializedOptions)
     if (m_tabs.isEmpty()) {
         return false;
     }
+
+#if defined(Q_OS_WIN)
+    // The file dialog normally opens in this window, but a document already
+    // open in another ordinary window should use the same focus-and-notify
+    // behavior as an Explorer open. An explicit New Window remains separate.
+    if (!m_unique && !m_intentionalSeparateWindow && !m_restoringOpenDocumentSession && !s_windowsSessionRestoreInProgress && findTabIndex(url) < 0) {
+        if (Shell *other = otherWindowWithUrl(url)) {
+            const int otherTab = other->findTabIndex(url);
+            other->setActiveTab(otherTab);
+            other->raisePrivateWindowsShell();
+            other->showAlreadyOpenNotice(otherTab);
+            other->addRecentUrl(url);
+            return true;
+        }
+    }
+#endif
 
     if (m_tabs[m_tabWidget->currentIndex()].part->url().isEmpty()) {
         openUrl(url, serializedOptions);
@@ -1344,6 +1410,7 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
         const int existingTab = findTabIndex(url);
         if (existingTab >= 0) {
             setActiveTab(existingTab);
+            showAlreadyOpenNotice(existingTab);
             addRecentUrl(url);
             return;
         }
@@ -1352,10 +1419,12 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
         // display another view of the same document.
         if (!m_intentionalSeparateWindow && !m_restoringOpenDocumentSession) {
             if (Shell *other = otherWindowWithUrl(url)) {
-                other->setActiveTab(other->findTabIndex(url));
+                const int otherTab = other->findTabIndex(url);
+                other->setActiveTab(otherTab);
                 if (!s_windowsSessionRestoreInProgress) {
                     other->raisePrivateWindowsShell();
                 }
+                other->showAlreadyOpenNotice(otherTab);
                 other->addRecentUrl(url);
                 return;
             }
@@ -1408,6 +1477,9 @@ void Shell::openUrl(const QUrl &url, const QString &serializedOptions)
 void Shell::openRecentDocuments(const QList<QUrl> &urls)
 {
     int mostRecentTab = -1;
+#if defined(Q_OS_WIN)
+    const bool singleDocument = urls.size() == 1;
+#endif
     for (const QUrl &url : urls) {
         if (!url.isValid() || url.isEmpty() || (url.isLocalFile() && !QFile::exists(url.toLocalFile()))) {
             continue;
@@ -1417,7 +1489,12 @@ void Shell::openRecentDocuments(const QList<QUrl> &urls)
         if (tab < 0) {
 #if defined(Q_OS_WIN)
             if (Shell *other = otherWindowWithUrl(url)) {
-                other->setActiveTab(other->findTabIndex(url));
+                const int otherTab = other->findTabIndex(url);
+                other->setActiveTab(otherTab);
+                if (singleDocument) {
+                    other->raisePrivateWindowsShell();
+                    other->showAlreadyOpenNotice(otherTab);
+                }
                 other->addRecentUrl(url);
                 continue;
             }
@@ -1432,6 +1509,11 @@ void Shell::openRecentDocuments(const QList<QUrl> &urls)
         if (tab >= 0) {
             if (alreadyOpen) {
                 addRecentUrl(url);
+#if defined(Q_OS_WIN)
+                if (singleDocument) {
+                    showAlreadyOpenNotice(tab);
+                }
+#endif
             }
             mostRecentTab = tab;
         }
@@ -1627,7 +1709,7 @@ void Shell::saveRecents()
         if (other && other != this && other->m_recent) {
             other->m_recent->loadEntries(config->group(RecentFilesGroupKey()));
             if (other->m_centralStackedWidget->currentWidget() == other->m_welcomeScreen) {
-                other->m_welcomeScreen->loadRecents();
+                other->m_welcomeScreen->loadRecents(config->group(RecentFilesGroupKey()));
             }
         }
     }
@@ -2804,6 +2886,9 @@ void Shell::openNewTab(const QUrl &url, const QString &serializedOptions)
 
         if (tabIndex >= 0) {
             setActiveTab(tabIndex);
+#if defined(Q_OS_WIN)
+            showAlreadyOpenNotice(tabIndex);
+#endif
             addRecentUrl(url);
             return;
         }
@@ -2984,6 +3069,15 @@ int Shell::findTabIndex(const QUrl &url) const
 }
 
 #if defined(Q_OS_WIN)
+void Shell::showAlreadyOpenNotice(int tab)
+{
+    if (m_restoringOpenDocumentSession || s_windowsSessionRestoreInProgress || tab < 0 || tab >= m_tabs.size()) {
+        return;
+    }
+    QMetaObject::invokeMethod(m_tabs.at(tab).part, "noticeMessage", Qt::DirectConnection,
+                              Q_ARG(QString, i18n("This file is already open in Okular.")), Q_ARG(int, 4500));
+}
+
 Shell *Shell::otherWindowWithUrl(const QUrl &url) const
 {
     for (QWidget *widget : QApplication::topLevelWidgets()) {
@@ -3197,7 +3291,7 @@ void Shell::showWelcomeScreen()
 void Shell::refreshRecentsOnWelcomeScreen()
 {
     saveRecents();
-    m_welcomeScreen->loadRecents();
+    m_welcomeScreen->loadRecents(ShellSessionConfig()->group(RecentFilesGroupKey()));
 }
 
 void Shell::forgetRecentItems(const QList<QUrl> &urls)
@@ -3228,7 +3322,7 @@ void Shell::readRecentFilesSettings()
     int maxRecentItems = confgrp.readEntry<int>("MaxRecentItems", defaultMaxRecentItems);
     m_recent->setMaxItems(std::clamp(maxRecentItems, 0, MAX_RECENT_FILES));
     m_welcomeScreen->setMaxRecentItems(m_recent->maxItems());
-    m_welcomeScreen->loadRecents();
+    m_welcomeScreen->loadRecents(ShellSessionConfig()->group(RecentFilesGroupKey()));
     m_recent->loadEntries(ShellSessionConfig()->group(RecentFilesGroupKey()));
     pruneRecentFiles();
 }

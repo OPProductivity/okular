@@ -10,7 +10,6 @@
 #include <KIO/OpenFileManagerWindowJob>
 #include <KIconLoader>
 #include <KMessageBox>
-#include <KSharedConfig>
 
 #include <QAction>
 #include <QClipboard>
@@ -191,10 +190,10 @@ void WelcomeScreen::showEvent(QShowEvent *e)
     QWidget::showEvent(e);
 }
 
-void WelcomeScreen::loadRecents()
+void WelcomeScreen::loadRecents(const KConfigGroup &group)
 {
     recentsListView->clearSelection();
-    m_recentsModel->loadEntries(KSharedConfig::openConfig()->group(QStringLiteral("Recent Files")));
+    m_recentsModel->loadEntries(group);
 }
 
 void WelcomeScreen::setMaxRecentItems(const int maxItems)

@@ -166,6 +166,8 @@ private Q_SLOTS:
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
     void testSeparateWindowSessionsRestore();
     void testColorSchemeMenuTracksOtherWindow();
+    void testTabPaletteTracksColorScheme();
+    void testDuplicateOpenShowsPageNotice();
     void testSharedViewerSettingsAcrossWindows();
     void testSavedViewModeDoesNotChangeOtherWindow();
     void testClosingTabsKeepsSinglePageCentered();
@@ -268,6 +270,23 @@ static QByteArray tabOpenRequest(quint32 magic, const QString &options, const QS
 }
 #endif
 
+static KSharedConfigPtr testShellSessionConfig()
+{
+#if defined(Q_OS_WIN)
+    const QString testInstance = qEnvironmentVariable("OKULAR_TEST_INSTANCE");
+    if (!testInstance.isEmpty()) {
+        const QString testDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/test-sessions");
+        const QString instanceHash = QString::fromLatin1(QCryptographicHash::hash(testInstance.toUtf8(), QCryptographicHash::Sha256).toHex());
+        const QString role = ShellUtils::windowsProcessIsElevated() ? QStringLiteral("elevated") : QStringLiteral("standard");
+        return KSharedConfig::openConfig(testDirectory + QStringLiteral("/okular-%1-%2.ini").arg(role, instanceHash));
+    }
+    if (ShellUtils::windowsProcessIsElevated()) {
+        return KSharedConfig::openConfig(QStringLiteral("okular-elevated-sessionrc"));
+    }
+#endif
+    return KSharedConfig::openConfig();
+}
+
 void MainShellTest::initTestCase()
 {
     QStandardPaths::setTestModeEnabled(true);
@@ -299,7 +318,7 @@ void MainShellTest::init()
     KSharedConfigPtr partConfig = KSharedConfig::openConfig(partConfigPath);
     partConfig->group(QStringLiteral("General")).writeEntry("ShellRestoreOpenDocuments", true);
     partConfig->sync();
-    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KSharedConfigPtr config = testShellSessionConfig();
     config->group(QStringLiteral("Shell Open Documents Session")).deleteGroup();
 #if defined(Q_OS_WIN)
     const KConfigGroup windows = config->group(QStringLiteral("Shell Open Documents Session Windows"));
@@ -588,7 +607,7 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     QVERIFY(second->isFullScreen());
     second->saveOpenDocumentSession();
 
-    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KSharedConfigPtr config = testShellSessionConfig();
     const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
     QCOMPARE(ids.size(), 2);
     QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(0)).readPathEntry("Urls", QStringList()).size(), 1);
@@ -684,6 +703,113 @@ void MainShellTest::testColorSchemeMenuTracksOtherWindow()
     QVERIFY(expectMenuSelection(firstMenu, secondName));
     QVERIFY(expectMenuSelection(thirdMenu, secondName));
 }
+
+#if defined(Q_OS_WIN)
+void MainShellTest::testTabPaletteTracksColorScheme()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    QCoreApplication::processEvents();
+    QTabBar *bar = shell->m_tabWidget->tabBar();
+    QCOMPARE(bar->count(), 1);
+    QCOMPARE(bar->currentIndex(), 0);
+    const QPalette original = qApp->palette();
+    const auto restorePalette = qScopeGuard([&]() { qApp->setPalette(original); });
+    const auto selectedTabHasAccent = [bar](const QColor &accent) {
+        const QImage pixels = bar->grab().toImage();
+        const QRect tab = bar->tabRect(bar->currentIndex());
+        for (int y = tab.top(); y < qMin(tab.top() + 4, pixels.height()); ++y) {
+            for (int x = tab.left() + 8; x < qMin(tab.right() - 8, pixels.width()); ++x) {
+                const QColor pixel = pixels.pixelColor(x, y);
+                if (qAbs(pixel.red() - accent.red()) <= 8 && qAbs(pixel.green() - accent.green()) <= 8 && qAbs(pixel.blue() - accent.blue()) <= 8) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    QPalette dark = original;
+    dark.setColor(QPalette::Window, QColor(24, 27, 30));
+    dark.setColor(QPalette::Button, QColor(34, 37, 41));
+    dark.setColor(QPalette::Base, QColor(42, 42, 42));
+    dark.setColor(QPalette::WindowText, QColor(220, 224, 228));
+    dark.setColor(QPalette::Highlight, QColor(90, 160, 210));
+    qApp->setPalette(dark);
+    QCoreApplication::processEvents();
+    QVERIFY(shell->m_tabWidget->tabBar()->styleSheet().contains(QStringLiteral("background-color: #222529")));
+    QVERIFY(shell->m_tabWidget->tabBar()->styleSheet().contains(QStringLiteral("color: #dce0e4")));
+    QVERIFY(shell->m_tabWidget->styleSheet().contains(QStringLiteral("background: #181b1e")));
+    QCOMPARE(shell->m_tabWidget->cornerWidget(Qt::TopRightCorner)->palette().color(QPalette::Window), QColor(24, 27, 30));
+    QVERIFY(selectedTabHasAccent(QColor(90, 160, 210)));
+    QVERIFY(shell->m_tabWidget->cornerWidget(Qt::TopRightCorner)->rect().contains(shell->m_openTabButton->geometry()));
+    shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    QCOMPARE(bar->count(), 2);
+    QVERIFY(shell->closeTab(1));
+    QCoreApplication::processEvents();
+    QCOMPARE(bar->count(), 1);
+    QCOMPARE(bar->currentIndex(), 0);
+    QVERIFY(selectedTabHasAccent(QColor(90, 160, 210)));
+
+    QPalette light = original;
+    light.setColor(QPalette::Window, QColor(235, 239, 242));
+    light.setColor(QPalette::Highlight, QColor(68, 150, 195));
+    qApp->setPalette(light);
+    QCoreApplication::processEvents();
+    QVERIFY(shell->m_tabWidget->styleSheet().contains(QStringLiteral("background: #ebeff2")));
+    QVERIFY(!shell->m_tabWidget->tabBar()->styleSheet().contains(QStringLiteral("background-color: #222529")));
+    QVERIFY(selectedTabHasAccent(QColor(68, 150, 195)));
+    QVERIFY(shell->m_tabWidget->cornerWidget(Qt::TopRightCorner)->rect().contains(shell->m_openTabButton->geometry()));
+
+}
+
+void MainShellTest::testDuplicateOpenShowsPageNotice()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QUrl url = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    shell->openUrl(url);
+    QWidget *notice = shell->m_tabs.first().part->widget()->findChild<QWidget *>(QStringLiteral("pageViewMessage"));
+    QVERIFY(notice);
+    const bool oldShowOSD = Okular::Settings::showOSD();
+    const auto restoreSetting = qScopeGuard([&]() { Okular::Settings::self()->setShowOSD(oldShowOSD); });
+    Okular::Settings::self()->setShowOSD(true);
+
+    notice->hide();
+    shell->openDocumentInTab(url, QString()); // File > Open and the + button
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QVERIFY(notice->isVisible());
+
+    notice->hide();
+    shell->openUrl(url); // ordinary open, including a forwarded file
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QVERIFY(notice->isVisible());
+
+    notice->hide();
+    Okular::Settings::self()->setShowOSD(false);
+    shell->openDocumentInTab(url, QString());
+    QVERIFY(!notice->isVisible());
+
+    Okular::Settings::self()->setShowOSD(true);
+    Shell *other = new Shell(options, QString(), true);
+    QVERIFY(other->isValid());
+    other->show();
+    const QUrl otherUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    other->openUrl(otherUrl);
+    QWidget *otherNotice = other->m_tabs.first().part->widget()->findChild<QWidget *>(QStringLiteral("pageViewMessage"));
+    QVERIFY(otherNotice);
+    otherNotice->hide();
+    shell->openDocumentInTab(otherUrl, QString());
+    QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(other->m_tabs.size(), 1);
+    QVERIFY(otherNotice->isVisible());
+}
+#endif
 
 void MainShellTest::testSharedViewerSettingsAcrossWindows()
 {
@@ -1768,11 +1894,25 @@ void MainShellTest::testOpenRecentFocusesDocumentInOtherWindow()
     const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
     first->openUrl(firstUrl);
     second->openUrl(secondUrl);
+    QWidget *notice = second->m_tabs.first().part->widget()->findChild<QWidget *>(QStringLiteral("pageViewMessage"));
+    QVERIFY(notice);
+    const bool oldShowOSD = Okular::Settings::showOSD();
+    const auto restoreSetting = qScopeGuard([&]() { Okular::Settings::self()->setShowOSD(oldShowOSD); });
+    Okular::Settings::self()->setShowOSD(true);
+    notice->hide();
     first->openRecentDocuments({secondUrl});
     QCOMPARE(first->m_tabs.size(), 1);
     QCOMPARE(first->m_tabs.first().part->url(), firstUrl);
     QCOMPARE(second->m_tabs.size(), 1);
     QCOMPARE(second->m_tabs.first().part->url(), secondUrl);
+    QVERIFY(notice->isVisible());
+    QTRY_VERIFY(second->isActiveWindow());
+
+    notice = first->m_tabs.first().part->widget()->findChild<QWidget *>(QStringLiteral("pageViewMessage"));
+    QVERIFY(notice);
+    notice->hide();
+    first->openRecentDocuments({firstUrl});
+    QVERIFY(notice->isVisible());
 }
 
 void MainShellTest::testDragTabOutsideWindowDetaches()
@@ -2056,7 +2196,8 @@ void MainShellTest::testRecentFilesExpireAfterThreeDays()
     shell->addRecentUrl(olderUrl);
     shell->addRecentUrl(recentUrl);
     const QByteArray oldKey = QCryptographicHash::hash(olderUrl.toString(QUrl::FullyEncoded).toUtf8(), QCryptographicHash::Sha256).toHex();
-    KSharedConfig::openConfig()->group(QStringLiteral("Recent File Open Times")).writeEntry(oldKey.constData(), QDateTime::currentSecsSinceEpoch() - 3 * 24 * 60 * 60 - 1);
+    KSharedConfigPtr recentConfig = testShellSessionConfig();
+    recentConfig->group(QStringLiteral("Recent File Open Times")).writeEntry(oldKey.constData(), QDateTime::currentSecsSinceEpoch() - 3 * 24 * 60 * 60 - 1);
     shell->refreshRecentsOnWelcomeScreen();
 
     QCOMPARE(shell->m_recent->urls(), (QList<QUrl> {recentUrl}));
@@ -2391,6 +2532,7 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *shell = findShell();
     QVERIFY(shell);
+    QTest::qWait(200); // Let the Windows startup geometry timers finish.
     shell->resize(500, 520);
 
     const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
@@ -2399,6 +2541,7 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
         QVERIFY(QFile::copy(sourcePath, path));
         shell->openUrl(QUrl::fromLocalFile(path));
     }
+    shell->resize(500, 520);
     QCoreApplication::processEvents();
     shell->updateOpenTabButtonGeometry();
     QCOMPARE(shell->m_tabWidget->currentIndex(), 8);
@@ -2460,6 +2603,7 @@ void MainShellTest::testRtlOverflowControlsStayInsideTabBar()
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *shell = findShell();
     QVERIFY(shell);
+    QTest::qWait(200); // Wait for the Windows startup geometry timers.
     shell->resize(500, 520);
 
     const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
@@ -2468,6 +2612,7 @@ void MainShellTest::testRtlOverflowControlsStayInsideTabBar()
         QVERIFY(QFile::copy(sourcePath, path));
         shell->openUrl(QUrl::fromLocalFile(path));
     }
+    shell->resize(500, 520);
     QTabBar *tabBar = shell->m_tabWidget->tabBar();
     tabBar->setLayoutDirection(Qt::RightToLeft);
     shell->setActiveTab(4);
@@ -2507,6 +2652,7 @@ void MainShellTest::testCenterButtonFramesActiveTab()
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
     Shell *shell = findShell();
     QVERIFY(shell);
+    QTest::qWait(200); // Wait for the Windows startup geometry timers.
     shell->resize(500, 520);
     const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
     for (int i = 0; i < 9; ++i) {
@@ -2514,6 +2660,7 @@ void MainShellTest::testCenterButtonFramesActiveTab()
         QVERIFY(QFile::copy(sourcePath, path));
         shell->openUrl(QUrl::fromLocalFile(path));
     }
+    shell->resize(500, 520);
     shell->setActiveTab(4);
     QCoreApplication::processEvents();
     shell->updateOpenTabButtonGeometry();
