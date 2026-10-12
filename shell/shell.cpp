@@ -838,21 +838,16 @@ void Shell::updateTabPalette()
     const QString base = palette.color(QPalette::Base).name();
     const QString text = palette.color(QPalette::WindowText).name();
     const QString accent = palette.color(QPalette::Highlight).name();
+    const QString border = palette.color(QPalette::Mid).name();
     const int tabWidth = m_tabWidget->count() < 5 ? 180 : 128;
     QString tabStyle = QStringLiteral("QTabBar { background-color: %1; }"
-                                      "QTabBar::tab { min-width: %4px; max-width: %4px; min-height: 25px; }"
-                                      "QTabBar::tab:selected { border-top: 2px solid %3; }"
+                                      "QTabBar::tab { min-width: %7px; max-width: %7px; min-height: 25px; background-color: %2; color: %4;"
+                                      " border: 1px solid %6; border-top: 2px solid transparent; margin: 0px; padding: 0px; }"
+                                      "QTabBar::tab:selected { background-color: %3; border-top: 2px solid %5; }"
                                       "QTabBar QToolButton { background: %1; border: 1px solid transparent; border-radius: 2px; padding: 0px; margin: 0px; }"
-                                      "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: %3; border: 1px solid %3; }"
-                                      "QTabBar QToolButton:pressed { color: %3; border: 1px solid %3; background-color: %2; }")
-                            .arg(window, button, accent, QString::number(tabWidth));
-    if (palette.color(QPalette::Window).lightness() < 128) {
-        // The Windows tab painter retains light tab surfaces after a live
-        // palette switch, so specify both tab states in dark schemes.
-        tabStyle += QStringLiteral("QTabBar::tab { background-color: %1; color: %2; }"
-                                   "QTabBar::tab:selected { background-color: %3; }")
-                        .arg(button, text, base);
-    }
+                                      "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: %5; border: 1px solid %5; }"
+                                      "QTabBar QToolButton:pressed { color: %5; border: 1px solid %5; background-color: %2; }")
+                            .arg(window, button, base, text, accent, border, QString::number(tabWidth));
     m_tabWidget->tabBar()->setStyleSheet(tabStyle);
     m_tabWidget->setStyleSheet(QStringLiteral("QTabWidget::right-corner { background: %1; border: 0px; }").arg(window));
     if (QWidget *corner = m_tabWidget->cornerWidget(Qt::TopRightCorner)) {

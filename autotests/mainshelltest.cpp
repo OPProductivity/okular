@@ -761,11 +761,20 @@ void MainShellTest::testTabWidthsStayStableAcrossSelection()
         QCoreApplication::processEvents();
         QCOMPARE(bar->count(), count);
         const int width = bar->tabRect(0).width();
+        QList<int> closeButtonOffsets;
         for (int selected = 0; selected < count; ++selected) {
             shell->setActiveTab(selected);
             QCoreApplication::processEvents();
             for (int tab = 0; tab < count; ++tab) {
                 QCOMPARE(bar->tabRect(tab).width(), width);
+                QWidget *closeButton = bar->tabButton(tab, QTabBar::RightSide);
+                QVERIFY(closeButton);
+                const int offset = closeButton->geometry().x() - bar->tabRect(tab).x();
+                if (selected == 0) {
+                    closeButtonOffsets.append(offset);
+                } else {
+                    QCOMPARE(offset, closeButtonOffsets.at(tab));
+                }
             }
         }
         if (count == 4) {
@@ -825,6 +834,19 @@ void MainShellTest::testTabPaletteTracksColorScheme()
     QVERIFY(shell->m_tabWidget->cornerWidget(Qt::TopRightCorner)->rect().contains(shell->m_openTabButton->geometry()));
     shell->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
     QCOMPARE(bar->count(), 2);
+    shell->setActiveTab(0);
+    QList<int> darkCloseOffsets;
+    for (int tab = 0; tab < 2; ++tab) {
+        QWidget *closeButton = bar->tabButton(tab, QTabBar::RightSide);
+        QVERIFY(closeButton);
+        darkCloseOffsets.append(closeButton->geometry().x() - bar->tabRect(tab).x());
+    }
+    shell->setActiveTab(1);
+    QCoreApplication::processEvents();
+    for (int tab = 0; tab < 2; ++tab) {
+        QCOMPARE(bar->tabButton(tab, QTabBar::RightSide)->geometry().x() - bar->tabRect(tab).x(), darkCloseOffsets.at(tab));
+    }
+    QVERIFY(selectedTabHasAccent(QColor(90, 160, 210)));
     QVERIFY(shell->closeTab(1));
     QCoreApplication::processEvents();
     QCOMPARE(bar->count(), 1);
