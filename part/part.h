@@ -438,8 +438,8 @@ private:
     QAction *m_openContainingFolder;
     KHamburgerMenu *m_hamburgerMenuAction;
     KToggleAction *m_showMenuBarAction;
-    KToggleAction *m_showLeftPanel;
-    KToggleAction *m_showBottomBar;
+    KToggleAction *m_showLeftPanel = nullptr;
+    KToggleAction *m_showBottomBar = nullptr;
     QAction *m_showSignaturePanel;
     KToggleFullScreenAction *m_showFullScreenAction;
     QAction *m_aboutBackend;

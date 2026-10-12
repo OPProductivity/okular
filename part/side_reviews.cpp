@@ -14,6 +14,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QSizePolicy>
+#include <QSignalBlocker>
 #include <QStringList>
 #include <QTextDocument>
 #include <QToolBar>
@@ -138,22 +139,28 @@ Reviews::Reviews(QWidget *parent, Okular::Document *document)
     toolBar->setMovable(false);
     // - add Page button
     QAction *groupByPageAction = toolBar->addAction(QIcon::fromTheme(QStringLiteral("text-x-generic")), i18n("Group by Page"));
+    m_groupByPageAction = groupByPageAction;
     groupByPageAction->setCheckable(true);
-    connect(groupByPageAction, &QAction::toggled, this, &Reviews::slotPageEnabled);
     groupByPageAction->setChecked(Okular::Settings::groupByPage());
+    m_groupProxy->groupByPage(groupByPageAction->isChecked());
+    connect(groupByPageAction, &QAction::toggled, this, &Reviews::slotPageEnabled);
     // - add Author button
     QAction *groupByAuthorAction = toolBar->addAction(QIcon::fromTheme(QStringLiteral("user-identity")), i18n("Group by Author"));
+    m_groupByAuthorAction = groupByAuthorAction;
     groupByAuthorAction->setCheckable(true);
-    connect(groupByAuthorAction, &QAction::toggled, this, &Reviews::slotAuthorEnabled);
     groupByAuthorAction->setChecked(Okular::Settings::groupByAuthor());
+    m_authorProxy->groupByAuthor(groupByAuthorAction->isChecked());
+    connect(groupByAuthorAction, &QAction::toggled, this, &Reviews::slotAuthorEnabled);
 
     // - add separator
     toolBar->addSeparator();
     // - add Current Page Only button
     QAction *curPageOnlyAction = toolBar->addAction(QIcon::fromTheme(QStringLiteral("arrow-down")), i18n("Show annotations for current page only"));
+    m_currentPageOnlyAction = curPageOnlyAction;
     curPageOnlyAction->setCheckable(true);
-    connect(curPageOnlyAction, &QAction::toggled, this, &Reviews::slotCurrentPageOnly);
     curPageOnlyAction->setChecked(Okular::Settings::currentPageOnly());
+    m_filterProxy->groupByCurrentPage(curPageOnlyAction->isChecked());
+    connect(curPageOnlyAction, &QAction::toggled, this, &Reviews::slotCurrentPageOnly);
 
     // Adds space between left actions, so that the next two buttons are aligned to the right
     QWidget *spacer = new QWidget();
@@ -187,8 +194,22 @@ void Reviews::notifyCurrentPageChanged(int previousPage, int currentPage)
 
 void Reviews::reparseConfig()
 {
-    m_searchLine->setCaseSensitivity(Okular::Settings::reviewsSearchCaseSensitive() ? Qt::CaseSensitive : Qt::CaseInsensitive);
-    m_searchLine->setRegularExpression(Okular::Settings::reviewsSearchRegularExpression());
+    {
+        const QSignalBlocker blocker(m_searchLine);
+        m_searchLine->setCaseSensitivity(Okular::Settings::reviewsSearchCaseSensitive() ? Qt::CaseSensitive : Qt::CaseInsensitive);
+        m_searchLine->setRegularExpression(Okular::Settings::reviewsSearchRegularExpression());
+    }
+    const auto syncAction = [this](QAction *action, bool checked, auto updateProxy) {
+        if (action->isChecked() != checked) {
+            const QSignalBlocker blocker(action);
+            action->setChecked(checked);
+            updateProxy(checked);
+            m_view->expandAll();
+        }
+    };
+    syncAction(m_groupByPageAction, Okular::Settings::groupByPage(), [this](bool on) { m_groupProxy->groupByPage(on); });
+    syncAction(m_groupByAuthorAction, Okular::Settings::groupByAuthor(), [this](bool on) { m_authorProxy->groupByAuthor(on); });
+    syncAction(m_currentPageOnlyAction, Okular::Settings::currentPageOnly(), [this](bool on) { m_filterProxy->groupByCurrentPage(on); });
     m_view->update();
 }
 
@@ -198,6 +219,7 @@ void Reviews::slotPageEnabled(bool on)
     // store toggle state in Settings and update the listview
     Okular::Settings::setGroupByPage(on);
     m_groupProxy->groupByPage(on);
+    Okular::Settings::self()->save();
 
     m_view->expandAll();
 }
@@ -207,6 +229,7 @@ void Reviews::slotAuthorEnabled(bool on)
     // store toggle state in Settings and update the listview
     Okular::Settings::setGroupByAuthor(on);
     m_authorProxy->groupByAuthor(on);
+    Okular::Settings::self()->save();
 
     m_view->expandAll();
 }
@@ -216,6 +239,7 @@ void Reviews::slotCurrentPageOnly(bool on)
     // store toggle state in Settings and update the listview
     Okular::Settings::setCurrentPageOnly(on);
     m_filterProxy->groupByCurrentPage(on);
+    Okular::Settings::self()->save();
 
     m_view->expandAll();
 }

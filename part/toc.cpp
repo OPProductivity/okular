@@ -10,6 +10,7 @@
 #include <QContextMenuEvent>
 #include <QHeaderView>
 #include <QLayout>
+#include <QSignalBlocker>
 #include <QTreeView>
 #include <qdom.h>
 
@@ -140,6 +141,7 @@ QList<QModelIndex> TOC::expandedNodes(const QModelIndex &parent) const
 
 void TOC::reparseConfig()
 {
+    const QSignalBlocker blocker(m_searchLine);
     m_searchLine->setCaseSensitivity(Okular::Settings::contentsSearchCaseSensitive() ? Qt::CaseSensitive : Qt::CaseInsensitive);
     m_searchLine->setRegularExpression(Okular::Settings::contentsSearchRegularExpression());
     m_treeView->update();

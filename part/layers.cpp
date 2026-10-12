@@ -11,6 +11,7 @@
 #include <KLocalizedString>
 #include <KTitleWidget>
 #include <QHeaderView>
+#include <QSignalBlocker>
 #include <QTreeView>
 #include <QVBoxLayout>
 
@@ -71,6 +72,13 @@ void Layers::notifySetup(const QList<Okular::Page *> & /*pages*/, int /*setupFla
 void Layers::setPageView(PageView *pageView)
 {
     m_pageView = pageView;
+}
+
+void Layers::reparseConfig()
+{
+    const QSignalBlocker blocker(m_searchLine);
+    m_searchLine->setCaseSensitivity(Okular::Settings::layersSearchCaseSensitive() ? Qt::CaseSensitive : Qt::CaseInsensitive);
+    m_searchLine->setRegularExpression(Okular::Settings::layersSearchRegularExpression());
 }
 
 void Layers::saveSearchOptions()

@@ -51,6 +51,7 @@
 #include <QPrinter>
 #include <QScopedValueRollback>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -3133,6 +3134,19 @@ void Part::slotNewConfig()
     // Watch File
     setWatchFileModeEnabled(Okular::Settings::watchFile());
 
+    // These actions belong to each Part, while their preferences are shared.
+    // Updating a second window must not save its stale check state again.
+    if (m_showLeftPanel && m_showLeftPanel->isChecked() != Okular::Settings::showLeftPanel()) {
+        const QSignalBlocker blocker(m_showLeftPanel);
+        m_showLeftPanel->setChecked(Okular::Settings::showLeftPanel());
+    }
+    m_sidebar->setSidebarVisibility(Okular::Settings::showLeftPanel());
+    if (m_showBottomBar && m_showBottomBar->isChecked() != Okular::Settings::showBottomBar()) {
+        const QSignalBlocker blocker(m_showBottomBar);
+        m_showBottomBar->setChecked(Okular::Settings::showBottomBar());
+    }
+    m_bottomBar->setVisible(Okular::Settings::showBottomBar());
+
     // Main View (pageView)
     m_pageView->reparseConfig();
 
@@ -3143,6 +3157,7 @@ void Part::slotNewConfig()
     if (m_tocEnabled) {
         m_toc->reparseConfig();
     }
+    m_layers->reparseConfig();
 
     // update ThumbnailList contents
     if (Okular::Settings::showLeftPanel() && !m_thumbnailList->isHidden()) {

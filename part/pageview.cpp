@@ -5224,9 +5224,11 @@ void PageView::slotViewMode(QAction *action)
     if ((int)Okular::Settings::viewMode() != nr) {
         Okular::Settings::setViewMode(nr);
         Okular::Settings::self()->save();
-        if (d->document->pages() > 0) {
-            slotRelayoutPages();
-        }
+    }
+    // A document can have a different saved layout from the shared default.
+    // Selecting the current default for that document still needs a relayout.
+    if (d->document->pages() > 0) {
+        slotRelayoutPages();
     }
 }
 

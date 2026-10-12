@@ -14,6 +14,7 @@
 #include "core/observer.h"
 
 class QModelIndex;
+class QAction;
 
 namespace Okular
 {
@@ -75,6 +76,9 @@ private:
     AuthorGroupProxyModel *m_authorProxy;
     PageFilterProxyModel *m_filterProxy;
     PageGroupProxyModel *m_groupProxy;
+    QAction *m_groupByPageAction;
+    QAction *m_groupByAuthorAction;
+    QAction *m_currentPageOnlyAction;
 };
 
 #endif

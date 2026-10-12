@@ -35,6 +35,7 @@ public:
     void notifySetup(const QList<Okular::Page *> &pages, int setupFlags) override;
 
     void setPageView(PageView *pageView);
+    void reparseConfig();
 
 Q_SIGNALS:
     void hasLayers(bool has);

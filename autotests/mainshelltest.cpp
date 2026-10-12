@@ -50,6 +50,7 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTimer>
+#include <QToolBar>
 #include <QToolButton>
 #include <qwidget.h>
 
@@ -57,8 +58,12 @@
 
 #include "../core/document_p.h"
 #include "../part/findbar.h"
+#include "../part/layers.h"
+#include "../part/pageview.h"
 #include "../part/part.h"
 #include "../part/presentationwidget.h"
+#include "../part/side_reviews.h"
+#include "../part/sidebar.h"
 #include "../settings.h"
 #include "../shell/okular_main.h"
 #include "../shell/shell.h"
@@ -91,6 +96,11 @@ public:
     {
         return part->m_findBar;
     }
+    Sidebar *sidebar(Okular::Part *part) const { return part->m_sidebar; }
+    QWidget *bottomBar(Okular::Part *part) const { return part->m_bottomBar; }
+    Reviews *reviews(Okular::Part *part) const { return part->m_reviewsWidget; }
+    Layers *layers(Okular::Part *part) const { return part->m_layers; }
+    PageView *pageView(Okular::Part *part) const { return part->m_pageView; }
 };
 }
 
@@ -156,6 +166,8 @@ private Q_SLOTS:
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
     void testSeparateWindowSessionsRestore();
     void testColorSchemeMenuTracksOtherWindow();
+    void testSharedViewerSettingsAcrossWindows();
+    void testSharedReviewAndLayerSettingsAcrossWindows();
     void testRecentlyClosedWindowRestoresRemainingTabs();
     void testCloseAllHiddenWindowsRestoresThreeSessions();
     void testCloseAllAfterClosingSomeTabsRestoresRemainingTabs();
@@ -259,7 +271,7 @@ void MainShellTest::initTestCase()
     QStandardPaths::setTestModeEnabled(true);
     QVERIFY(QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)));
     // Don't pollute people's okular settings
-    Okular::Settings::instance(QStringLiteral("mainshelltest"));
+    Okular::Settings::instance(QStringLiteral("mainshelltest-settingsrc"));
 
     // Register in bus as okular
 #if HAVE_DBUS
@@ -648,6 +660,102 @@ void MainShellTest::testColorSchemeMenuTracksOtherWindow()
     }
     QVERIFY(expectMenuSelection(firstMenu, secondName));
     QVERIFY(expectMenuSelection(thirdMenu, secondName));
+}
+
+void MainShellTest::testSharedViewerSettingsAcrossWindows()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    first->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")));
+    second->openUrl(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")));
+    auto *firstPart = qobject_cast<Okular::Part *>(first->m_tabs.first().part);
+    auto *secondPart = qobject_cast<Okular::Part *>(second->m_tabs.first().part);
+    QVERIFY(firstPart && secondPart);
+    QAction *sidebarAction = firstPart->actionCollection()->action(QStringLiteral("show_leftpanel"));
+    QAction *otherSidebarAction = secondPart->actionCollection()->action(QStringLiteral("show_leftpanel"));
+    QAction *bottomAction = firstPart->actionCollection()->action(QStringLiteral("show_bottombar"));
+    QAction *otherBottomAction = secondPart->actionCollection()->action(QStringLiteral("show_bottombar"));
+    QAction *facingAction = firstPart->actionCollection()->action(QStringLiteral("view_render_mode_facing"));
+    QAction *otherFacingAction = secondPart->actionCollection()->action(QStringLiteral("view_render_mode_facing"));
+    QAction *singleAction = firstPart->actionCollection()->action(QStringLiteral("view_render_mode_single"));
+    QAction *otherSingleAction = secondPart->actionCollection()->action(QStringLiteral("view_render_mode_single"));
+    QVERIFY(sidebarAction && otherSidebarAction && bottomAction && otherBottomAction && facingAction && otherFacingAction && singleAction && otherSingleAction);
+
+    sidebarAction->trigger();
+    QTRY_COMPARE(otherSidebarAction->isChecked(), sidebarAction->isChecked());
+    QCOMPARE(sidebar(secondPart)->isSidebarVisible(), sidebarAction->isChecked());
+    bottomAction->trigger();
+    QTRY_COMPARE(otherBottomAction->isChecked(), bottomAction->isChecked());
+    QCOMPARE(bottomBar(secondPart)->isVisible(), bottomAction->isChecked());
+    singleAction->trigger();
+    otherSingleAction->trigger();
+    QVERIFY(otherSingleAction->isChecked());
+    facingAction->trigger();
+    // The action is per document, while the last selected mode is the shared
+    // default. This does not by itself prove the two documents render differently.
+    QVERIFY(!otherFacingAction->isChecked());
+    QCOMPARE(Okular::Settings::viewMode(), int(Okular::Settings::EnumViewMode::Facing));
+    otherFacingAction->trigger();
+    QVERIFY(otherFacingAction->isChecked());
+
+    Okular::Settings::setShowScrollBars(false);
+    Okular::Settings::self()->save();
+    QTRY_COMPARE(pageView(firstPart)->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+    QTRY_COMPARE(pageView(secondPart)->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+    QAction *rtlAction = firstPart->actionCollection()->action(QStringLiteral("rtl_page_layout"));
+    QAction *otherRtlAction = secondPart->actionCollection()->action(QStringLiteral("rtl_page_layout"));
+    QVERIFY(rtlAction && otherRtlAction);
+    rtlAction->trigger();
+    QTRY_COMPARE(otherRtlAction->isChecked(), rtlAction->isChecked());
+}
+
+void MainShellTest::testSharedReviewAndLayerSettingsAcrossWindows()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    second->show();
+    auto *firstPart = qobject_cast<Okular::Part *>(first->m_tabs.first().part);
+    auto *secondPart = qobject_cast<Okular::Part *>(second->m_tabs.first().part);
+    QVERIFY(firstPart && secondPart);
+    QToolBar *firstBar = reviews(firstPart)->findChild<QToolBar *>(QStringLiteral("reviewOptsBar"));
+    QToolBar *secondBar = reviews(secondPart)->findChild<QToolBar *>(QStringLiteral("reviewOptsBar"));
+    QVERIFY(firstBar && secondBar);
+    const int actionIndexes[] = {0, 1, 3};
+    for (int index : actionIndexes) {
+        QAction *action = firstBar->actions().at(index);
+        QAction *otherAction = secondBar->actions().at(index);
+        action->trigger();
+        QTRY_COMPARE(otherAction->isChecked(), action->isChecked());
+    }
+    KConfigGroup navPanel = KSharedConfig::openConfig(QStringLiteral("mainshelltest-settingsrc"))->group(QStringLiteral("Nav Panel"));
+    QCOMPARE(navPanel.readEntry("GroupByPage", true), firstBar->actions().at(0)->isChecked());
+    QCOMPARE(navPanel.readEntry("GroupByAuthor", true), firstBar->actions().at(1)->isChecked());
+    QCOMPARE(navPanel.readEntry("CurrentPageOnly", false), firstBar->actions().at(3)->isChecked());
+
+    const auto layerSearch = [this](Okular::Part *part) -> QWidget * {
+        for (QWidget *widget : layers(part)->findChildren<QWidget *>()) {
+            if (widget->inherits("KTreeViewSearchLine")) {
+                return widget;
+            }
+        }
+        return nullptr;
+    };
+    QWidget *firstSearch = layerSearch(firstPart);
+    QWidget *secondSearch = layerSearch(secondPart);
+    QVERIFY(firstSearch && secondSearch);
+    QVERIFY(firstSearch->setProperty("caseSensitity", int(Qt::CaseSensitive)));
+    QTRY_COMPARE(secondSearch->property("caseSensitity").toInt(), int(Qt::CaseSensitive));
+    QVERIFY(QMetaObject::invokeMethod(firstSearch, "setRegularExpression", Q_ARG(bool, true)));
+    QTRY_VERIFY(Okular::Settings::layersSearchRegularExpression());
 }
 
 void MainShellTest::testRecentlyClosedWindowRestoresRemainingTabs()
