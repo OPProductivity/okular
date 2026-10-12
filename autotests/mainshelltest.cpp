@@ -781,12 +781,14 @@ void MainShellTest::testTabWidthsStayStableAcrossSelection()
         }
         if (count == 1) {
             roomyWidth = width;
-            QVERIFY(roomyWidth >= 220);
+            QVERIFY(roomyWidth >= 253);
         } else if (count < 5) {
             QCOMPARE(width, roomyWidth);
         } else if (count == 5) {
             compactWidth = width;
+            QVERIFY(compactWidth >= 202);
             QVERIFY(compactWidth < roomyWidth);
+            QVERIFY(compactWidth * 5 >= roomyWidth * 4);
         } else {
             QCOMPARE(width, compactWidth);
         }
