@@ -839,7 +839,7 @@ void Shell::updateTabPalette()
     const QString text = palette.color(QPalette::WindowText).name();
     const QString accent = palette.color(QPalette::Highlight).name();
     const QString border = palette.color(QPalette::Mid).name();
-    const int tabWidth = m_tabWidget->count() < 5 ? 280 : 202;
+    const int tabWidth = m_tabWidget->count() < 6 ? 280 : 230;
     QString tabStyle = QStringLiteral("QTabBar { background-color: %1; }"
                                       "QTabBar::tab { min-width: %7px; max-width: %7px; min-height: 25px; background-color: %2; color: %4;"
                                       " border: 1px solid %6; border-top: 2px solid transparent; margin: 0px; padding: 0px; }"
@@ -3193,7 +3193,7 @@ void Shell::updateOpenTabButtonGeometry()
 
     QTabBar *const tabBar = m_tabWidget->tabBar();
 #if defined(Q_OS_WIN)
-    const bool compactTabs = tabBar->count() >= 5;
+    const bool compactTabs = tabBar->count() >= 6;
     if (tabBar->property("okularCompactTabs").toBool() != compactTabs) {
         tabBar->setProperty("okularCompactTabs", compactTabs);
         updateTabPalette();
