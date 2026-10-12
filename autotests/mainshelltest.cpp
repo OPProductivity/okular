@@ -734,7 +734,7 @@ void MainShellTest::testPageNumberControlWidthStaysStable()
 
 void MainShellTest::testTabWidthsStayStableAcrossSelection()
 {
-    QTemporaryDir directory(QDir::currentPath() + QStringLiteral("/okular-tab-widths-XXXXXX"));
+    QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
@@ -767,6 +767,7 @@ void MainShellTest::testTabWidthsStayStableAcrossSelection()
     QCoreApplication::processEvents();
     QCOMPARE(bar->count(), 4);
     QVERIFY(bar->tabRect(0).width() >= 180);
+    delete shell;
 }
 
 void MainShellTest::testTabPaletteTracksColorScheme()
