@@ -10,6 +10,8 @@
 #include <QFileIconProvider>
 #include <QFileInfo>
 #include <QIcon>
+#include <QDir>
+#include <QSet>
 
 #include <KConfigGroup>
 
@@ -28,17 +30,30 @@ void RecentItemsModel::loadEntries(const KConfigGroup &cg)
 
     // Based on implementation of KRecentFilesAction::loadEntries.
 
-    // read file list
-    for (int i = 1; i <= maxItems(); i++) {
+    // Newer entries have larger numbers. Keep the newest occurrence of each
+    // document when reading config files written by older versions.
+    QSet<QString> seen;
+    for (int i = maxItems(); i >= 1; --i) {
         const QString key = QStringLiteral("File%1").arg(i);
         const QString value = cg.readPathEntry(key, QString());
         if (value.isEmpty()) {
             continue;
         }
         const QUrl url = QUrl::fromUserInput(value);
+        QString identity = url.toString(QUrl::FullyEncoded);
+        if (url.isLocalFile()) {
+            identity = QDir::cleanPath(url.toLocalFile());
+#if defined(Q_OS_WIN)
+            identity = identity.toCaseFolded();
+#endif
+        }
+        if (seen.contains(identity)) {
+            continue;
+        }
+        seen.insert(identity);
         const QString nameKey = QStringLiteral("Name%1").arg(i);
         const QString nameValue = cg.readPathEntry(nameKey, url.fileName());
-        m_recentItems.append(RecentItem {nameValue, url});
+        m_recentItems.prepend(RecentItem {nameValue, url});
     }
 
     endResetModel();

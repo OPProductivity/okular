@@ -210,6 +210,44 @@ static inline QString RecentFilesGroupKey()
 {
     return QStringLiteral("Recent Files");
 }
+static void deduplicateSavedRecentFiles(KConfigGroup group)
+{
+    struct Entry {
+        QString path;
+        QString name;
+    };
+    QList<Entry> newestFirst;
+    QSet<QString> seen;
+    int savedCount = 0;
+    for (int i = MAX_RECENT_FILES; i >= 1; --i) {
+        const QString path = group.readPathEntry(QStringLiteral("File%1").arg(i), QString());
+        if (path.isEmpty()) {
+            continue;
+        }
+        ++savedCount;
+        const QUrl url = QUrl::fromUserInput(path);
+        QString identity = url.isLocalFile() ? QDir::cleanPath(url.toLocalFile()).toCaseFolded() : url.toString(QUrl::FullyEncoded);
+        if (seen.contains(identity)) {
+            continue;
+        }
+        seen.insert(identity);
+        newestFirst.append({path, group.readPathEntry(QStringLiteral("Name%1").arg(i), QString())});
+    }
+    if (newestFirst.size() == savedCount) {
+        return;
+    }
+    for (int i = 1; i <= MAX_RECENT_FILES; ++i) {
+        group.deleteEntry(QStringLiteral("File%1").arg(i));
+        group.deleteEntry(QStringLiteral("Name%1").arg(i));
+    }
+    int slot = 1;
+    for (auto it = newestFirst.crbegin(); it != newestFirst.crend(); ++it, ++slot) {
+        group.writePathEntry(QStringLiteral("File%1").arg(slot), it->path);
+        if (!it->name.isEmpty()) {
+            group.writePathEntry(QStringLiteral("Name%1").arg(slot), it->name);
+        }
+    }
+}
 static inline QString RecentOpenTimesGroupKey()
 {
     return QStringLiteral("Recent File Open Times");
@@ -1696,7 +1734,15 @@ void Shell::saveRecents()
 {
     pruneRecentFiles();
     KSharedConfigPtr config = ShellSessionConfig();
-    m_recent->saveEntries(config->group(RecentFilesGroupKey()));
+    KConfigGroup recentFiles = config->group(RecentFilesGroupKey());
+    m_recent->saveEntries(recentFiles);
+    // KRecentFilesAction leaves numbered entries beyond the current list in
+    // the config. The welcome screen reads those entries as extra documents.
+    for (int i = m_recent->urls().size() + 1; i <= MAX_RECENT_FILES; ++i) {
+        recentFiles.deleteEntry(QStringLiteral("File%1").arg(i));
+        recentFiles.deleteEntry(QStringLiteral("Name%1").arg(i));
+    }
+    config->sync();
 #if defined(Q_OS_WIN)
     // Every Shell owns a recent-file action, but the process shares one list.
     // A later save from another window must not overwrite this change.
@@ -1718,6 +1764,11 @@ void Shell::addRecentUrl(const QUrl &url)
     for (int i = m_unrestoredSessionUrls.size() - 1; i >= 0; --i) {
         if (sameSavedDocumentUrl(m_unrestoredSessionUrls.at(i).second, url)) {
             m_unrestoredSessionUrls.removeAt(i);
+        }
+    }
+    for (const QUrl &existing : m_recent->urls()) {
+        if (sameSavedDocumentUrl(existing.toString(), url)) {
+            m_recent->removeUrl(existing);
         }
     }
 #endif
@@ -3325,9 +3376,10 @@ void Shell::readRecentFilesSettings()
     int maxRecentItems = confgrp.readEntry<int>("MaxRecentItems", defaultMaxRecentItems);
     m_recent->setMaxItems(std::clamp(maxRecentItems, 0, MAX_RECENT_FILES));
     m_welcomeScreen->setMaxRecentItems(m_recent->maxItems());
-    m_welcomeScreen->loadRecents(ShellSessionConfig()->group(RecentFilesGroupKey()));
+    deduplicateSavedRecentFiles(ShellSessionConfig()->group(RecentFilesGroupKey()));
     m_recent->loadEntries(ShellSessionConfig()->group(RecentFilesGroupKey()));
-    pruneRecentFiles();
+    saveRecents();
+    m_welcomeScreen->loadRecents(ShellSessionConfig()->group(RecentFilesGroupKey()));
 }
 
 #include "moc_shell.cpp"

@@ -97,13 +97,11 @@ void MiniBarLogic::notifySetup(const QList<Okular::Page *> &pageVector, int setu
     const QString pagesString = QString::number(pages);
 
     for (MiniBar *miniBar : std::as_const(m_miniBars)) {
-        // resize width of widgets
-        miniBar->resizeForPage(pages);
-
         // update child widgets
         miniBar->m_pageLabelEdit->setPageLabels(pageVector);
         miniBar->m_pageNumberEdit->setPagesNumber(pages);
         miniBar->m_pagesButton->setText(pagesString);
+        miniBar->m_pagesButton->setToolTip(pagesString);
         miniBar->m_prevButton->setEnabled(false);
         miniBar->m_nextButton->setEnabled(false);
         miniBar->m_pageLabelEdit->setVisible(labelsDiffer);
@@ -155,6 +153,7 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
 
     horLayout->setContentsMargins(0, 0, 0, 0);
     horLayout->setSpacing(3);
+    horLayout->addStretch();
 
     QSize buttonSize(KIconLoader::SizeSmallMedium, KIconLoader::SizeSmallMedium);
     // bottom: left prev_page button
@@ -169,6 +168,7 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
     m_pageNumberEdit->installEventFilter(this);
     // bottom: left labelWidget (current page label)
     m_pageLabelEdit = new PageLabelEdit(this);
+    m_pageLabelEdit->setObjectName(QStringLiteral("pageLabelEdit"));
     horLayout->addWidget(m_pageLabelEdit);
     m_pageLabelEdit->installEventFilter(this);
     // bottom: left labelWidget (current page label)
@@ -186,14 +186,25 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
     m_nextButton->setIcon(QIcon::fromTheme(QStringLiteral("arrow-down")));
     m_nextButton->setIconSize(buttonSize);
     horLayout->addWidget(m_nextButton);
+    horLayout->addStretch();
 
     QSizePolicy sp = sizePolicy();
     sp.setHorizontalPolicy(QSizePolicy::Fixed);
     sp.setVerticalPolicy(QSizePolicy::Fixed);
     setSizePolicy(sp);
 
-    // resize width of widgets
-    resizeForPage(0);
+    setFixedPageWidths();
+    // Page labels add a second field. Reserve their full width from the start
+    // so opening a labeled PDF cannot move the toolbar page counter.
+    m_pageNumberEdit->hide();
+    m_pageLabelEdit->show();
+    m_pageNumberLabel->show();
+    horLayout->activate();
+    const int counterWidth = horLayout->sizeHint().width();
+    m_pageNumberEdit->show();
+    m_pageLabelEdit->hide();
+    m_pageNumberLabel->hide();
+    setFixedWidth(counterWidth);
 
     // connect signals from child widgets to internal handlers / signals bouncers
     connect(m_pageNumberEdit, &PageNumberEdit::returnKeyPressed, this, &MiniBar::slotChangePageFromReturn);
@@ -284,12 +295,11 @@ void MiniBar::slotToolBarIconSizeChanged()
     m_nextButton->setIconSize(buttonSize);
 }
 
-void MiniBar::resizeForPage(int pages)
+void MiniBar::setFixedPageWidths()
 {
-    // Keep ordinary page navigation the same size across documents and page
-    // changes. Reserve four digits; only unusually large page counts grow.
-    const int digits = qMax(4, QString::number(pages).size());
-    const int numberWidth = 14 + fontMetrics().horizontalAdvance(QString(digits, QLatin1Char('8')));
+    // Four digits remain reserved even for one-page documents. Larger page
+    // counts can scroll in the edit; the total remains available in its tooltip.
+    const int numberWidth = 14 + fontMetrics().horizontalAdvance(QString(4, QLatin1Char('8')));
     const int labelWidth = 14 + fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMM"));
     m_pageNumberEdit->setFixedWidth(numberWidth);
     m_pageLabelEdit->setFixedWidth(labelWidth);

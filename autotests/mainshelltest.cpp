@@ -15,6 +15,7 @@
 #include <KLocalizedString>
 #include <KMessageBox>
 #include <KRecentFilesAction>
+#include <KToolBar>
 
 #if HAVE_DBUS
 #include <QDBusConnection>
@@ -170,6 +171,8 @@ private Q_SLOTS:
     void testTabPaletteTracksColorScheme();
     void testTabWidthsStayStableAcrossSelection();
     void testPageNumberControlWidthStaysStable();
+    void testToolbarPageCounterStaysPutAcrossTabs();
+    void testRecentHistoryHasUniqueNewestEntries();
     void testDuplicateOpenShowsPageNotice();
     void testSharedViewerSettingsAcrossWindows();
     void testSavedViewModeDoesNotChangeOtherWindow();
@@ -742,6 +745,106 @@ void MainShellTest::testPageNumberControlWidthStaysStable()
     QCOMPARE(edit->text(), QString());
     QTest::keyClicks(edit, QStringLiteral("200000"));
     QCOMPARE(edit->text(), QStringLiteral("20"));
+}
+
+void MainShellTest::testToolbarPageCounterStaysPutAcrossTabs()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->show();
+
+    int firstWidth = -1;
+    int firstX = -1;
+    int firstShellWidth = -1;
+    for (int count = 1; count <= 7; ++count) {
+        const QString source = count == 3 ? QStringLiteral(KDESRCDIR "data/labeled-page.pdf")
+                                          : (count % 2 ? QStringLiteral(KDESRCDIR "data/file1.pdf") : QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"));
+        const QString path = directory.filePath(QStringLiteral("counter-%1.pdf").arg(count));
+        QVERIFY(QFile::copy(source, path));
+        shell->openUrl(QUrl::fromLocalFile(path));
+        if (count == 1) {
+            shell->resize(1200, 800);
+        }
+        KToolBar *toolbar = shell->toolBar();
+        QVERIFY(toolbar);
+        toolbar->show();
+        QTest::qWait(50);
+        auto *part = shell->m_tabs.at(shell->m_tabWidget->currentIndex()).part;
+        QWidget *counter = toolbar->widgetForAction(part->actionCollection()->action(QStringLiteral("page_number")));
+        QVERIFY(counter);
+        QVERIFY(counter->isVisible());
+        QWidget *edit = counter->findChild<QWidget *>(QStringLiteral("pageNumberEdit"));
+        QVERIFY(edit);
+        if (count == 3) {
+            QWidget *labelEdit = counter->findChild<QWidget *>(QStringLiteral("pageLabelEdit"));
+            QVERIFY(labelEdit);
+            QVERIFY(labelEdit->isVisible());
+            QVERIFY(!edit->isVisible());
+        }
+        if (count == 1) {
+            firstShellWidth = shell->width();
+            firstWidth = counter->width();
+            firstX = counter->mapTo(shell, QPoint(0, 0)).x();
+            QVERIFY(firstWidth > edit->width());
+        } else {
+            QCOMPARE(counter->width(), firstWidth);
+            QCOMPARE(counter->mapTo(shell, QPoint(0, 0)).x(), firstX);
+        }
+        QCOMPARE(shell->width(), firstShellWidth);
+    }
+    for (int tab = 0; tab < shell->m_tabWidget->count(); ++tab) {
+        shell->setActiveTab(tab);
+        KToolBar *toolbar = shell->toolBar();
+        toolbar->show();
+        QTest::qWait(50);
+        auto *part = shell->m_tabs.at(tab).part;
+        QWidget *counter = toolbar->widgetForAction(part->actionCollection()->action(QStringLiteral("page_number")));
+        QVERIFY(counter);
+        QCOMPARE(counter->width(), firstWidth);
+        QCOMPARE(counter->mapTo(shell, QPoint(0, 0)).x(), firstX);
+    }
+}
+
+void MainShellTest::testRecentHistoryHasUniqueNewestEntries()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    const QUrl first = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
+    const QUrl second = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
+    const QUrl third = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
+    shell->m_recent->clear();
+    shell->addRecentUrl(first);
+    shell->addRecentUrl(second);
+    shell->addRecentUrl(third);
+    shell->addRecentUrl(second);
+    QCOMPARE(shell->m_recent->urls(), (QList<QUrl> {second, third, first}));
+    KConfigGroup saved = testShellSessionConfig()->group(QStringLiteral("Recent Files"));
+    saved.writePathEntry(QStringLiteral("File1"), first.toLocalFile());
+    saved.writePathEntry(QStringLiteral("File2"), second.toLocalFile());
+    saved.writePathEntry(QStringLiteral("File3"), first.toLocalFile());
+    saved.writePathEntry(QStringLiteral("File4"), third.toLocalFile());
+    saved.writePathEntry(QStringLiteral("File5"), first.toLocalFile());
+    shell->m_welcomeScreen->loadRecents(saved);
+    QListView *view = shell->m_welcomeScreen->findChild<QListView *>(QStringLiteral("recentsListView"));
+    QVERIFY(view);
+    QCOMPARE(view->model()->rowCount(), 3);
+    QCOMPARE(view->model()->data(view->model()->index(0, 0), Qt::UserRole + 2).toString(), first.toString());
+    shell->readRecentFilesSettings();
+    QCOMPARE(shell->m_recent->urls(), (QList<QUrl> {first, third, second}));
+    QCOMPARE(view->model()->rowCount(), 3);
+    QCOMPARE(saved.readPathEntry(QStringLiteral("File1"), QString()), second.toLocalFile());
+    QCOMPARE(saved.readPathEntry(QStringLiteral("File2"), QString()), third.toLocalFile());
+    QCOMPARE(saved.readPathEntry(QStringLiteral("File3"), QString()), first.toLocalFile());
+    QVERIFY(saved.readPathEntry(QStringLiteral("File4"), QString()).isEmpty());
+    QVERIFY(saved.readPathEntry(QStringLiteral("File5"), QString()).isEmpty());
+    shell->addRecentUrl(second);
+    QCOMPARE(shell->m_recent->urls(), (QList<QUrl> {second, first, third}));
 }
 
 void MainShellTest::testTabWidthsStayStableAcrossSelection()
