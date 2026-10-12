@@ -181,7 +181,7 @@ private Q_SLOTS:
     void testEmptyFirstWindowDoesNotRestore();
     void testTemporarilyMissingTabSurvivesRestore();
     void testReopeningMissingTabClearsPendingEntry();
-    void testClosedWindowExpiresAfterFifteenMinutes();
+    void testClosedWindowExpiresAfterFiveMinutes();
     void testClockCorrectionKeepsRecentlyClosedWindow();
     void testClosingPrimaryTransfersForwarding();
     void testElevatedRequestDeclinesUnreadableFile();
@@ -1322,7 +1322,7 @@ void MainShellTest::testReopeningMissingTabClearsPendingEntry()
     QCOMPARE(findShell()->m_tabs.size(), 2);
 }
 
-void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
+void MainShellTest::testClosedWindowExpiresAfterFiveMinutes()
 {
     const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
@@ -1341,7 +1341,10 @@ void MainShellTest::testClosedWindowExpiresAfterFifteenMinutes()
     delete first;
     KSharedConfigPtr config = KSharedConfig::openConfig();
     KConfigGroup closedGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
-    closedGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() - 15 * 60 - 1);
+    closedGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() - 4 * 60);
+    config->sync();
+    QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
+    closedGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() - 6 * 60);
     config->sync();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), QStringList {ids.last()});
     QVERIFY(second->close());

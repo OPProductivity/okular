@@ -108,7 +108,7 @@ static const char *const SESSION_URL_KEY = "Urls";
 static const char *const SESSION_TAB_KEY = "ActiveTab";
 static const char *const SESSION_ACTIVE_URL_KEY = "ActiveUrl";
 static constexpr int OPEN_DOCUMENT_SESSION_SAVE_DELAY_MS = 2000;
-static constexpr qint64 CLOSED_WINDOW_RESTORE_GRACE_SECONDS = 15 * 60;
+static constexpr qint64 CLOSED_WINDOW_RESTORE_GRACE_SECONDS = 5 * 60;
 static constexpr qint64 RECENT_FILE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60;
 static constexpr int MAX_RECENT_FILES = 50;
 #if defined(Q_OS_WIN)
