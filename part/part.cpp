@@ -64,6 +64,7 @@
 #include <KBookmarkAction>
 #include <KColorSchemeManager>
 #include <KColorSchemeMenu>
+#include <KColorSchemeModel>
 #include <KCompressionDevice>
 #include <KDirWatch>
 #include <KFilterBase>
@@ -826,8 +827,25 @@ void Part::setupActions()
 {
     KActionCollection *ac = actionCollection();
 
-    auto manager = new KColorSchemeManager(this);
+    auto *manager = KColorSchemeManager::instance();
     KActionMenu *schemeMenu = KColorSchemeMenu::createMenu(manager, this);
+    // The palette belongs to QApplication, so a choice in another window
+    // changes this window too. The menu's checked action is only initialized
+    // when it is created; refresh it before showing the menu again.
+    connect(schemeMenu->menu(), &QMenu::aboutToShow, this, [manager, schemeMenu]() {
+        const auto *model = manager->model();
+        const QList<QAction *> actions = schemeMenu->menu()->actions();
+        const QString activeId = manager->activeSchemeId();
+        for (int row = 0; row < model->rowCount() && row < actions.size(); ++row) {
+            if (model->index(row, 0).data(KColorSchemeModel::IdRole).toString() == activeId) {
+                actions.at(row)->setChecked(true);
+                return;
+            }
+        }
+        if (!actions.isEmpty()) {
+            actions.first()->setChecked(true);
+        }
+    });
     ac->addAction(QStringLiteral("colorscheme_menu"), schemeMenu->menu()->menuAction());
 
     m_copy = KStandardAction::create(KStandardAction::Copy, nullptr, nullptr, ac);

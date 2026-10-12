@@ -155,6 +155,7 @@ private Q_SLOTS:
     void testShortcutLaunchReusesExistingWindow();
     void testAdditionalShellDoesNotRegisterWindowsTabOpenServer();
     void testSeparateWindowSessionsRestore();
+    void testColorSchemeMenuTracksOtherWindow();
     void testRecentlyClosedWindowRestoresRemainingTabs();
     void testCloseAllHiddenWindowsRestoresThreeSessions();
     void testCloseAllAfterClosingSomeTabsRestoresRemainingTabs();
@@ -587,6 +588,66 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
         QVERIFY(restored.at(1)->geometry().width() < restored.at(0)->geometry().width());
     }
+}
+
+void MainShellTest::testColorSchemeMenuTracksOtherWindow()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *first = findShell();
+    QVERIFY(first);
+    Shell *second = new Shell(options, QString(), true);
+    QVERIFY(second->isValid());
+    Shell *third = new Shell(options, QString(), true);
+    QVERIFY(third->isValid());
+
+    QAction *firstMenuAction = first->m_tabs.first().part->actionCollection()->action(QStringLiteral("colorscheme_menu"));
+    QAction *secondMenuAction = second->m_tabs.first().part->actionCollection()->action(QStringLiteral("colorscheme_menu"));
+    QAction *thirdMenuAction = third->m_tabs.first().part->actionCollection()->action(QStringLiteral("colorscheme_menu"));
+    QVERIFY(firstMenuAction);
+    QVERIFY(secondMenuAction);
+    QVERIFY(thirdMenuAction);
+    QMenu *firstMenu = firstMenuAction->menu();
+    QMenu *secondMenu = secondMenuAction->menu();
+    QMenu *thirdMenu = thirdMenuAction->menu();
+    QVERIFY(firstMenu);
+    QVERIFY(secondMenu);
+    QVERIFY(thirdMenu);
+    const QList<QAction *> firstActions = firstMenu->actions();
+    QList<QAction *> candidates;
+    for (QAction *action : firstActions) {
+        if (action->isCheckable() && !action->data().toString().isEmpty()) {
+            candidates.append(action);
+        }
+    }
+    if (candidates.size() < 2) {
+        QSKIP("Two named color schemes are needed for this test");
+    }
+    const auto expectMenuSelection = [](QMenu *menu, const QString &selectedName) {
+        menu->popup(QPoint(0, 0));
+        QCoreApplication::processEvents();
+        for (QAction *action : menu->actions()) {
+            if (action->text() == selectedName) {
+                const bool checked = action->isChecked();
+                menu->hide();
+                return checked;
+            }
+        }
+        menu->hide();
+        return false;
+    };
+    candidates.at(0)->trigger();
+    QVERIFY(expectMenuSelection(secondMenu, candidates.at(0)->text()));
+    QVERIFY(expectMenuSelection(thirdMenu, candidates.at(0)->text()));
+    const QString secondName = candidates.at(1)->text();
+    for (QAction *action : secondMenu->actions()) {
+        if (action->text() == secondName) {
+            action->trigger();
+            break;
+        }
+    }
+    QVERIFY(expectMenuSelection(firstMenu, secondName));
+    QVERIFY(expectMenuSelection(thirdMenu, secondName));
 }
 
 void MainShellTest::testRecentlyClosedWindowRestoresRemainingTabs()
