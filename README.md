@@ -20,7 +20,7 @@ These are changes to the application source. A build on another computer uses th
 
 ### Build and use this fork on Windows
 
-Follow KDE's [Craft setup guide](https://develop.kde.org/docs/getting-started/building/craft/) to install Craft and its Windows compiler and dependencies. In a Craft PowerShell environment, clone **this fork** and build that checkout:
+See the [Windows Craft build guide](docs/windows-craft-build.md) for a clean-machine setup, the source revision, the MSVC 2022/NMake/jom build route, tests, first launch, and troubleshooting. It uses paths and commands that can be adapted to another PC. The short form, after installing Craft and entering its PowerShell environment, is:
 
 ```powershell
 git clone https://github.com/OPProductivity/okular.git
