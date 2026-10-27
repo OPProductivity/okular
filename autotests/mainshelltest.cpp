@@ -777,13 +777,19 @@ void MainShellTest::testToolbarPageCounterStaysPutAcrossTabs()
         QWidget *counter = toolbar->widgetForAction(part->actionCollection()->action(QStringLiteral("page_number")));
         QVERIFY(counter);
         QVERIFY(counter->isVisible());
-        QWidget *edit = counter->findChild<QWidget *>(QStringLiteral("pageNumberEdit"));
+        QLineEdit *edit = counter->findChild<QLineEdit *>(QStringLiteral("pageNumberEdit"));
         QVERIFY(edit);
+        QVERIFY(edit->isVisible());
         if (count == 3) {
-            QWidget *labelEdit = counter->findChild<QWidget *>(QStringLiteral("pageLabelEdit"));
+            QLineEdit *labelEdit = counter->findChild<QLineEdit *>(QStringLiteral("pageLabelEdit"));
             QVERIFY(labelEdit);
-            QVERIFY(labelEdit->isVisible());
-            QVERIFY(!edit->isVisible());
+            QVERIFY(!labelEdit->isVisible());
+            QWidget *numberLabel = counter->findChild<QWidget *>(QStringLiteral("pageNumberLabel"));
+            QVERIFY(numberLabel);
+            QVERIFY(!numberLabel->isVisible());
+            QCOMPARE(edit->text(), QStringLiteral("1"));
+            QVERIFY(!labelEdit->text().isEmpty());
+            QVERIFY(edit->toolTip().contains(labelEdit->text()));
         }
         if (count == 1) {
             firstShellWidth = shell->width();

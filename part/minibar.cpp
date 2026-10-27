@@ -85,15 +85,6 @@ void MiniBarLogic::notifySetup(const QList<Okular::Page *> &pageVector, int setu
         return;
     }
 
-    bool labelsDiffer = false;
-    for (const Okular::Page *page : pageVector) {
-        if (!page->label().isEmpty()) {
-            if (page->label().toInt() != (page->number() + 1)) {
-                labelsDiffer = true;
-            }
-        }
-    }
-
     const QString pagesString = QString::number(pages);
 
     for (MiniBar *miniBar : std::as_const(m_miniBars)) {
@@ -104,9 +95,9 @@ void MiniBarLogic::notifySetup(const QList<Okular::Page *> &pageVector, int setu
         miniBar->m_pagesButton->setToolTip(pagesString);
         miniBar->m_prevButton->setEnabled(false);
         miniBar->m_nextButton->setEnabled(false);
-        miniBar->m_pageLabelEdit->setVisible(labelsDiffer);
-        miniBar->m_pageNumberLabel->setVisible(labelsDiffer);
-        miniBar->m_pageNumberEdit->setVisible(!labelsDiffer);
+        miniBar->m_pageLabelEdit->hide();
+        miniBar->m_pageNumberLabel->hide();
+        miniBar->m_pageNumberEdit->show();
 
         miniBar->adjustSize();
 
@@ -132,6 +123,7 @@ void MiniBarLogic::notifyCurrentPageChanged(int previousPage, int currentPage)
             miniBar->m_nextButton->setEnabled(currentPage < (pages - 1));
             // update text on widgets
             miniBar->m_pageNumberEdit->setText(pageNumber);
+            miniBar->m_pageNumberEdit->setToolTip(!pageLabel.isEmpty() && pageLabel != pageNumber ? i18n("PDF page label: %1", pageLabel) : QString());
             miniBar->m_pageNumberLabel->setText(pageNumber);
             miniBar->m_pageLabelEdit->setText(pageLabel);
         }
@@ -173,6 +165,7 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
     m_pageLabelEdit->installEventFilter(this);
     // bottom: left labelWidget (current page label)
     m_pageNumberLabel = new QLabel(this);
+    m_pageNumberLabel->setObjectName(QStringLiteral("pageNumberLabel"));
     m_pageNumberLabel->setAlignment(Qt::AlignCenter);
     horLayout->addWidget(m_pageNumberLabel);
     // bottom: central 'of' label
@@ -194,16 +187,12 @@ MiniBar::MiniBar(QWidget *parent, MiniBarLogic *miniBarLogic)
     setSizePolicy(sp);
 
     setFixedPageWidths();
-    // Page labels add a second field. Reserve their full width from the start
-    // so opening a labeled PDF cannot move the toolbar page counter.
-    m_pageNumberEdit->hide();
-    m_pageLabelEdit->show();
-    m_pageNumberLabel->show();
-    horLayout->activate();
-    const int counterWidth = horLayout->sizeHint().width();
-    m_pageNumberEdit->show();
+    // Use the physical page in the editable field for every document. PDF page
+    // labels remain available in its tooltip without changing the counter width.
     m_pageLabelEdit->hide();
     m_pageNumberLabel->hide();
+    horLayout->activate();
+    const int counterWidth = horLayout->sizeHint().width();
     setFixedWidth(counterWidth);
 
     // connect signals from child widgets to internal handlers / signals bouncers
