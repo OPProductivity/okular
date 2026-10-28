@@ -2237,6 +2237,20 @@ bool Shell::restoreOpenDocumentSession()
     }
     m_restoringOpenDocumentSession = false;
 
+#if defined(Q_OS_WIN)
+    if (!m_unrestoredSessionUrls.isEmpty()) {
+        const int skippedCount = m_unrestoredSessionUrls.size();
+        // Show this after startup so a warning is still visible when the
+        // restored window first appears. Keep the entries for later recovery.
+        QTimer::singleShot(0, this, [this, skippedCount]() {
+            statusBar()->showMessage(i18np("%1 previously open document could not be restored. Its session entry was kept.",
+                                             "%1 previously open documents could not be restored. Their session entries were kept.",
+                                             skippedCount),
+                                     15000);
+        });
+    }
+#endif
+
     if (restoredAny) {
         if (targetTab < 0 || targetTab >= m_tabs.size()) {
             targetTab = 0;

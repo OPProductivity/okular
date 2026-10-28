@@ -1603,6 +1603,8 @@ void MainShellTest::testTemporarilyMissingTabSurvivesRestore()
     shell = findShell();
     QVERIFY(shell);
     QCOMPARE(shell->m_tabs.size(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(shell->statusBar()->currentMessage().contains(QStringLiteral("could not be restored")), 3000);
+    QVERIFY(shell->statusBar()->isVisible());
     KConfigGroup group = KSharedConfig::openConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id);
     const auto containsIntermittent = [&]() {
         const QStringList saved = group.readPathEntry("Urls", QStringList());
@@ -1618,6 +1620,8 @@ void MainShellTest::testTemporarilyMissingTabSurvivesRestore()
     shell = findShell();
     QVERIFY(shell);
     QCOMPARE(shell->m_tabs.size(), 2);
+    QCoreApplication::processEvents();
+    QVERIFY(!shell->statusBar()->currentMessage().contains(QStringLiteral("could not be restored")));
     QCOMPARE(QDir::cleanPath(shell->m_tabs.at(1).part->url().toLocalFile()), QDir::cleanPath(intermittentPath));
     QVERIFY(shell->closeTab(1));
     shell->saveOpenDocumentSession();

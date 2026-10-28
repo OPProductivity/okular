@@ -59,12 +59,12 @@ The reference Craft checkout set `[libs/python] ignored = True` in `C:\CraftRoot
 
 ## 4. Repeat the checked NMake build and tests
 
-The maintainer's October 2026 build used a separate NMake build directory after Craft had populated `C:\CraftRoot`. The commands below express that build without any machine-specific user path. They run from a Developer PowerShell with Craft's environment active. Use the CMake executable installed on your machine.
+The maintainer's current build uses Craft's retained `work/build` directory, regenerated with NMake/jom. The earlier separate `build-nmake` directory was removed. These commands run from a Developer PowerShell with Craft's environment active. Use the CMake executable installed on your machine.
 
 ```powershell
 $craftRoot = 'C:\CraftRoot'
 $source = (Get-Location).Path
-$build = Join-Path $craftRoot 'build\kde\applications\okular\work\build-nmake'
+$build = Join-Path $craftRoot 'build\kde\applications\okular\work\build'
 $env:PATH = "$craftRoot\bin;$craftRoot\dev-utils\bin;$env:PATH"
 $env:QT_PLUGIN_PATH = "$craftRoot\plugins"
 cmake -S $source -B $build -G 'NMake Makefiles' `
@@ -72,11 +72,13 @@ cmake -S $source -B $build -G 'NMake Makefiles' `
   -DCMAKE_BUILD_TYPE=RelWithDebInfo `
   "-DCMAKE_INSTALL_PREFIX=$craftRoot" "-DCMAKE_PREFIX_PATH=$craftRoot" `
   -DBUILD_TESTING=ON -DBUILD_SHARED_LIBS=ON -DBUILD_WITH_QT6=ON
-cmake --build $build --parallel 4
+cmake --build $build
 $env:QT_QPA_PLATFORM = 'offscreen'
 ctest --test-dir $build --output-on-failure
 Remove-Item Env:QT_QPA_PLATFORM
 ```
+
+On Windows, `mainshelltest.exe` and `parttest.exe` are compiled but intentionally excluded from the regular CTest suite because some legacy cases are unstable. Run relevant shell cases directly under `QT_QPA_PLATFORM=offscreen`, capture results with Qt Test's `-o <path>,txt`, and wait for the GUI-subsystem process to exit before reading that file. The test binary enables Qt's test paths. Do not set `OKULAR_TEST_INSTANCE` for the parent shell test process: several cases read its test-mode shared config and would otherwise check a different store. For example, run `mainshelltest.exe testTemporarilyMissingTabSurvivesRestore -o results.txt,txt` from the build's `bin` directory. Record the Git revision, case names, exit status, and reported pass/fail totals.
 
 The offscreen setting is only for tests. The earlier checked build registered 32 tests, but the count can change with source/dependency revisions. A passing build does not by itself prove File Explorer routing, theme appearance, or tab behavior on another Windows desktop.
 
