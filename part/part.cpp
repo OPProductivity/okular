@@ -1420,6 +1420,7 @@ Document::OpenResult Part::doOpenFile(const QMimeType &mimeA, const QString &fil
     bool uncompressOk = true;
     QMimeType mime = mimeA;
     QString fileNameToOpen = fileNameToOpenA;
+    const bool isOkularArchive = mime.inherits(QStringLiteral("application/vnd.kde.okular-archive")) || QFileInfo(fileNameToOpenA).suffix().compare(QLatin1String("okular"), Qt::CaseInsensitive) == 0;
     KCompressionDevice::CompressionType compressionType = compressionTypeFor(mime.name());
     if (compressionType != KCompressionDevice::None) {
         *isCompressedFile = true;
@@ -1436,7 +1437,7 @@ Document::OpenResult Part::doOpenFile(const QMimeType &mimeA, const QString &fil
             return Document::OpenError;
         }
 
-        if (mime.inherits(QStringLiteral("application/vnd.kde.okular-archive"))) {
+        if (isOkularArchive) {
             isDocumentArchive = true;
             if (!m_document->swapBackingFileArchive(fileNameToOpen, url())) {
                 return Document::OpenError;
@@ -1454,7 +1455,7 @@ Document::OpenResult Part::doOpenFile(const QMimeType &mimeA, const QString &fil
 
     isDocumentArchive = false;
     if (uncompressOk) {
-        if (mime.inherits(QStringLiteral("application/vnd.kde.okular-archive"))) {
+        if (isOkularArchive) {
             openResult = m_document->openDocumentArchive(fileNameToOpen, url());
             isDocumentArchive = true;
         } else {
@@ -1527,7 +1528,7 @@ Document::OpenResult Part::doOpenFile(const QMimeType &mimeA, const QString &fil
             }
 
             // 2. reopen the document using the password
-            if (mime.inherits(QStringLiteral("application/vnd.kde.okular-archive"))) {
+            if (isOkularArchive) {
                 openResult = m_document->openDocumentArchive(fileNameToOpen, url(), password);
                 isDocumentArchive = true;
             } else {

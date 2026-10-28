@@ -5238,7 +5238,9 @@ ArchiveData *DocumentPrivate::unpackDocumentArchive(const QString &archivePath)
 {
     QMimeDatabase db;
     const QMimeType mime = db.mimeTypeForFile(archivePath, QMimeDatabase::MatchExtension);
-    if (!mime.inherits(QStringLiteral("application/vnd.kde.okular-archive"))) {
+    // Windows Craft installations may lack the shared MIME registration. The
+    // archive parser below still validates the ZIP structure and manifest.
+    if (!mime.inherits(QStringLiteral("application/vnd.kde.okular-archive")) && QFileInfo(archivePath).suffix().compare(QLatin1String("okular"), Qt::CaseInsensitive) != 0) {
         return nullptr;
     }
 

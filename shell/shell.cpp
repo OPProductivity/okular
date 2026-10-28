@@ -746,7 +746,6 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_tabWidget->setAcceptDrops(true);
         m_centralStackedWidget->installEventFilter(this);
         m_tabWidget->installEventFilter(this);
-        m_tabWidget->tabBar()->installEventFilter(this);
 
         m_centralStackedWidget->addWidget(m_tabWidget);
 
@@ -2770,7 +2769,7 @@ void Shell::closeEvent(QCloseEvent *event)
     }
     if (survivor) {
         // Keep this window's remaining tabs through a coordinated shutdown,
-        // while allowing a deliberate close to expire after fifteen minutes.
+        // while allowing a deliberate close to expire after five minutes.
         if (!m_unique && openDocumentSessionRestoreEnabled()) {
             saveOpenDocumentSession();
             const KSharedConfigPtr config = ShellSessionConfig();

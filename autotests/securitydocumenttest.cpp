@@ -324,9 +324,6 @@ private Q_SLOTS:
     }
     void archiveRoundTrip()
     {
-        if (!QMimeDatabase().mimeTypeForName(QStringLiteral("application/vnd.kde.okular-archive")).isValid()) {
-            QSKIP("The runtime MIME database has no Okular archive registration");
-        }
         QTemporaryDir dir;
         const QString source = QStringLiteral(KDESRCDIR "data/simple-multipage.pdf");
         const QString archive = dir.filePath(QStringLiteral("roundtrip.okular"));
@@ -341,9 +338,6 @@ private Q_SLOTS:
     }
     void archiveMetadataBudget()
     {
-        if (!QMimeDatabase().mimeTypeForName(QStringLiteral("application/vnd.kde.okular-archive")).isValid()) {
-            QSKIP("The runtime MIME database has no Okular archive registration");
-        }
         QTemporaryDir dir;
         const QString file = dir.filePath(QStringLiteral("metadata.okular"));
         KZip zip(file);

@@ -133,9 +133,10 @@ focusing, opening a PDF through the Windows default association, scrolling,
 and text search. The temporary test tab was closed and the original active
 document, page, and zoom were restored.
 
-Two Okular archive integration tests skip when the runtime MIME database lacks
-`application/vnd.kde.okular-archive`. This Craft setup has that limitation; the
-bounded streaming helper itself is tested. Linux/macOS process-group handling
+The Windows Craft runtime can identify `.okular` archives as `application/zip`.
+Okular now recognizes that extension directly and still checks the archive
+structure and manifest before opening it. The archive round-trip and metadata
+budget tests run on this Craft setup. Linux/macOS process-group handling
 is implemented but has not been run on those systems. This round does not claim
 ASan coverage, a complete upstream test-suite pass, a formal performance
 benchmark, or a fresh clean cloud scan.
