@@ -53,6 +53,11 @@ craft --ignoreInstalled --options "kde/applications/okular.srcDir=$((Get-Locatio
 
 Use the full `kde/applications/okular` blueprint name. The `srcDir` option ensures that Craft builds this checkout. The initial command also obtains Okular's Qt/KDE dependencies. It may take a long time and several gigabytes. A build from KDE's upstream repository or without this `srcDir` option would omit this fork's changes. If Craft reports a Python blueprint problem, check its currently supported Python versions first. The reference environment had local Craft fixes, described below; apply them only if a fresh Craft still has the same problem.
 
+The [PDF dependency recipe overrides](craft-overrides/README.md) preserve the
+local recipe changes used to stage Poppler 26.11.0 and libspectre 0.2.12 with
+NMake/jom. They are optional reference patches; their isolated validation does
+not prove that an installed Okular runtime works with those versions.
+
 ### Reference Craft Python workaround (only if needed)
 
 The reference Craft checkout set `[libs/python] ignored = True` in `C:\CraftRoot\etc\BlueprintSettings.ini` and used system/virtual-environment Python. Its Craft source also changed `blueprints\libs\python\python.py` from an unavailable `defaultTarget = "3.15.6"` to an available `"3.14.6"`. In `bin\BuildSystem\PipBuildSystem.py`, both checks for an active Craft Python were changed to account for `craftPython.isIgnored()`: the `python()` check uses `if not craftPython.categoryInfo.isActive or craftPython.isIgnored():`, and `usesCraftPython` uses `craftPython.categoryInfo.isActive and not craftPython.isIgnored()`. These edits are outside this Okular repository. A newer Craft may already have fixed the mismatch; inspect the installed blueprint and error before changing it. Back up the Craft files before any local edit, and expect updates to overwrite local Craft changes.

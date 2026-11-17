@@ -1,0 +1,64 @@
+diff --git a/libs/libspectre/libspectre.py b/libs/libspectre/libspectre.py
+index 3f5d0afc2..1cbbf93e6 100644
+--- a/libs/libspectre/libspectre.py
++++ b/libs/libspectre/libspectre.py
+@@ -14,7 +14,7 @@ class subinfo(info.infoclass):
+ 
+     def setTargets(self):
+         """ """
+-        for ver in ["0.2.1", "0.2.6", "0.2.7", "0.2.8"]:
++        for ver in ["0.2.1", "0.2.6", "0.2.7", "0.2.8", "0.2.12"]:
+             self.targets[ver] = f"https://libspectre.freedesktop.org/releases/libspectre-{ver}.tar.gz"
+             self.targetInstSrc[ver] = f"libspectre-{ver}"
+         self.patchToApply["0.2.1"] = ("spectre-0.2.1-cmake.diff", 1)
+@@ -22,12 +22,14 @@ class subinfo(info.infoclass):
+         if CraftCore.compiler.platform.isWindows:
+             self.patchToApply["0.2.7"] = [("libspectre-0.2.7-20131003.diff", 1), ("libspectre-new-ghostscript.diff", 1)]
+             self.patchToApply["0.2.8"] = [("libspectre-0.2.7-20131003.diff", 1), ("libspectre-new-ghostscript.diff", 1)]
++            self.patchToApply["0.2.12"] = ("libspectre-0.2.12-windows.diff", 1)
+         self.targetDigests["0.2.6"] = "819475c7e34a1e9bc2e876110fee530b42aecabd"
+         self.targetDigests["0.2.7"] = "a7efd97b82b84ff1bb7a0d88c7e35ad10cc84ea8"
+         self.targetDigests["0.2.8"] = (["65256af389823bbc4ee4d25bfd1cc19023ffc29ae9f9677f2d200fa6e98bc7a8"], CraftHash.HashAlgorithm.SHA256)
++        self.targetDigests["0.2.12"] = (["55a7517cd3572bd2565df0cf450944a04d5273b279ebb369a895391957f0f960"], CraftHash.HashAlgorithm.SHA256)
+ 
+         self.description = "a wrapper library for libgs"
+-        self.defaultTarget = "0.2.8"
++        self.defaultTarget = "0.2.12"
+ 
+     def setDependencies(self):
+         self.runtimeDependencies["libs/ghostscript"] = None
+@@ -39,7 +41,7 @@ if CraftCore.compiler.platform.isWindows:
+     class Package(CMakePackageBase):
+         def __init__(self, **kwargs):
+             super().__init__(**kwargs)
+-            self.subinfo.options.configure.args += ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]
++            self.subinfo.options.configure.args += ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DENABLE_TESTS=OFF"]
+ 
+ else:
+ 
+diff --git a/qt-libs/poppler/poppler.py b/qt-libs/poppler/poppler.py
+index 405c6193c..33c6c2241 100644
+--- a/qt-libs/poppler/poppler.py
++++ b/qt-libs/poppler/poppler.py
+@@ -35,10 +35,10 @@ class subinfo(info.infoclass):
+         self.svnTargets["master"] = "git://git.freedesktop.org/git/poppler/poppler"
+ 
+         # always try to use latest libpoppler with all security fixes
+-        ver = "26.07.0"
++        ver = "26.11.0"
+         self.targets[ver] = f"https://invent.kde.org/mirrors/poppler/-/archive/poppler-{ver}/poppler-poppler-{ver}.tar.bz2"
+         self.targetInstSrc[ver] = f"poppler-poppler-{ver}"
+-        self.targetDigests[ver] = (["1486fafea69b41dda904ecd48f9b9d7afbf6594e45aca3bd09384e2d0f8e0f7d"], CraftHash.HashAlgorithm.SHA256)
++        self.targetDigests[ver] = (["65770d413a59f1cbda01d728c89b216d4a82278cdba752742dde77d377e4bbec"], CraftHash.HashAlgorithm.SHA256)
+         self.defaultTarget = ver
+ 
+     def setDependencies(self):
+@@ -46,6 +46,8 @@ class subinfo(info.infoclass):
+         self.buildDependencies["libs/boost"] = None
+         self.runtimeDependencies["data/poppler-data"] = None
+         self.runtimeDependencies["libs/freetype"] = None
++        self.runtimeDependencies["libs/brotli"] = None
++        self.runtimeDependencies["libs/harfbuzz"] = None
+         self.runtimeDependencies["libs/libjpeg-turbo"] = None
+         self.runtimeDependencies["libs/lcms2"] = None
+         self.runtimeDependencies["libs/zlib"] = None
