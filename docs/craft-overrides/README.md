@@ -2,8 +2,10 @@
 
 These files preserve the local Craft recipe changes used to build and test
 Poppler 26.11.0 and libspectre 0.2.12 on Windows with MSVC, NMake Makefiles,
-and `jom`. The tests used isolated staging directories. They do not establish
-that these versions have been installed into a working Okular runtime.
+and `jom`. On 17 November 2026, both packages were installed through Craft
+after isolated checks. Okular was then rebuilt against the installed headers
+and libraries, and its 32 registered tests passed. An installed-library
+offscreen shell test passed; a foreground visual check was not performed.
 
 The recipe diff was made against KDE blueprint commit
 `5e61dd7ef449b7680551cca8a0a98a8fcde4a20b`. It changes only
@@ -32,4 +34,7 @@ The isolated checks rendered five repository PDF fixtures through Poppler
 26.11.0. Page counts, dimensions, and RGBA pixel hashes matched the previous
 26.03.0 build. They also exercised Letter PostScript and offset EPS through
 libspectre 0.2.12. The Okular PostScript safety test and four PDF related tests
-passed with the staged DLLs first on the test process's `PATH`.
+passed with the staged DLLs first on the test process's `PATH`. The installed
+Poppler and libspectre package images were merged with `craft --qmerge` and
+`craft --post-qmerge` after closing Okular. The installed Poppler DLL hashes
+matched the staged Craft image, and the installed Okular PDF plugin loaded.
