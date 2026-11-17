@@ -58,6 +58,34 @@ local recipe changes used to stage Poppler 26.11.0 and libspectre 0.2.12 with
 NMake/jom. They are optional reference patches; their isolated validation does
 not prove that an installed Okular runtime works with those versions.
 
+### Keep Qt Text-to-Speech aligned
+
+When updating Qt Core, rebuild Text-to-Speech to the same Qt patch version before
+accepting an Okular installation. On MSVC, install Visual Studio's signed
+`Microsoft.VisualStudio.Component.VC.ATL` component so the Windows SAPI backend
+can build. Check that `atlbase.h` is present in the selected MSVC toolset. The
+17 November 2026 Qt 6.11.3 Speech build needed Microsoft NMake: `jom` rejected
+a generated NMake rule, while `nmake` compiled the module and its SAPI and WinRT
+plugins successfully. Use an NMake build tree; back up an existing Ninja tree
+before configuring a different generator.
+
+For an already fetched and unpacked Qt 6.11.3 source in Craft, the focused
+build and staging commands are:
+
+```powershell
+craft -i --target 6.11.3 --options '[Compile]MakeProgram=nmake' --compile libs/qt6/qtspeech
+craft -i --target 6.11.3 --options '[Compile]MakeProgram=nmake' --install libs/qt6/qtspeech
+```
+
+The second command writes Craft's package image. Before `qmerge`, close the
+running reader, back up the installed Speech package and verify the staged
+image contains `Qt6TextToSpeech.dll`, `qtexttospeech_sapi.dll`, and
+`qtexttospeech_winrt.dll`. Then merge with
+`craft -i --target 6.11.3 --qmerge libs/qt6/qtspeech` and run the loader and
+document-opening checks below. Use one matching Qt version throughout; do not
+blindly apply 6.11.3 to a future Craft installation that has a different Qt
+version.
+
 ### Reference Craft Python workaround (only if needed)
 
 The reference Craft checkout set `[libs/python] ignored = True` in `C:\CraftRoot\etc\BlueprintSettings.ini` and used system/virtual-environment Python. Its Craft source also changed `blueprints\libs\python\python.py` from an unavailable `defaultTarget = "3.15.6"` to an available `"3.14.6"`. In `bin\BuildSystem\PipBuildSystem.py`, both checks for an active Craft Python were changed to account for `craftPython.isIgnored()`: the `python()` check uses `if not craftPython.categoryInfo.isActive or craftPython.isIgnored():`, and `usesCraftPython` uses `craftPython.categoryInfo.isActive and not craftPython.isIgnored()`. These edits are outside this Okular repository. A newer Craft may already have fixed the mismatch; inspect the installed blueprint and error before changing it. Back up the Craft files before any local edit, and expect updates to overwrite local Craft changes.
@@ -97,6 +125,20 @@ Test-Path C:\CraftRoot\plugins\kf6\parts\okularpart.dll
 & C:\CraftRoot\bin\okular.exe --version
 & C:\CraftRoot\bin\okular.exe
 ```
+
+The `--version` check does not load Okular's document-window part. After a Qt
+dependency update, also check that the installed part loads, then open a
+disposable PDF and run the registered and relevant shell tests:
+
+```powershell
+python -c "import ctypes,os; os.add_dll_directory(r'C:\CraftRoot\bin'); ctypes.WinDLL(r'C:\CraftRoot\bin\okularpart.dll'); print('Okular part loads')"
+```
+
+Keep the Qt modules at compatible patch levels. An older Qt Text-to-Speech DLL
+can prevent the part from loading even when `okular.exe --version` succeeds.
+Check the exact missing DLL or entry point before rebuilding or replacing
+dependencies. Preserve the SAPI and WinRT speech plugins when updating that
+module.
 
 Open two local PDFs and verify that they appear in one window as tabs, the `+` button works, and the page counter stays in place. Close the reader, reopen it without a filename, and check session restore. Verify Breeze Light and Breeze Darker on the new PC. To use the build from Explorer, select this exact `okular.exe` through **Open with > Choose another app > Choose an app on your PC**, then set it as the default if desired. Check shortcuts and taskbar pins separately; they can still launch a different Okular.
 
