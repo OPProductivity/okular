@@ -100,6 +100,72 @@ private Q_SLOTS:
         doc.processAction(&unresolved, false);
     }
 #ifdef OKULAR_SECURITY_SPECTRE
+    void postScriptRenderUsesRequestedCanvas()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString documentPath = dir.filePath(QStringLiteral("letter.ps"));
+        QFile file(documentPath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        // No BoundingBox: libspectre uses Letter (612 x 792) by default.
+        QVERIFY(file.write("%!PS-Adobe-3.0\n%%Pages: 1\n%%EndComments\n%%Page: 1 1\n"
+                           "newpath 0 0 moveto 612 792 lineto stroke showpage\n%%EOF\n") > 0);
+        file.close();
+
+        QString program = QCoreApplication::applicationDirPath() + QStringLiteral("/okular-spectre-render");
+#ifdef Q_OS_WIN
+        program += QStringLiteral(".exe");
+#endif
+        struct RenderCase {
+            QSize size;
+            double scale;
+        };
+        const QList<RenderCase> renderCases = {
+            {{612, 792}, 1.0}, {{595, 842}, 1.0}, {{650, 760}, 1.0}, {{306, 396}, 0.5},
+            {{595, 842}, 0.5}, {{595, 842}, 0.75}, {{595, 842}, 1.3}, {{595, 842}, 2.0},
+        };
+        for (const RenderCase test : renderCases) {
+            const QString outputPath = dir.filePath(QStringLiteral("page-%1x%2-%3.png").arg(test.size.width()).arg(test.size.height()).arg(test.scale));
+            QProcess helper;
+            helper.setProgram(program);
+            helper.setArguments({documentPath,
+                                 QStringLiteral("0"),
+                                 QString::number(test.scale, 'g', 17),
+                                 QStringLiteral("1"),
+                                 QStringLiteral("4"),
+                                 QStringLiteral("4"),
+                                 QString::number(test.size.width()),
+                                 QString::number(test.size.height()),
+                                 QStringLiteral("0"),
+                                 outputPath});
+            QByteArray out, err;
+            QCOMPARE(Okular::runBoundedHelper(helper, out, err, 10000), 0);
+            const QSize renderedSize(qMin(test.size.width(), int(612 * test.scale + 0.5)), qMin(test.size.height(), int(792 * test.scale + 0.5)));
+            QCOMPARE(QImage(outputPath).size(), renderedSize);
+        }
+        const QString changingMediaPath = dir.filePath(QStringLiteral("changing-media.ps"));
+        QFile changingMedia(changingMediaPath);
+        QVERIFY(changingMedia.open(QIODevice::WriteOnly));
+        QVERIFY(changingMedia.write("%!PS-Adobe-3.0\n%%BoundingBox: 0 0 200 200\n%%Pages: 1\n%%EndComments\n%%Page: 1 1\n"
+                                    "<< /PageSize [100 100] >> setpagedevice showpage\n%%EOF\n") > 0);
+        changingMedia.close();
+        const QString fixedMediaOutput = dir.filePath(QStringLiteral("fixed-media.png"));
+        QProcess fixedMediaHelper;
+        fixedMediaHelper.setProgram(program);
+        fixedMediaHelper.setArguments({changingMediaPath, QStringLiteral("0"), QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("4"), QStringLiteral("4"), QStringLiteral("200"), QStringLiteral("200"), QStringLiteral("0"), fixedMediaOutput});
+        QByteArray fixedMediaOut, fixedMediaErr;
+        QCOMPARE(Okular::runBoundedHelper(fixedMediaHelper, fixedMediaOut, fixedMediaErr, 10000), 0);
+        QCOMPARE(QImage(fixedMediaOutput).size(), QSize(200, 200));
+
+        Okular::Document doc(nullptr);
+        QCOMPARE(open(doc, documentPath, QStringLiteral("application/postscript")), Okular::Document::OpenSuccess);
+        Okular::DocumentObserver observer;
+        doc.addObserver(&observer);
+        doc.requestPixmaps({new Okular::PixmapRequest(&observer, 0, 595, 842, 1.0, 1, Okular::PixmapRequest::NoFeature)});
+        QTRY_VERIFY(doc.page(0)->hasPixmap(&observer));
+        doc.removeObserver(&observer);
+        doc.closeDocument();
+    }
     void postScriptRenderAndRecovery()
     {
         QTemporaryDir dir;
