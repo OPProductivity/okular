@@ -148,6 +148,13 @@ Do not remove `C:\CraftRoot` while running this build from it. Its `bin`, `lib`,
 
 ## Reproducibility and privacy
 
+Before retiring dependency build output, use the
+[Craft recovery and build-retirement workflow](windows-craft-recovery.md).
+It preserves actual patched sources, local Craft/blueprint changes and installed
+runtime hashes, and provides fresh NMake app/add-on-module probes without
+installing, launching or deleting anything. A `build` directory is not uniformly
+disposable: keep the current Okular incremental build and source/staging inputs.
+
 The public Git repository preserves this fork's source and these instructions. It does not preserve a frozen Visual Studio toolchain, all Craft blueprints/cache packages, an installer, per-user settings, session backups, or personal documents. For the closest functional rebuild, record the source commit and the Craft/Visual Studio/CMake versions used, and retain a tested installer or runtime backup separately if you require rollback without rebuilding. Exact binary hashes may differ on another PC even when functionality matches.
 
 Do not publish `C:\CraftRoot\etc`, CMake caches, build logs, `%LOCALAPPDATA%\okular`, `%LOCALAPPDATA%\okularrc`, or local PDF files. These can contain usernames, document paths, session history, or machine details. The repository's public URL identifies its hosting account; source documentation cannot make that account anonymous.
