@@ -42,9 +42,15 @@ installed-prefix inputs. Untracked files outside the supported patch/source
 extensions are reported as excluded rather than silently treated as protected.
 The current source and runtime remain at their original paths.
 
-`verify` checks the saved artifact hashes, protected current-file hashes and Git
-bundles, and refuses installed CMake/pkg-config references to a selected build
-directory. It does not turn a complete capture into cleanup authorization.
+`verify` checks the saved artifact hashes, each retained Qt source member
+against its recorded SHA-256, protected current-file hashes and Git bundles,
+and refuses installed CMake/pkg-config references to a selected build
+directory. Future captures prune generated build trees and Craft/blueprint Git
+bookkeeping from the installed-runtime hash walk; the original 18 November
+snapshot predates that correction and may need a fresh snapshot after Git
+commits. It does not turn a complete capture into cleanup authorization.
+`plan` also compares the current candidate path/file-ID/size/timestamp inventory
+with the captured inventory before writing a plan. A plan is still read-only.
 
 ## Prove the retained development route
 
@@ -101,4 +107,5 @@ python scripts/tests/test_windows_craft_recovery.py
 
 The tests exercise candidate boundaries, source-tree rejection, evidence
 overwrite refusal, installed-path references, archive path escape and corruption,
-runtime drift and incomplete snapshots. They are not GUI or Qt runtime tests.
+source-member hash mismatch, protected-tree pruning, runtime drift and incomplete
+snapshots. They are not GUI or Qt runtime tests.

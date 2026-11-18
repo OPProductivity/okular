@@ -38,3 +38,15 @@ passed with the staged DLLs first on the test process's `PATH`. The installed
 Poppler and libspectre package images were merged with `craft --qmerge` and
 `craft --post-qmerge` after closing Okular. The installed Poppler DLL hashes
 matched the staged Craft image, and the installed Okular PDF plugin loaded.
+
+## Local QtBase 6.11.3 patch inputs
+
+The two `CVE-2026-116337-qtbase-6.11-000*.diff` files are exact copies of the
+local Craft blueprint's Qt 6.11.3 patch files as inspected on 18 November 2026.
+`qtbase-security-2026-11-16.patch` preserves the corresponding local recipe
+change against KDE blueprint commit `5e61dd7ef449b7680551cca8a0a98a8fcde4a20b`.
+Review the patch headers and current upstream Qt/KDE state before applying them
+to another version; do not apply them blindly or duplicate an upstream fix.
+The unpacked local QtBase source contains both changes. This preservation does
+not establish that the installed Qt binaries or the Qt network regression
+tests were rebuilt and qualified with these patches.

@@ -1,0 +1,18 @@
+diff --git a/libs/qt6/qtbase/qtbase.py b/libs/qt6/qtbase/qtbase.py
+index f32f7954d..453839e60 100644
+--- a/libs/qt6/qtbase/qtbase.py
++++ b/libs/qt6/qtbase/qtbase.py
+@@ -65,6 +65,13 @@ class subinfo(info.infoclass):
+         self.patchToApply["6.11.3"] += [(".6.11.1/qtbase-hsts-expired-policy.diff", 1)]
+         self.patchToApply["6.12.0"] += [(".6.11.1/qtbase-hsts-expired-policy.diff", 1)]
+ 
++        # Vendor CVE-2026-116337 backports, preserving the 6.11 ABI.
++        self.patchToApply["6.11.3"] += [
++            ("CVE-2026-116337-qtbase-6.11-0001.diff", 1),
++            ("CVE-2026-116337-qtbase-6.11-0002.diff", 1),
++        ]
++        self.patchLevel["6.11.3"] = 1
++
+         self.patchLevel["6.4.3"] = 4
+         self.patchLevel["6.6.0"] = 4
+         self.patchLevel["6.6.1"] = 3

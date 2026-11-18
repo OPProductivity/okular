@@ -46,13 +46,48 @@ def is_reparse(path: Path) -> bool:
     return bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400) or path.is_symlink()
 
 
-def files(root: Path):
+def files(root: Path, strict: bool = False):
     """Do not traverse reparse directories or files, including junction aliases."""
+    if is_reparse(root):
+        raise ValueError(f"Reparse root: {root}")
     for current, dirs, names in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not is_reparse(Path(current) / d))
+        plain = []
+        for name in dirs:
+            path = Path(current) / name
+            if is_reparse(path):
+                if strict:
+                    raise ValueError(f"Reparse entry in protected tree: {path}")
+            else:
+                plain.append(name)
+        dirs[:] = sorted(plain)
         for name in sorted(names):
             path = Path(current) / name
-            if not is_reparse(path):
+            if is_reparse(path):
+                if strict:
+                    raise ValueError(f"Reparse entry in protected tree: {path}")
+                continue
+            yield path
+
+
+def runtime_files(craft: Path):
+    """Hash installed inputs without descending into builds or Git checkouts."""
+    excluded_roots = {"build", "download", "craft", "msys"}
+    for current, dirs, names in os.walk(craft, followlinks=False):
+        rel = Path(current).relative_to(craft)
+        plain = []
+        for name in dirs:
+            path = Path(current) / name
+            if is_reparse(path) or name == ".git":
+                continue
+            if not rel.parts and name.casefold() in excluded_roots:
+                continue
+            if rel.as_posix().casefold() == "etc/blueprints" and name.casefold() == "locations":
+                continue  # Git bundle/patch capture this source checkout instead.
+            plain.append(name)
+        dirs[:] = sorted(plain)
+        for name in sorted(names):
+            path = Path(current) / name
+            if name != ".git" and not is_reparse(path):
                 yield path
 
 
@@ -186,7 +221,7 @@ def capture(craft: Path, source: Path, output: Path) -> None:
         with zipfile.ZipFile(output / "qt-reconstruction-inputs.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
             for candidate in candidates:
                 print(f"Inventory and source preservation: {candidate.parent.parent.name}", flush=True)
-                records = [record(p, craft, False) for p in files(candidate)]
+                records = [record(p, craft, False) for p in files(candidate, strict=True)]
                 rel = candidate.relative_to(craft).as_posix()
                 (output / (candidate.parent.parent.name + "-build-files.json")).write_text(json.dumps(records), encoding="utf-8")
                 cache = (candidate / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
@@ -195,24 +230,22 @@ def capture(craft: Path, source: Path, output: Path) -> None:
                     "allocated_estimate": sum(r["allocated_estimate"] for r in records),
                     "index": candidate.parent.parent.name + "-build-files.json",
                     "cmake_identity": [l for l in cache.splitlines() if l.startswith(("CMAKE_GENERATOR:", "CMAKE_MAKE_PROGRAM:", "CMAKE_HOME_DIRECTORY:", "CMAKE_INSTALL_PREFIX:"))]})
-                for path in files(candidate):
+                for path in files(candidate, strict=True):
                     if path.name in METADATA_NAMES or path.suffix.lower() == ".cmake":
                         z.write(path, path.relative_to(craft).as_posix())
                 sources = [p for p in candidate.parent.iterdir() if p.is_dir() and "everywhere-src" in p.name]
                 if not sources:
                     raise ValueError(f"No retained Qt source found for {candidate}")
                 for root in sources:
-                    for path in files(root):
+                    for path in files(root, strict=True):
                         payload = path.read_bytes()
                         r = record(path, craft, False)
                         r["sha256"] = hashlib.sha256(payload).hexdigest()
                         summary["protected_files"].append(r)
                         z.writestr(path.relative_to(craft).as_posix(), payload)
         print("Hashing protected installed prefix (build directories excluded)", flush=True)
-        for path in files(craft):
+        for path in runtime_files(craft):
             rel = path.relative_to(craft)
-            if rel.parts[0].casefold() in {"build", "download", "craft", "msys"}:
-                continue
             # DB and mutable maintenance logs are captured separately, not stable runtime inputs.
             if rel.as_posix() in {"etc/blueprints/install.db", "etc/cache.pickle"} or path.suffix.lower() in {".log", ".pyc"}:
                 continue
@@ -235,6 +268,32 @@ def verify(snapshot: Path) -> dict:
         path = snapshot / rel
         if not inside(path, snapshot) or not path.is_file() or sha(path) != rec["sha256"]:
             failures.append(f"Recovery artifact mismatch: {rel}")
+    source_records = {rec["path"]: rec for rec in state["protected_files"]
+                      if "-everywhere-src-" in rec["path"] and rec["path"].startswith("build/libs/qt6/")}
+    if source_records:
+        archive = snapshot / "qt-reconstruction-inputs.zip"
+        if not archive.is_file():
+            failures.append("Missing Qt source archive")
+        else:
+            try:
+                with zipfile.ZipFile(archive) as z:
+                    names = z.namelist()
+                    if len(names) != len(set(names)):
+                        failures.append("Duplicate recovery archive member")
+                    source_names = {name for name in names if name.startswith("build/libs/qt6/") and "-everywhere-src-" in name}
+                    if source_names != source_records.keys():
+                        failures.append("Qt source archive member inventory mismatch")
+                    for name, rec in source_records.items():
+                        if name not in source_names:
+                            continue
+                        h = hashlib.sha256()
+                        with z.open(name) as stream:
+                            for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+                                h.update(chunk)
+                        if h.hexdigest() != rec["sha256"]:
+                            failures.append(f"Qt source archive member hash mismatch: {name}")
+            except (OSError, zipfile.BadZipFile, KeyError) as error:
+                failures.append(f"Invalid Qt source archive: {error}")
     craft = Path(state["craft_root"])
     for rec in state["protected_files"]:
         path = craft / rec["path"]
@@ -251,6 +310,7 @@ def verify(snapshot: Path) -> dict:
         raise ValueError("\n".join(failures[:30]))
     result = {"checked_at": dt.datetime.now(dt.timezone.utc).isoformat(), "result": "pass",
               "protected_files": len(state["protected_files"]), "artifacts": len(state["archives"]),
+              "source_members": len(source_records),
               "scope": "recovery artifacts, retained Qt sources, installed-prefix hashes; not a fresh Qt rebuild"}
     (snapshot / "verification.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
@@ -352,6 +412,21 @@ def write_plan(snapshot: Path, output: Path) -> None:
     state = json.loads((snapshot / "recovery.json").read_text(encoding="utf-8"))
     if not state.get("complete"):
         raise ValueError("Incomplete snapshot")
+    verify(snapshot)
+    if inside(output, Path(state["craft_root"])) or inside(output, Path(state["source_root"])):
+        raise ValueError("Plan output must remain outside Craft and source")
+    craft = Path(state["craft_root"])
+    for candidate in state["candidates"]:
+        expected = {rec["path"]: rec for rec in json.loads((snapshot / candidate["index"]).read_text(encoding="utf-8"))}
+        current = {}
+        for path in files(Path(candidate["path"]), strict=True):
+            rec = record(path, craft, False)
+            current[rec["path"]] = rec
+        if current.keys() != expected.keys() or any(
+            any(current[name][key] != expected[name][key] for key in ("bytes", "mtime_ns", "identity", "links"))
+            for name in current.keys() & expected.keys()
+        ):
+            raise ValueError(f"Candidate inventory changed since capture: {candidate['path']}")
     lines = ["# Craft Qt build retirement plan", "", "PLAN ONLY. No move/delete command is provided.", "",
              "Only the nine named generated work/build trees below may be considered. Never select build/libs as a whole.", "",
              "| Exact original path | Files | Logical GiB | Allocated estimate GiB |", "| --- | ---: | ---: | ---: |"]

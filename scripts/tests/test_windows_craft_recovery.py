@@ -3,6 +3,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
+import os
+import zipfile
 
 spec = importlib.util.spec_from_file_location("recovery", Path(__file__).parents[1] / "windows-craft-recovery.py")
 recovery = importlib.util.module_from_spec(spec)
@@ -29,6 +32,14 @@ class RecoveryTests(unittest.TestCase):
             (build / "CMakeLists.txt").write_text("actual source")
             with self.assertRaisesRegex(ValueError, "source tree"):
                 recovery.candidate_paths(root)
+
+    def test_strict_inventory_rejects_nested_reparse_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "kept").write_bytes(b"x")
+            with mock.patch.object(recovery, "is_reparse", side_effect=lambda path: path.name == "kept"):
+                with self.assertRaisesRegex(ValueError, "Reparse entry"):
+                    list(recovery.files(root, strict=True))
 
     def test_capture_never_reuses_existing_evidence_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -88,6 +99,45 @@ class RecoveryTests(unittest.TestCase):
             (root / "recovery.json").write_text(json.dumps({"complete": False}))
             with self.assertRaisesRegex(ValueError, "Incomplete"):
                 recovery.write_plan(root, root / "plan.md")
+
+    def test_runtime_walk_prunes_builds_and_git_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("build/large/file", "craft/file", "etc/blueprints/locations/repo/file",
+                         "etc/blueprints/install.db", "bin/Qt6Core.dll"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x")
+            visited = []
+            original = os.walk
+
+            def watched(*args, **kwargs):
+                for current, dirs, names in original(*args, **kwargs):
+                    visited.append(Path(current).relative_to(root).as_posix())
+                    yield current, dirs, names
+
+            with mock.patch.object(recovery.os, "walk", watched):
+                names = {path.relative_to(root).as_posix() for path in recovery.runtime_files(root)}
+            self.assertEqual(names, {"etc/blueprints/install.db", "bin/Qt6Core.dll"})
+            self.assertFalse(any(name == "build" or name.startswith("build/") or
+                                 name == "etc/blueprints/locations" for name in visited))
+
+    def test_archive_member_hash_must_match_protected_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "build/libs/qt6/qtsvg/work/qtsvg-everywhere-src-6.11.3/CMakeLists.txt"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"actual source")
+            rec = recovery.record(source, root)
+            archive = root / "qt-reconstruction-inputs.zip"
+            with zipfile.ZipFile(archive, "w") as z:
+                z.writestr(rec["path"], b"different source")
+            state = {"complete": True, "craft_root": str(root), "protected_files": [rec],
+                     "git": {}, "installed_candidate_references": [],
+                     "archives": {archive.name: {"sha256": recovery.sha(archive)}}}
+            (root / "recovery.json").write_text(json.dumps(state))
+            with self.assertRaisesRegex(ValueError, "member hash mismatch"):
+                recovery.verify(root)
 
 
 if __name__ == "__main__":
