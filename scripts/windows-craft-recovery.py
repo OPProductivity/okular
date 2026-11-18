@@ -24,6 +24,7 @@ QT_MODULES = ("qtbase", "qtdeclarative", "qt5compat", "qtshadertools", "qttools"
 METADATA_NAMES = {"CMakeCache.txt", "config.summary", "config.redo.bat",
                   "install_manifest.txt", "compile_commands.json", "build.ninja"}
 SAFE_UNTRACKED = {".patch", ".diff", ".py", ".cmake", ".md", ".txt"}
+MUTABLE_RUNTIME_EXCLUSIONS = {"etc/PristineCraftenv.json"}
 
 
 def sha(path: Path) -> str:
@@ -87,7 +88,8 @@ def runtime_files(craft: Path):
         dirs[:] = sorted(plain)
         for name in sorted(names):
             path = Path(current) / name
-            if name != ".git" and not is_reparse(path):
+            if (name != ".git" and not is_reparse(path) and
+                    path.relative_to(craft).as_posix() not in MUTABLE_RUNTIME_EXCLUSIONS):
                 yield path
 
 
@@ -295,7 +297,12 @@ def verify(snapshot: Path) -> dict:
             except (OSError, zipfile.BadZipFile, KeyError) as error:
                 failures.append(f"Invalid Qt source archive: {error}")
     craft = Path(state["craft_root"])
+    excluded_mutable = []
     for rec in state["protected_files"]:
+        if rec["path"] in MUTABLE_RUNTIME_EXCLUSIONS:
+            # Older captures included this generated, session-specific environment cache.
+            excluded_mutable.append(rec["path"])
+            continue
         path = craft / rec["path"]
         if not inside(path, craft) or not path.is_file() or sha(path) != rec["sha256"]:
             failures.append(f"Protected input mismatch: {rec['path']}")
@@ -309,7 +316,8 @@ def verify(snapshot: Path) -> dict:
     if failures:
         raise ValueError("\n".join(failures[:30]))
     result = {"checked_at": dt.datetime.now(dt.timezone.utc).isoformat(), "result": "pass",
-              "protected_files": len(state["protected_files"]), "artifacts": len(state["archives"]),
+              "protected_files": len(state["protected_files"]) - len(excluded_mutable),
+              "excluded_mutable": excluded_mutable, "artifacts": len(state["archives"]),
               "source_members": len(source_records),
               "scope": "recovery artifacts, retained Qt sources, installed-prefix hashes; not a fresh Qt rebuild"}
     (snapshot / "verification.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

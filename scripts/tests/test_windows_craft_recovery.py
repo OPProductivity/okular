@@ -104,7 +104,7 @@ class RecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name in ("build/large/file", "craft/file", "etc/blueprints/locations/repo/file",
-                         "etc/blueprints/install.db", "bin/Qt6Core.dll"):
+                         "etc/blueprints/install.db", "etc/PristineCraftenv.json", "bin/Qt6Core.dll"):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"x")
@@ -121,6 +121,19 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(names, {"etc/blueprints/install.db", "bin/Qt6Core.dll"})
             self.assertFalse(any(name == "build" or name.startswith("build/") or
                                  name == "etc/blueprints/locations" for name in visited))
+
+    def test_legacy_environment_cache_drift_is_explicitly_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "etc/PristineCraftenv.json"
+            path.parent.mkdir()
+            path.write_text('{"session":"before"}')
+            rec = recovery.record(path, root)
+            path.write_text('{"session":"after"}')
+            state = {"complete": True, "craft_root": str(root), "protected_files": [rec],
+                     "git": {}, "installed_candidate_references": [], "archives": {}}
+            (root / "recovery.json").write_text(json.dumps(state))
+            self.assertEqual(recovery.verify(root)["excluded_mutable"], ["etc/PristineCraftenv.json"])
 
     def test_archive_member_hash_must_match_protected_source(self):
         with tempfile.TemporaryDirectory() as tmp:

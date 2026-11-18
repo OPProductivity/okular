@@ -49,6 +49,11 @@ directory. Future captures prune generated build trees and Craft/blueprint Git
 bookkeeping from the installed-runtime hash walk; the original 18 November
 snapshot predates that correction and may need a fresh snapshot after Git
 commits. It does not turn a complete capture into cleanup authorization.
+Craft's `etc/PristineCraftenv.json` is a regenerated copy of a caller's
+environment, which can contain session-specific values. It is not an immutable
+installed runtime input. Future captures omit it; verification of an older
+capture names it in `excluded_mutable` rather than treating a changed session
+cache as a dependency failure. Do not publish its contents.
 `plan` also compares the current candidate path/file-ID/size/timestamp inventory
 with the captured inventory before writing a plan. A plan is still read-only.
 
