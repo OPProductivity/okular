@@ -128,3 +128,11 @@ the settings supported by the pinned Craft/blueprint version; the files omit
 machine paths, signing details and private values and are not drop-in config
 replacements. The reference setting `EnableDailyUpdates=True` permits drift;
 verify the two Git revisions again before compiling if it remains enabled.
+
+`qt-feature-profile-2026-11-21.json` preserves all 603 boolean `FEATURE_`
+entries from the nine retained Qt CMake caches in the fully verified private
+capture. The five recycled build trees no longer need to be present to read
+this sanitized feature profile. Compare a future probe's cache entries with
+it when trying to match the reference build. These booleans do not encode
+compiler flags, installed package bytes, plugin completeness or runtime tests;
+the raw caches with machine paths remain private.

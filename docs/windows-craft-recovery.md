@@ -125,7 +125,8 @@ does not qualify removal of Qt or Poppler source trees, Craft downloads/cache
 packages, staging images, debug symbols, the installed `bin/lib/plugins/share`
 prefix, toolchains, or the current Okular build. The public fork now preserves
 the locally changed Craft/blueprint code as reviewable patches and records
-non-sensitive reference options, but the private capture holds the source
+non-sensitive reference options and the nine-module boolean Qt feature profile,
+but the private capture holds the source
 archive, package database, exact local settings, installed hashes and logs.
 Those private artifacts should remain backed up; they are not safe to publish
 just to make a public Git checkout look self-contained.
