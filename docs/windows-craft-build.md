@@ -53,6 +53,8 @@ craft --ignoreInstalled --options "kde/applications/okular.srcDir=$((Get-Locatio
 
 Use the full `kde/applications/okular` blueprint name. The `srcDir` option ensures that Craft builds this checkout. The initial command also obtains Okular's Qt/KDE dependencies. It may take a long time and several gigabytes. A build from KDE's upstream repository or without this `srcDir` option would omit this fork's changes. If Craft reports a Python blueprint problem, check its currently supported Python versions first. The reference environment had local Craft fixes, described below; apply them only if a fresh Craft still has the same problem.
 
+[KDE's Windows Craft guide](https://develop.kde.org/docs/getting-started/building/craft/craft-windows/) says Craft normally downloads precompiled cached dependency packages, with an option to compile packages locally. Thus a fresh-PC Craft setup that builds this Okular checkout is not the same claim as compiling every Qt, KDE Frameworks, PDF and Ghostscript dependency from source. The latter has not been demonstrated for this fork; some retained packages or historical cache versions may need new recipe work if their downloads are unavailable. The reviewed patches below preserve known local edits, but they cannot replace unavailable package or source bytes.
+
 The [PDF dependency recipe overrides](craft-overrides/README.md) preserve the
 local recipe changes used to build Poppler 26.11.0 and libspectre 0.2.12 with
 NMake/jom. They are optional reference patches. On 17 November 2026 both were
