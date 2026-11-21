@@ -1,0 +1,1016 @@
+{
+  "observed_at_utc": "2026-11-21T20:07:13.035537+00:00",
+  "scope": "Installed Craft package names and versions only; no installed files, hashes, paths, or revision metadata. Reference snapshot, not a lockfile.",
+  "packages": [
+    {
+      "path": "binary/vlc",
+      "version": "3.0.12-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "core/cacert",
+      "version": "2026-10-20",
+      "cache_version": "26.10"
+    },
+    {
+      "path": "craft/craft-blueprints-kde",
+      "version": "master-2026.06.15",
+      "cache_version": null
+    },
+    {
+      "path": "craft/craft-core",
+      "version": "master-2026.06.15",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "data/docbook-dtd",
+      "version": "4.5",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "data/docbook-xsl",
+      "version": "1.78.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "data/iso-codes",
+      "version": "4.18.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "data/poppler-data",
+      "version": "0.4.12",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "data/urw-base35-fonts",
+      "version": "20200910",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/7zip",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/7zip-base",
+      "version": "26.05",
+      "cache_version": null
+    },
+    {
+      "path": "dev-utils/cmake",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/flexbison",
+      "version": "2.5.25",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/git",
+      "version": "2.52.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/gperf",
+      "version": "3.0.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/icoutils",
+      "version": "0.32.3-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/jom",
+      "version": "1_1_3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/kshimgen",
+      "version": "0.6.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/msys",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/msys-base",
+      "version": "base",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/nasm",
+      "version": "2.16.03",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/patch",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/perl",
+      "version": "5.40.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/pkgconf",
+      "version": "2.5.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/sed",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/snoretoast",
+      "version": "0.9.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/system-python3",
+      "version": "3-3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "dev-utils/wget",
+      "version": "2.2.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/applications/libkexiv2",
+      "version": "26.04.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/applications/okular",
+      "version": "26.04.2",
+      "cache_version": null
+    },
+    {
+      "path": "kde/frameworks/extra-cmake-modules",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/breeze-icons",
+      "version": "6.27.0-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/karchive",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kcodecs",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kconfig",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kcoreaddons",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kdbusaddons",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kguiaddons",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/ki18n",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kimageformats",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kirigami",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kitemmodels",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kitemviews",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kwidgetsaddons",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/kwindowsystem",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/prison",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/solid",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/sonnet",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier1/threadweaver",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier2/kcolorscheme",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier2/kcompletion",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier2/kcrash",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier2/kdoctools",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier2/kjobwidgets",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier2/kpackage",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kbookmarks",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kcmutils",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kconfigwidgets",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kiconthemes",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kio",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/knotifications",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kparts",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kservice",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/ktextwidgets",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kwallet",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/kxmlgui",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/frameworks/tier3/purpose",
+      "version": "6.27.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/kdegraphics/kdegraphics-mobipocket",
+      "version": "26.04.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/plasma/breeze",
+      "version": "6.5.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kde/plasma/plasma-activities",
+      "version": "6.5.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kdesupport/kdewin",
+      "version": "master",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "kdesupport/qca",
+      "version": "2.3.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/amf",
+      "version": "1.5.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/aom",
+      "version": "3.13.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/assuan2",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/boost",
+      "version": "1.86.0-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/brotli",
+      "version": "1.1.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/cairo",
+      "version": "1.18.4-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/chm",
+      "version": "0.40-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/cyrus-sasl",
+      "version": "2.1.28-3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/dav1d",
+      "version": "1.5.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/dbus",
+      "version": "1.14.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/discount",
+      "version": "3.0.1.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/djvu",
+      "version": "3.5.27",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/ebook-tools",
+      "version": "0.2.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/exiv2",
+      "version": "0.28.5",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/expat",
+      "version": "2.7.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/ffmpeg",
+      "version": "8.1.1-3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/freetype",
+      "version": "2.14.1-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/fribidi",
+      "version": "1.0.10-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gcrypt",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gettext",
+      "version": "0.22.3-3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/ghostscript",
+      "version": "10.08.0",
+      "cache_version": null
+    },
+    {
+      "path": "libs/giflib",
+      "version": "5.2.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/glib",
+      "version": "2.86.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gnupg",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gpg-error",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gpgme/gpgme",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gpgme/gpgmepp",
+      "version": "2.0.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/gpgme/qgpgme",
+      "version": "2.0.0-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/harfbuzz",
+      "version": "11.2.0-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/iconv",
+      "version": "0.0.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/icu",
+      "version": "78.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/inih",
+      "version": "56",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/lcms2",
+      "version": "2.17",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libarchive",
+      "version": "3.8.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libass",
+      "version": "0.17.4",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libavif",
+      "version": "1.4.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libb2",
+      "version": "0.98.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libbzip2",
+      "version": "1.0.8-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libcurl",
+      "version": "8.14.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libdmtx",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libffi",
+      "version": "3.5.2",
+      "cache_version": null
+    },
+    {
+      "path": "libs/libfftw",
+      "version": "3.3.8-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libgmp",
+      "version": "6.3.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libheif",
+      "version": "1.23.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libhwy",
+      "version": "1.4.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libjpeg-turbo",
+      "version": "3.0.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libjxl",
+      "version": "0.11.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libksba",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/liblame",
+      "version": "3.100",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/liblzma",
+      "version": "5.2.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libogg",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libopus",
+      "version": "1.5.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libpng",
+      "version": "1.6.45",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libpsl",
+      "version": "0.21.5",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libsamplerate",
+      "version": "0.2.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libsdl2",
+      "version": "2.30.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libspectre",
+      "version": "0.2.12",
+      "cache_version": null
+    },
+    {
+      "path": "libs/libssh2",
+      "version": "1.11.1-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libunistring",
+      "version": "1.4.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libvorbis",
+      "version": "1.3.7-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libxml2",
+      "version": "2.14.5",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libxslt",
+      "version": "1.1.43",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libzip",
+      "version": "1.11.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/libzstd",
+      "version": "1.5.7",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/llvm",
+      "version": "20.1.7",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/lmdb",
+      "version": "0.9.33-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/mingw-crt4msvc",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/nettle",
+      "version": "3.7.3-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/npth",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/nss",
+      "version": "3.109-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/ntbtls",
+      "version": "25.10",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/nvidia-codecs",
+      "version": "12.1.14.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/onevpl",
+      "version": "2.14.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/openjpeg",
+      "version": "2.5.3-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/openssl",
+      "version": "3.6.3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/pcre2",
+      "version": "10.44",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/pixman",
+      "version": "0.46.4",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qrencode",
+      "version": "4.1.1-1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtbase",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtdeclarative",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtimageformats",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtmultimedia",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtspeech",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtsvg",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qttools",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qttranslations",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt/qtwayland",
+      "version": "latest",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt6/qt5compat",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtbase",
+      "version": "6.11.3-1",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtdeclarative",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtimageformats",
+      "version": "6.11.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/qt6/qtlanguageserver",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtmultimedia",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtshadertools",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtspeech",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qtsvg",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qttools",
+      "version": "6.11.3",
+      "cache_version": null
+    },
+    {
+      "path": "libs/qt6/qttranslations",
+      "version": "6.11.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/runtime",
+      "version": "17-2",
+      "cache_version": "26.10"
+    },
+    {
+      "path": "libs/shared-mime-info",
+      "version": "2.4",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/sqlite",
+      "version": "3.50.4",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/svtav1",
+      "version": "3.1.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/tiff",
+      "version": "4.7.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/webp",
+      "version": "1.6.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/x265",
+      "version": "8f18e3a-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/zlib",
+      "version": "1.3.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "libs/zxing-cpp",
+      "version": "2.3.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "perl-modules/uri-url",
+      "version": "1.76-3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "perl-modules/xml-parser",
+      "version": "2.47-4",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/build",
+      "version": "master-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/flit-core",
+      "version": "latest-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/gyp-next",
+      "version": "0.22.2-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/hatch-vcs",
+      "version": "latest-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/hatchling",
+      "version": "1.27.0-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/lxml",
+      "version": "master-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/meson",
+      "version": "1.9.0-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/packaging",
+      "version": "master-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/pathspec",
+      "version": "latest-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/pip",
+      "version": "25.0.1-3",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/pip-system",
+      "version": "25.0.1-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/pluggy",
+      "version": "latest-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/setuptools",
+      "version": "master-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/trove-classifiers",
+      "version": "latest-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "python-modules/virtualenv",
+      "version": "master-2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "qt-libs/phonon",
+      "version": "4.12.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "qt-libs/phonon-vlc",
+      "version": "0.12.0",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "qt-libs/poppler",
+      "version": "26.11.0",
+      "cache_version": null
+    },
+    {
+      "path": "virtual/base",
+      "version": "0.2",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "virtual/craft-blueprints-kde-base",
+      "version": "0.1",
+      "cache_version": "26.05"
+    },
+    {
+      "path": "virtual/craft-venv",
+      "version": "master",
+      "cache_version": "26.05"
+    }
+  ]
+}

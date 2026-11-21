@@ -136,3 +136,10 @@ this sanitized feature profile. Compare a future probe's cache entries with
 it when trying to match the reference build. These booleans do not encode
 compiler flags, installed package bytes, plugin completeness or runtime tests;
 the raw caches with machine paths remain private.
+
+`CraftPackages.reference.json` lists the 202 Craft package names, versions and
+cache-version labels captured from the installed package database. The raw
+revision field was excluded because it contains a local executable path and a
+personal branch name. This list helps select comparable dependency versions,
+but it contains no package payloads, hashes or download URLs and does not
+guarantee that a future Craft cache still provides those exact builds.

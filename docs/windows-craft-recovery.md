@@ -123,7 +123,7 @@ bootstrap.
 
 ### Retained Qt source audit
 
-On 21 November 2026, the unpacked source trees of all nine Qt modules were
+On 21-22 November 2026, the unpacked source trees of all nine Qt modules were
 compared file by file with their matching downloaded `6.11.3` source archives:
 89,597 original files in total. Eight module trees had no changed, missing,
 or extra files. QtBase had seven changed files, no missing files, and three
@@ -143,7 +143,8 @@ does not qualify removal of Qt or Poppler source trees, Craft downloads/cache
 packages, staging images, debug symbols, the installed `bin/lib/plugins/share`
 prefix, toolchains, or the current Okular build. The public fork now preserves
 the locally changed Craft/blueprint code as reviewable patches and records
-non-sensitive reference options and the nine-module boolean Qt feature profile,
+non-sensitive reference options, all 202 package names and versions, and the
+nine-module boolean Qt feature profile,
 but the private capture holds the source
 archive, package database, exact local settings, installed hashes and logs.
 Those private artifacts should remain backed up; they are not safe to publish
