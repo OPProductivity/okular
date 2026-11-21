@@ -1,0 +1,37 @@
+diff --git a/bin/BuildSystem/PipBuildSystem.py b/bin/BuildSystem/PipBuildSystem.py
+index d382bbcfa..a03c2dc57 100644
+--- a/bin/BuildSystem/PipBuildSystem.py
++++ b/bin/BuildSystem/PipBuildSystem.py
+@@ -28,7 +28,7 @@ class PipBuildSystem(BuildSystemBase):
+     def python(self):
+         if not self._python:
+             craftPython = CraftPackageObject.get("libs/python")
+-            if not craftPython.categoryInfo.isActive:
++            if not craftPython.categoryInfo.isActive or craftPython.isIgnored():
+                 if CraftCore.compiler.platform.isWindows:
+                     pythonExe = self.venvDir() / f"Scripts/python{CraftCore.compiler.platform.executableSuffix}"
+                 else:
+@@ -159,7 +159,8 @@ class PipBuildSystem(BuildSystemBase):
+             env["CXX"] = f"{env['CXX']} -arch {arch}"
+ 
+         with ScopedEnv(env):
+-            usesCraftPython = CraftPackageObject.get("libs/python").categoryInfo.isActive
++            craftPython = CraftPackageObject.get("libs/python")
++            usesCraftPython = craftPython.categoryInfo.isActive and not craftPython.isIgnored()
+ 
+             command = Arguments([self.python])
+             if self.pipPackageName in ["pip", "pip-system"]:
+diff --git a/blueprints/libs/python/python.py b/blueprints/libs/python/python.py
+index 94eb31282..479556c7d 100644
+--- a/blueprints/libs/python/python.py
++++ b/blueprints/libs/python/python.py
+@@ -46,7 +46,8 @@ class subinfo(info.infoclass):
+         self.patchLevel["3.11.7"] = 3
+         self.patchLevel["3.11.11"] = 1
+ 
+-        self.defaultTarget = "3.12.13"
++        self.description = "Python is a high-level, general-purpose programming language"
++        self.defaultTarget = "3.14.6"
+ 
+     def setDependencies(self):
+         self.buildDependencies["dev-utils/automake"] = None
