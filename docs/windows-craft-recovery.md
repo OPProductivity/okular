@@ -72,21 +72,41 @@ The probe leaves existing Qt build directories present. Success establishes a
 fresh app build against the retained installed dependencies; it is not an
 absence test for every historical generated file.
 
-For an add-on Qt dependency, a separate cold probe reconstructs a standard
-no-tests/no-examples build from the retained module source. It explicitly
+For a Qt dependency, a separate cold probe reconstructs a standard
+no-tests/no-examples build from the retained module source. For add-on modules it
 overrides `QT_SOURCE_TREE` with the retained Qt base source path, avoiding stale
-`Z:` source mappings in installed build-internals metadata:
+source mappings in installed build-internals metadata:
 
 ```powershell
 python scripts/windows-craft-recovery.py probe-qt --snapshot $snapshot `
   --module qtsvg --build-dir C:\recovery\qtsvg-clean-probe --compile
+python scripts/windows-craft-recovery.py probe-qt --snapshot $snapshot `
+  --module qtbase --build-dir D:\recovery\qtbase-clean-probe --compile
+python scripts/windows-craft-recovery.py probe-qt --snapshot $snapshot `
+  --module qtspeech --build-dir D:\recovery\qtspeech-clean-probe --compile
 ```
 
 This is a functional reconstruction profile, not exact historical feature or
 binary-hash parity. Review the preserved CMake cache and configure summary when
-a different module or feature set is required. Qt base itself is deliberately
-excluded from this generic add-on probe. Do not restore historical Ninja
-generator/cache settings as current NMake instructions.
+a different module or feature set is required. Qt Speech uses Microsoft NMake
+because jom failed on its generated rule in the reference build; it needs the
+MSVC ATL component for the Windows speech plugins. Qt Declarative also uses
+Microsoft NMake for the full graph: jom spent over ten minutes loading that
+graph without reaching a compile target in the cold probe. The other modules
+use jom.
+For the retained QtBase 6.11.3 profile, the helper pins Craft's ICU,
+pkg-config, linked OpenSSL, system SQLite/FreeType/HarfBuzz and DBus linkage
+choices. Those dependencies must remain installed in the Craft prefix. Compare
+the generated QtBase `FEATURE_` cache entries with the retained recipe before
+using the probe for a newer Qt version.
+The probe never installs its output into Craft. Use separate build directories
+and check free disk space before starting large modules such as Qt Declarative;
+keep several gigabytes of free space beyond the expected build size. The
+NMake-generated top-level Makefiles include `.NOTPARALLEL`: CMake ignores
+`--parallel` and jom's `/J` cannot override it on that Makefile. Nested jom
+invocations may still run targets concurrently. The helper does not promise a
+specific worker count; budget time and memory accordingly. Do not restore
+historical Ninja generator/cache settings as current NMake instructions.
 
 ## Later explicitly authorized Recycle Bin execution
 

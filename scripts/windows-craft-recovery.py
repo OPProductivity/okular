@@ -332,12 +332,15 @@ def developer_environment(vcvars: Path, helper_dir: Path) -> dict:
     helper.write_text(f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b %errorlevel%\nset\n', encoding="utf-8")
     result = subprocess.run(["cmd.exe", "/d", "/c", str(helper)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    env = os.environ.copy()
+    # Windows environment variable names are case-insensitive. Keeping both
+    # PATH from the caller and Path from vcvars makes CreateProcess choose an
+    # unpredictable search path, hiding build-time DLLs from tools such as rcc.
+    env = {key.upper(): value for key, value in os.environ.items()}
     # Environment is used in memory only; never log potential secret values.
     for line in result.stdout.decode(errors="replace").splitlines():
         if "=" in line and not line.startswith("="):
             key, value = line.split("=", 1)
-            env[key] = value
+            env[key.upper()] = value
     return env
 
 
@@ -382,8 +385,8 @@ def probe_qt(snapshot: Path, build: Path, cmake: Path, vcvars: Path, module: str
     feature flag or all Qt modules have been reproduced.
     """
     state = json.loads((snapshot / "recovery.json").read_text(encoding="utf-8"))
-    if not state.get("complete") or module not in QT_MODULES or module == "qtbase":
-        raise ValueError("Use a complete snapshot and a supported add-on Qt module")
+    if not state.get("complete") or module not in QT_MODULES:
+        raise ValueError("Use a complete snapshot and a supported Qt module")
     craft = Path(state["craft_root"])
     if build.exists() or inside(build, craft) or inside(build, Path(state["source_root"])):
         raise ValueError("Use a new probe directory outside retained source/runtime")
@@ -392,16 +395,48 @@ def probe_qt(snapshot: Path, build: Path, cmake: Path, vcvars: Path, module: str
     bases = [p for p in (craft / "build/libs/qt6/qtbase/work").iterdir() if p.is_dir() and "everywhere-src" in p.name]
     if len(sources) != 1 or len(bases) != 1:
         raise ValueError("Expected exactly one preserved module and Qt base source version")
-    env = developer_environment(vcvars, snapshot)
-    env["PATH"] = str(craft / "bin") + os.pathsep + str(craft / "dev-utils/bin") + os.pathsep + env.get("PATH", "")
-    commands = [[str(cmake), "-S", str(sources[0]), "-B", str(build), "-G", "NMake Makefiles",
-                 "-DCMAKE_MAKE_PROGRAM=" + str(craft / "dev-utils/bin/jom.exe"),
+    # Keep each probe's bootstrap script in its own new directory so concurrent
+    # module probes cannot rewrite a shared helper while another is launching it.
+    env = developer_environment(vcvars, build)
+    runtime_paths = [craft / "bin", craft / "dev-utils/bin"]
+    if module == "qtbase":
+        # Build-time tools such as rcc must load the QtCore DLL produced by this
+        # cold tree, along with third-party DLLs retained in Craft's bin dir.
+        runtime_paths.insert(0, build / "bin")
+    env["PATH"] = os.pathsep.join(map(str, runtime_paths)) + os.pathsep + env.get("PATH", "")
+    # Qt Speech's generated NMake rules need Microsoft's nmake. Qt Declarative
+    # also stalled in jom's large build graph before compiling any target.
+    make_program = "nmake" if module in ("qtspeech", "qtdeclarative") else str(craft / "dev-utils/bin/jom.exe")
+    configure = [str(cmake), "-S", str(sources[0]), "-B", str(build), "-G", "NMake Makefiles",
+                 "-DCMAKE_MAKE_PROGRAM=" + make_program,
                  "-DCMAKE_PREFIX_PATH=" + str(craft), "-DCMAKE_INSTALL_PREFIX=" + str(craft),
-                 "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DQT_SOURCE_TREE=" + str(bases[0]),
-                 "-DQT_BUILD_TESTS=OFF", "-DQT_BUILD_EXAMPLES=OFF"]]
+                 "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+                 "-DQT_BUILD_TESTS=OFF", "-DQT_BUILD_EXAMPLES=OFF"]
+    if module != "qtbase":
+        # Installed QtBuildInternals may still refer to the old Z: source tree.
+        configure.append("-DQT_SOURCE_TREE=" + str(bases[0]))
+    else:
+        # Match the retained Craft QtBase recipe. Autodetection otherwise
+        # silently switches from ICU and system libraries to bundled/SDK modes.
+        configure += [
+            "-DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES=" + str(craft / "include"),
+            "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+            "-DPKG_CONFIG_EXECUTABLE=" + str(craft / "bin/pkg-config.exe"),
+            "-DFEATURE_pkg_config=ON",
+            "-DFEATURE_system_sqlite=ON",
+            "-DFEATURE_system_freetype=ON",
+            "-DFEATURE_system_harfbuzz=ON",
+            "-DFEATURE_openssl_linked=ON",
+            "-DFEATURE_icu=ON",
+            "-DFEATURE_winsdkicu=OFF",
+            "-DFEATURE_dbus_linked=OFF",
+        ]
+    commands = [configure]
     if compile_module:
-        commands.append([str(cmake), "--build", str(build), "--parallel", "2"])
-    receipt = {"module": module, "profile": "standard add-on; no tests/examples; not exact historical feature parity",
+        # NMake-generated top-level Makefiles contain .NOTPARALLEL; CMake
+        # ignores --parallel and jom /J cannot override that guard safely.
+        commands.append([str(cmake), "--build", str(build)])
+    receipt = {"module": module, "profile": "standard module; no tests/examples; not exact historical feature parity",
                "install_performed": False, "build_root": str(build.resolve()), "steps": []}
     with (snapshot / f"qt-{module}-probe.log").open("wb") as stream:
         for command in commands:
@@ -470,9 +505,9 @@ def main():
     pro.add_argument("--cmake", type=Path, default=Path(r"C:\Program Files\CMake\bin\cmake.exe"))
     pro.add_argument("--vcvars", type=Path, default=Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"))
     pro.add_argument("--compile", action="store_true", help="Compile the Okular target; never install or launch it")
-    qt = commands.add_parser("probe-qt", help="Cold add-on Qt module probe; no installation or launch")
+    qt = commands.add_parser("probe-qt", help="Cold Qt module probe; no installation or launch")
     qt.add_argument("--snapshot", type=Path, required=True); qt.add_argument("--build-dir", type=Path, required=True)
-    qt.add_argument("--module", choices=[m for m in QT_MODULES if m != "qtbase"], default="qtsvg")
+    qt.add_argument("--module", choices=QT_MODULES, default="qtsvg")
     qt.add_argument("--cmake", type=Path, default=Path(r"C:\Program Files\CMake\bin\cmake.exe"))
     qt.add_argument("--vcvars", type=Path, default=Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"))
     qt.add_argument("--compile", action="store_true")

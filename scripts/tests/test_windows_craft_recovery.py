@@ -13,6 +13,17 @@ spec.loader.exec_module(recovery)
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_msvc_environment_has_one_windows_path_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vcvars = Path(tmp) / "vcvars64.bat"
+            vcvars.write_bytes(b"@echo off\n")
+            fake = mock.Mock(stdout=b"Path=C:\\toolchain\\bin\nINCLUDE=C:\\headers\n")
+            with mock.patch.object(recovery.os, "environ", {"PATH": "C:\\old", "Path": "C:\\stale"}):
+                with mock.patch.object(recovery.subprocess, "run", return_value=fake):
+                    env = recovery.developer_environment(vcvars, Path(tmp) / "helper")
+            self.assertEqual([key for key in env if key.lower() == "path"], ["PATH"])
+            self.assertEqual(env["PATH"], "C:\\toolchain\\bin")
+
     def test_candidate_scope_never_selects_sources_images_or_app_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
