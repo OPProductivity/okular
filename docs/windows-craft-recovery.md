@@ -111,12 +111,30 @@ NMake-generated top-level Makefiles include `.NOTPARALLEL`: CMake ignores
 invocations may still run targets concurrently. The helper does not promise a
 specific worker count; budget time and memory accordingly. Do not restore
 historical Ninja generator/cache settings as current NMake instructions.
-The 21 November 2026 QtBase and Declarative proofs each needed a correction
-within an isolated cold tree. They establish successful full builds from retained
-sources, but not an uninterrupted single-command run from an empty tree using
-the final helper settings. Repeat those exact final recipes end to end before
-claiming that stronger result. All probes used the installed Craft dependencies;
-none tested their removal or a clean-machine bootstrap.
+The earlier 21 November 2026 QtBase and Declarative proofs each needed a
+correction within an isolated cold tree. On 21 November, the final helper's
+QtBase recipe subsequently configured and fully compiled from a new, empty
+NMake/jom directory in one run. Its 489 feature choices shared with the
+retained QtBase cache matched, with two additional cache entries. The helper
+did not install that output. An equivalent uninterrupted full Declarative run
+was still in progress when this note was updated. All probes used the
+installed Craft dependencies; none tested their removal or a clean-machine
+bootstrap.
+
+### Retained Qt source audit
+
+On 21 November 2026, the unpacked source trees of all nine Qt modules were
+compared file by file with their matching downloaded `6.11.3` source archives:
+89,597 original files in total. Eight module trees had no changed, missing,
+or extra files. QtBase had seven changed files, no missing files, and three
+extra `.orig` patch backups. The changed QtBase paths were covered by the
+pinned public KDE blueprint's `.craft` patches (`qstandardpaths_mac.mm` and
+`qtestlog.cpp`), its 6.11.3 backports (`qmacstyle_mac.mm` and `qhsts.cpp`),
+and this fork's preserved CVE-2026-116337 patches (`qhttpheaderparser_p.h`,
+`qhttpnetworkreply.cpp`, and its test). This is a path-coverage audit, not a
+byte-for-byte replay of every patch into a fresh extraction. The source
+archives, blueprint base revision, and fork patches remain necessary before
+considering those unpacked trees for removal.
 
 ## Scope when considering further cleanup
 
