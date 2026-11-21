@@ -133,7 +133,8 @@ pinned public KDE blueprint's `.craft` patches (`qstandardpaths_mac.mm` and
 and this fork's preserved CVE-2026-116337 patches (`qhttpheaderparser_p.h`,
 `qhttpnetworkreply.cpp`, and its test). This is a path-coverage audit, not a
 byte-for-byte replay of every patch into a fresh extraction. The source
-archives, blueprint base revision, and fork patches remain necessary before
+archives (identified by checksums in `craft-overrides/SourceArchives.reference.json`),
+blueprint base revision, and fork patches remain necessary before
 considering those unpacked trees for removal.
 
 ## Scope when considering further cleanup

@@ -143,3 +143,9 @@ revision field was excluded because it contains a local executable path and a
 personal branch name. This list helps select comparable dependency versions,
 but it contains no package payloads, hashes or download URLs and does not
 guarantee that a future Craft cache still provides those exact builds.
+
+`SourceArchives.reference.json` identifies the downloaded source archives for
+the nine audited Qt modules plus Poppler, libspectre and Ghostscript by
+relative Craft archive name, byte count and SHA-256. Check the digest after
+obtaining an archive elsewhere. This file is an integrity reference; it does
+not contain source bytes or promise that the upstream download remains online.

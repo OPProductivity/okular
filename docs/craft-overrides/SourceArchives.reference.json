@@ -1,0 +1,65 @@
+{
+  "scope": "Downloaded source archives observed in Craft; checksums identify bytes but do not bundle archives or guarantee future download availability.",
+  "archives": [
+    {
+      "archive": "libs/qt6/qtbase/qtbase-everywhere-src-6.11.3.tar.xz",
+      "bytes": 50715968,
+      "sha256": "46de0710b594945a5d446ae44354daa386141c6903c53781b2ca547bc62f8f8f"
+    },
+    {
+      "archive": "libs/qt6/qtshadertools/qtshadertools-everywhere-src-6.11.3.tar.xz",
+      "bytes": 1216920,
+      "sha256": "d86079425ec71eecbb05f4d20623b0a403a7d21a5cfa7efb9734ea3d538d801b"
+    },
+    {
+      "archive": "libs/qt6/qt5compat/qt5compat-everywhere-src-6.11.3.tar.xz",
+      "bytes": 14635456,
+      "sha256": "2e998067417de46355b6750c3709aaa6032fb27e4b16edb5f73fba79fe436516"
+    },
+    {
+      "archive": "libs/qt6/qtspeech/qtspeech-everywhere-src-6.11.3.tar.xz",
+      "bytes": 249320,
+      "sha256": "cfadb37721f20c2dc85926a1edbf6c165d9162ea38ccdb6cbc4466109a21578c"
+    },
+    {
+      "archive": "libs/qt6/qtdeclarative/qtdeclarative-everywhere-src-6.11.3.tar.xz",
+      "bytes": 38795784,
+      "sha256": "6d6db328a02ae3bb0b1e6944aeef8dfe44cd6b55ab59b1708bbf0400f5759cb5"
+    },
+    {
+      "archive": "libs/qt6/qtmultimedia/qtmultimedia-everywhere-src-6.11.3.tar.xz",
+      "bytes": 10254792,
+      "sha256": "3d172de9bdd137686c3871762a4adff988a1ec0faec15df0c4560cfc417288e6"
+    },
+    {
+      "archive": "libs/qt6/qttools/qttools-everywhere-src-6.11.3.tar.xz",
+      "bytes": 10227856,
+      "sha256": "524ca79ee653fa36d4644ce66a5c0825930ee2550ff1d0987e703a66fd6c61ec"
+    },
+    {
+      "archive": "libs/qt6/qtsvg/qtsvg-everywhere-src-6.11.3.tar.xz",
+      "bytes": 2341756,
+      "sha256": "9bdf6fa4b5a2d91c3eaa2edd12263fdff0ae19d0ac25d3c99946cd4189a07123"
+    },
+    {
+      "archive": "libs/qt6/qtlanguageserver/qtlanguageserver-everywhere-src-6.11.3.tar.xz",
+      "bytes": 138196,
+      "sha256": "64f4310b5403157eb7652bbd57bdd09b0ed080c9cd9e98b5bf84883ecaa8d60f"
+    },
+    {
+      "archive": "qt-libs/poppler/poppler-poppler-26.11.0.tar.bz2",
+      "bytes": 1599852,
+      "sha256": "65770d413a59f1cbda01d728c89b216d4a82278cdba752742dde77d377e4bbec"
+    },
+    {
+      "archive": "libs/libspectre/libspectre-0.2.12.tar.gz",
+      "bytes": 436264,
+      "sha256": "55a7517cd3572bd2565df0cf450944a04d5273b279ebb369a895391957f0f960"
+    },
+    {
+      "archive": "libs/ghostscript/ghostscript-10.08.0.tar.xz",
+      "bytes": 69197208,
+      "sha256": "c20492bc8ebb96c87fa2e52a0926e1cda8cde95d66145e018ac713fed5da38cf"
+    }
+  ]
+}
