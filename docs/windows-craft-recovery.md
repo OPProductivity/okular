@@ -118,6 +118,28 @@ the final helper settings. Repeat those exact final recipes end to end before
 claiming that stronger result. All probes used the installed Craft dependencies;
 none tested their removal or a clean-machine bootstrap.
 
+## Scope when considering further cleanup
+
+The fixed candidate list covers generated `work/build` directories only. It
+does not qualify removal of Qt or Poppler source trees, Craft downloads/cache
+packages, staging images, debug symbols, the installed `bin/lib/plugins/share`
+prefix, toolchains, or the current Okular build. The public fork now preserves
+the locally changed Craft/blueprint code as reviewable patches and records
+non-sensitive reference options, but the private capture holds the source
+archive, package database, exact local settings, installed hashes and logs.
+Those private artifacts should remain backed up; they are not safe to publish
+just to make a public Git checkout look self-contained.
+
+Before selecting any additional target, inventory its exact contents and
+consumers, distinguish downloaded or generated files from edited source and
+unique package images, preserve the relevant recipe/patches in Git without
+private data, and verify a rebuild or restoration route that actually excludes
+the selected target. A successful cold module build while the installed prefix
+remains does not justify removing that prefix. If a particular dependency
+archive disappears from Craft's cache and upstream mirrors, documentation and
+hashes alone cannot restore its bytes; retain a lawful private copy or a tested
+installer when that recovery guarantee is required.
+
 ## Later explicitly authorized Recycle Bin execution
 
 The generated plan names exact directories; it is not an executable cleanup

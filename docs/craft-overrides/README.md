@@ -121,3 +121,10 @@ reference local edits on 21 November 2026 and matched after line-ending
 normalization. The three copied upstream-source patch files matched byte for
 byte. This is a code-state reconstruction check, not a clean-machine Craft
 bootstrap, dependency download, build, installation or runtime test.
+
+`CraftSettings.reference.ini` and `BlueprintSettings.reference.ini` preserve
+allowlisted, non-sensitive option values from the same installation. Merge only
+the settings supported by the pinned Craft/blueprint version; the files omit
+machine paths, signing details and private values and are not drop-in config
+replacements. The reference setting `EnableDailyUpdates=True` permits drift;
+verify the two Git revisions again before compiling if it remains enabled.
