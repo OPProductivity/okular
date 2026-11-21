@@ -41,6 +41,10 @@ archive, records candidate file identities/sizes, and hashes retained source and
 installed-prefix inputs. Untracked files outside the supported patch/source
 extensions are reported as excluded rather than silently treated as protected.
 The current source and runtime remain at their original paths.
+The archive does not contain a restorable copy of the installed Craft prefix or
+the MSVC/SDK toolchain. Its installed-file hashes detect drift; they are not
+replacement binaries for a new PC. Keep the installed prefix or separately
+preserve a tested installation image when that recovery guarantee is needed.
 
 `verify` checks the saved artifact hashes, each retained Qt source member
 against its recorded SHA-256, protected current-file hashes and Git bundles,
@@ -107,6 +111,12 @@ NMake-generated top-level Makefiles include `.NOTPARALLEL`: CMake ignores
 invocations may still run targets concurrently. The helper does not promise a
 specific worker count; budget time and memory accordingly. Do not restore
 historical Ninja generator/cache settings as current NMake instructions.
+The 21 November 2026 QtBase and Declarative proofs each needed a correction
+within an isolated cold tree. They establish successful full builds from retained
+sources, but not an uninterrupted single-command run from an empty tree using
+the final helper settings. Repeat those exact final recipes end to end before
+claiming that stronger result. All probes used the installed Craft dependencies;
+none tested their removal or a clean-machine bootstrap.
 
 ## Later explicitly authorized Recycle Bin execution
 

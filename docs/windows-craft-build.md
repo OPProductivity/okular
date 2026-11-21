@@ -30,7 +30,7 @@ git rev-parse HEAD
 # Optional: git checkout 260e8390143b0a7a31434a61b348f5f390569058
 ```
 
-The example commit is the source revision validated in October 2026. Later commits may include documentation or fixes. Keep a record of the exact revision you build. The checked environment used Craft commit `ddb5c39fac12a3341aaf2038e784450f315842ee`, KDE blueprint commit `8b7b096bd22b9d34858809c34e99d0a995a7b216`, MSVC toolset directory `14.44.35207`, CMake `4.4.4`, and jom `1.1.3`. These identify the reference environment, but the installed Craft dependency packages were not frozen in a lockfile.
+The example commit is the source revision validated in October 2026. Later commits may include documentation or fixes. Keep a record of the exact revision you build. The earlier checked environment used Craft commit `ddb5c39fac12a3341aaf2038e784450f315842ee` and KDE blueprint commit `8b7b096bd22b9d34858809c34e99d0a995a7b216`. These are historical reference commits, not pins for the current installation. The 21 November 2026 local recovery profile used Okular source commit `976904a0dfc35bab4d152760b67ff4bfe3f1a32b`, Craft commit `0e96fbc37aa76adef5b5e60d10ccf9cd477a2667`, KDE blueprint commit `5e61dd7ef449b7680551cca8a0a98a8fcde4a20b`, MSVC toolset directory `14.44.35207`, CMake `4.4.4`, and jom `1.1.3`. Craft and the blueprint checkout also had local recipe and Python changes; their commit IDs alone do not describe the environment. The installed Craft dependency packages were not frozen in a public lockfile.
 
 ## 3. Prepare Craft and build the dependencies
 
@@ -156,5 +156,11 @@ installing, launching or deleting anything. A `build` directory is not uniformly
 disposable: keep the current Okular incremental build and source/staging inputs.
 
 The public Git repository preserves this fork's source and these instructions. It does not preserve a frozen Visual Studio toolchain, all Craft blueprints/cache packages, an installer, per-user settings, session backups, or personal documents. For the closest functional rebuild, record the source commit and the Craft/Visual Studio/CMake versions used, and retain a tested installer or runtime backup separately if you require rollback without rebuilding. Exact binary hashes may differ on another PC even when functionality matches.
+
+### What the rebuild checks establish
+
+The November 2026 cold Qt module probes used retained Qt 6.11.3 source trees and the **already installed** Craft prefix. The fresh Okular probe also linked against that prefix. Successful compilation therefore demonstrates rebuilding with those dependencies available; it does not demonstrate bootstrapping the entire dependency graph or reproducing the installed binaries byte for byte. Matching `FEATURE_` cache entries is a useful profile check, but it does not compare every compiler option, plugin, or runtime behavior. QtBase needed a corrected reconfigure in its isolated tree. Declarative completed a full NMake build after some large targets were built with scoped jom commands; a later cache change to `nmake` was checked with a smaller target, not another complete build.
+
+For a dated private recovery record, retain the Craft package database, local Craft/blueprint patches, Qt source archive, installed-file hashes, source and tool commits, configuration summaries, build logs, and test results together. The recovery tool captures many of these inputs, but it records hashes of installed dependencies rather than bundling an installable Craft prefix. Before claiming a clean-machine reproduction, restore or bootstrap the dependency set in a disposable prefix, rebuild the source there, install it, and check the PDF/PS loaders and normal desktop behavior. Keep the original generated Qt build trees until the separately reviewed cleanup gates pass.
 
 Do not publish `C:\CraftRoot\etc`, CMake caches, build logs, `%LOCALAPPDATA%\okular`, `%LOCALAPPDATA%\okularrc`, or local PDF files. These can contain usernames, document paths, session history, or machine details. The repository's public URL identifies its hosting account; source documentation cannot make that account anonymous.
