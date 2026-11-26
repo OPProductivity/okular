@@ -95,6 +95,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #if defined(Q_OS_WIN)
 #ifndef NOMINMAX
@@ -585,8 +586,11 @@ public:
                 setScrollOffset(offset.toInt());
             }
         });
-        connect(this, &QTabBar::currentChanged, this, [this]() {
+        connect(this, &QTabBar::currentChanged, this, [this](int current) {
             stopCentering();
+            if (m_adjacentScrollAnchor && m_adjacentScrollAnchor->tab != current) {
+                m_adjacentScrollAnchor.reset();
+            }
             alignVisibleTabs();
         });
 #endif
@@ -611,12 +615,29 @@ public:
         return available;
     }
 
+    void selectAdjacentTab(int step)
+    {
+        const int adjacent = currentIndex() + step;
+        if (adjacent < 0 || adjacent >= count()) {
+            return;
+        }
+#if defined(Q_OS_WIN)
+        // The document GUI can briefly change the number of visible slots and
+        // restore them on a later layout pass. Keep the original offset as
+        // the preferred position while making this adjacent tab visible.
+        m_adjacentScrollAnchor = AdjacentScrollAnchor{adjacent, scrollOffset()};
+#endif
+        // Let QTabWidget update the document and Shell's GUI once via currentChanged.
+        setCurrentIndex(adjacent);
+    }
+
     void centerCurrentTab()
     {
         if (currentIndex() < 0) {
             return;
         }
 #if defined(Q_OS_WIN)
+        m_adjacentScrollAnchor.reset();
         const int visible = width() / documentTabWidth();
         if (visible > 0 && visible < count() && width() % documentTabWidth() == 0) {
             const int leading = std::clamp(currentIndex() - (visible - 1) / 2, 0, count() - visible);
@@ -669,6 +690,7 @@ protected:
 
     void mousePressEvent(QMouseEvent *event) override
     {
+        m_adjacentScrollAnchor.reset();
         const bool centering = m_centerAnimation.state() == QAbstractAnimation::Running;
         stopCentering();
         QTabBar::mousePressEvent(event);
@@ -679,6 +701,7 @@ protected:
 
     void wheelEvent(QWheelEvent *event) override
     {
+        m_adjacentScrollAnchor.reset();
         stopCentering();
         QTabBar::wheelEvent(event);
         if (event->phase() == Qt::ScrollEnd) {
@@ -689,6 +712,7 @@ protected:
     void tabInserted(int index) override
     {
         QTabBar::tabInserted(index);
+        m_adjacentScrollAnchor.reset();
         stopCentering();
         alignVisibleTabs();
     }
@@ -696,6 +720,7 @@ protected:
     void tabRemoved(int index) override
     {
         QTabBar::tabRemoved(index);
+        m_adjacentScrollAnchor.reset();
         stopCentering();
         alignVisibleTabs();
     }
@@ -722,12 +747,8 @@ private:
             return;
         }
 
-        const int offset = scrollOffset();
-        if (offset % tabWidth == 0) {
-            return;
-        }
-
-        int first = std::clamp(qRound(double(offset) / tabWidth), 0, count() - visible);
+        const int preferredOffset = m_adjacentScrollAnchor ? m_adjacentScrollAnchor->offset : scrollOffset();
+        int first = std::clamp(qRound(double(preferredOffset) / tabWidth), 0, count() - visible);
         const int current = currentIndex();
         if (current >= 0) {
             first = std::clamp(first, std::max(0, current - visible + 1), std::min(current, count() - visible));
@@ -751,6 +772,11 @@ private:
         shiftTabs(isRightToLeft() ? change : -change);
     }
 
+    struct AdjacentScrollAnchor {
+        int tab;
+        int offset;
+    };
+    std::optional<AdjacentScrollAnchor> m_adjacentScrollAnchor;
     QVariantAnimation m_centerAnimation;
 #endif
 
@@ -1007,8 +1033,8 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
             button->setAutoRepeat(true);
             button->setFixedSize(20, 26);
             connect(button, &QToolButton::clicked, this, [this, direction]() {
-                const int step = m_tabWidget->tabBar()->isRightToLeft() ? -direction : direction;
-                setActiveTab(m_tabWidget->currentIndex() + step);
+                auto *const tabBar = static_cast<DocumentTabBar *>(m_tabWidget->tabBar());
+                tabBar->selectAdjacentTab(tabBar->isRightToLeft() ? -direction : direction);
             });
             tabNavigationLayout->addWidget(button);
             return button;

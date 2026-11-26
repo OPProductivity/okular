@@ -375,6 +375,8 @@ def build(source: Path, prefix: Path, build_dir: Path, cmake: Path, vcvars: Path
 
     cases = [
         "testTabPaletteTracksColorScheme", "testTabWidthsStayStableAcrossSelection",
+        "testTabControlsRemainAvailable", "testOverflowArrowsSelectEveryTab",
+        "testRtlOverflowControlsFollowVisualOrder", "testCenterButtonFramesActiveTab",
         "testPageNumberControlWidthStaysStable", "testToolbarPageCounterStaysPutAcrossTabs",
         "testDuplicateOpenShowsPageNotice", "testRecentHistoryHasUniqueNewestEntries", "testOpenDocumentSessionRestoresTabs",
         "testTemporarilyMissingTabSurvivesRestore",
