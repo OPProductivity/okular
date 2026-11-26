@@ -27,31 +27,28 @@ matching package is unavailable. The bundle records the as-installed file
 bytes and their package ownership, including local replacements that differ
 from Craft's database hashes.
 
-## Export and restore
+## Export on the original PC
 
 Use a short, disposable path separate from the installed Craft root, the
 repository and synced folders. The examples use a new `C:\OkularReplay` tree
-and PowerShell. Set `$recipe` to the absolute path of
-`scripts\windows-craft-prefix.py` in a checkout containing this guide. Python
-3.13 or newer is required by the helper.
+and PowerShell. Run the first line from a checkout containing this guide.
+Use Python 3.13 or newer.
 
 ```powershell
+$recipe = (Resolve-Path .\scripts\windows-craft-prefix.py).Path
 $root = 'C:\OkularReplay'
 $live = 'C:\CraftRoot'
 New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
 python -B $recipe capture --craft-root $live --install-manifest "$live\build\kde\applications\okular\work\build\install_manifest.txt" --output "$root\payload"
 python -B $recipe verify --bundle "$root\payload" --kind installed-okular
-python -B $recipe restore --bundle "$root\payload" --destination "$root\prefix"
 ```
 
 Capture uses Craft's read-only package database and the last Okular CMake
 install manifest. It records missing package entries, deduplicates paths, and
 omits unrelated unowned files, dependency debug symbols, MSYS, build trees and
-user data. The Okular install is archived separately. Restore verifies the
-archive and every extracted file by size and SHA-256, and refuses an existing
-destination. Leave room for the private ZIPs, the extracted dependency prefix,
-and the fresh build, installation and logs. The helper measures the two
-payload operations and checks for four additional GiB before the app build.
+user data. The Okular install is archived separately. Record the original
+prefix path alongside the bundle. The build needs that string to relocate
+imported dependency paths, even on a PC where that prefix was never installed.
 
 Keep `payload.lock.json` beside the two private ZIPs. It contains raw package
 revision strings and may contain machine-specific information. Keep it, the
@@ -59,6 +56,23 @@ archives, raw logs and build receipts off the public repository. The Okular ZIP
 preserves the recorded installed application files. Recovering those binary
 bytes still requires compatible dependencies and Windows runtime files. A new
 build can pass all functional checks with different app binary hashes.
+
+## Restore on the build PC
+
+Create the short local work directory and make the private bundle available
+there, or set `$bundle` to the directory containing the existing private
+archive and lock. Leave `$root\prefix` and `$root\build` absent. Allow about
+12 GiB free if the work drive will also hold the private ZIPs. The helper
+checks the space needed for extraction and requires four additional GiB before
+the build. Restore verifies every extracted file by size and SHA-256.
+
+```powershell
+$recipe = (Resolve-Path .\scripts\windows-craft-prefix.py).Path
+$root = 'C:\OkularReplay'
+$bundle = "$root\payload"
+python -B $recipe restore --bundle $bundle --destination "$root\prefix"
+if ($LASTEXITCODE -ne 0) { throw 'Dependency restore failed' }
+```
 
 ## Configure, compile, install and test
 
@@ -72,8 +86,18 @@ git -C "$root\src" fetch --depth=1 https://github.com/OPProductivity/okular.git 
 git -C "$root\src" switch --detach FETCH_HEAD
 $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 $cmake = 'C:\Program Files\CMake\bin\cmake.exe'
-python -B $recipe build --source "$root\src" --commit $commit --prefix "$root\prefix" --build-dir "$root\build" --original-prefix $live --cmake $cmake --vcvars $vcvars
+$originalPrefix = 'C:\CraftRoot'
+python -B $recipe preflight --prefix "$root\prefix" --cmake $cmake --vcvars $vcvars
+if ($LASTEXITCODE -ne 0) { throw 'Build preflight failed' }
+python -B $recipe build --source "$root\src" --commit $commit --prefix "$root\prefix" --build-dir "$root\build" --original-prefix $originalPrefix --cmake $cmake --vcvars $vcvars
 ```
+
+Use the `vcvars64.bat` from your selected Visual Studio 2022 edition. The
+preflight checks the x64 compiler, resource and manifest tools, Windows SDK
+headers, CTest, and build tools and plugins in the restored prefix. It reports
+whether ATL headers are available for a separate Qt Speech source build.
+See the [host tools and feature checklist](windows-craft-build.md#1-install-the-tools)
+for the Visual Studio components and feature dependencies.
 
 The helper selects the restored jom, records the MSVC/SDK selection, uses
 `RelWithDebInfo` and `NMake Makefiles`, and enables Qt 6, shared libraries and
@@ -92,6 +116,26 @@ Text-to-Speech and offscreen platform plugin load from the new prefix. CTest
 and targeted shell cases exercise rendering, theme and tab handling,
 page-counter layout, duplicate opens, recent files and session restoration.
 Normal desktop and Explorer integration remain separate checks.
+
+### Preview the rebuilt reader
+
+Launch the executable with the restored plugin paths and a dedicated Okular
+session in Qt test mode. The profile is reused when opening more files through
+the same command. Use **File > Open**, **Ctrl+O**, or **+** in the preview
+window to add more tabs. Windows Explorer continues to use its current file
+association.
+
+```powershell
+python -B $recipe launch --prefix "$root\prefix" "$root\src\autotests\data\file1.pdf" "$root\src\autotests\data\simple-multipage.pdf"
+```
+
+If configure fails, read `configure.log` for the first missing package or
+incorrect prefix. If compile fails when launching `moc`, `rcc`, or a KDE helper,
+check which Qt DLLs that process resolves. If the app starts with
+`--version` but cannot open a PDF, check the installed part and Poppler
+generator in `installed-pdf.log`. Use a fresh build directory after changing
+the generator or switching prefixes. Restore Qt and KDE development tools,
+headers, and import libraries together with the runtime DLLs and plugins.
 
 ## Verification on 26 November 2026
 

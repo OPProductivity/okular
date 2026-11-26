@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 
@@ -239,6 +240,53 @@ def relocate_metadata(prefix: Path, original_prefix: Path) -> list[dict]:
     return changes
 
 
+def require_files(root: Path, names):
+    missing = [name for name in names if not (root / name).is_file()]
+    if missing:
+        raise ValueError(f"Missing files under {root}: " + ", ".join(missing))
+
+
+def preflight(prefix: Path, cmake: Path, base: dict):
+    if sys.version_info < (3, 13):
+        raise ValueError("Use Python 3.13 or newer for the clean-prefix helper")
+    require_files(cmake.parent, (cmake.name, "ctest.exe"))
+    missing = [tool for tool in ("cl.exe", "link.exe", "rc.exe", "mt.exe", "nmake.exe")
+               if not shutil.which(tool, path=base["PATH"])]
+    if missing:
+        raise ValueError("MSVC or Windows SDK tools missing from vcvars64.bat: " + ", ".join(missing))
+    if base.get("VSCMD_ARG_TGT_ARCH", "").lower() != "x64":
+        raise ValueError("The developer environment must target x64")
+    sdk = Path(base["WINDOWSSDKDIR"]) / "Include" / base["WINDOWSSDKVERSION"].strip("\\/")
+    require_files(sdk, ("um/Windows.h",))
+    require_files(prefix, (
+        "dev-utils/bin/jom.exe", "bin/qtpaths.exe", "bin/moc.exe", "bin/rcc.exe", "bin/uic.exe",
+        "bin/kconfig_compiler_kf6.exe", "bin/meinproc6.exe", "bin/pkg-config.exe",
+        "bin/Qt6Core.dll", "bin/poppler-qt6.dll",
+        "plugins/platforms/qoffscreen.dll", "plugins/platforms/qwindows.dll",
+    ))
+    atl = Path(base["VCTOOLSINSTALLDIR"]) / "atlmfc/include/atlbase.h"
+    print(f"MSVC {base['VCTOOLSVERSION']} x64, Windows SDK {sdk.name}, Python {sys.version.split()[0]}")
+    print(f"ATL headers for Qt Speech SAPI source builds: {'present' if atl.is_file() else 'missing'}")
+
+
+def launch_preview(prefix: Path, documents: list[Path]):
+    require_files(prefix, (*KEY_FILES, "plugins/platforms/qwindows.dll"))
+    for document in documents:
+        if not document.is_file():
+            raise ValueError(f"File does not exist: {document}")
+    env = {name: value for name, value in os.environ.items()
+           if not name.upper().startswith(("QT_", "QML_", "KDE_", "XDG_"))}
+    windows = Path(os.environ["SystemRoot"])
+    env["PATH"] = os.pathsep.join(map(str, (prefix / "bin", windows / "System32", windows)))
+    env["QT_PLUGIN_PATH"] = str(prefix / "plugins")
+    env["QT_QPA_PLATFORM"] = "windows"
+    profile = hashlib.sha256(str(prefix).casefold().encode("utf-8")).hexdigest()[:16]
+    env["OKULAR_TEST_INSTANCE"] = f"craft-preview-{profile}"
+    app = subprocess.Popen([prefix / "bin/okular.exe", *documents], cwd=prefix / "bin", env=env,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"Started preview process {app.pid} from {prefix}")
+
+
 def build(source: Path, prefix: Path, build_dir: Path, cmake: Path, vcvars: Path,
           original_prefix: Path, commit: str):
     if (build_dir.exists() or build_dir.is_relative_to(prefix) or prefix.is_relative_to(build_dir)
@@ -258,11 +306,10 @@ def build(source: Path, prefix: Path, build_dir: Path, cmake: Path, vcvars: Path
     if shutil.disk_usage(build_dir.parent).free < 4 * GIB:
         raise ValueError("Need at least 4 GiB free for the Okular build, install and tests")
     make = prefix / "dev-utils/bin/jom.exe"
-    if not make.is_file():
-        raise ValueError("The restored prefix lacks jom")
     build_dir.mkdir()
     get_environment = runpy.run_path(str(Path(__file__).with_name("windows-craft-recovery.py")))["developer_environment"]
     base = get_environment(vcvars, build_dir)
+    preflight(prefix, cmake, base)
     env = {key: value for key, value in base.items() if key in {
         "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "USERPROFILE",
         "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
@@ -354,6 +401,12 @@ def main():
     verify = commands.add_parser("verify")
     verify.add_argument("--bundle", type=Path, required=True)
     verify.add_argument("--kind", choices=("dependencies", "installed-okular"), required=True)
+    check = commands.add_parser("preflight")
+    for option in ("prefix", "cmake", "vcvars"):
+        check.add_argument(f"--{option}", type=Path, required=True)
+    preview = commands.add_parser("launch")
+    preview.add_argument("--prefix", type=Path, required=True)
+    preview.add_argument("documents", type=Path, nargs="*")
     compile_app = commands.add_parser("build")
     for option in ("source", "prefix", "build-dir", "cmake", "vcvars", "original-prefix"):
         compile_app.add_argument(f"--{option}", type=Path, required=True)
@@ -365,6 +418,13 @@ def main():
         verify_or_restore(args.bundle, "dependencies", args.destination.resolve())
     elif args.action == "verify":
         verify_or_restore(args.bundle, args.kind, None)
+    elif args.action == "preflight":
+        get_environment = runpy.run_path(str(Path(__file__).with_name("windows-craft-recovery.py")))["developer_environment"]
+        with tempfile.TemporaryDirectory() as temporary:
+            base = get_environment(args.vcvars.resolve(), Path(temporary))
+            preflight(args.prefix.resolve(), args.cmake.resolve(), base)
+    elif args.action == "launch":
+        launch_preview(args.prefix.resolve(), [document.resolve() for document in args.documents])
     else:
         # Inherit suppression of native missing-DLL and crash dialog boxes.
         ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)

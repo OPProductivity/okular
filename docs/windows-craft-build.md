@@ -4,7 +4,26 @@ This guide builds the source in this repository. KDE's official Okular download 
 
 ## 1. Install the tools
 
-Use 64-bit Windows 10 or 11. Install Git, Python 3, and Visual Studio 2022 (Community or Build Tools) with **Desktop development with C++** and the Windows SDK. Install standalone CMake if it is not already available. Enable Windows Developer Mode. Follow KDE's [current Craft setup instructions](https://develop.kde.org/docs/getting-started/building/craft/) for Python certificates, the PowerShell execution policy, and Craft bootstrap. Choose an x64 MSVC 2022 configuration and a short Craft path such as `C:\CraftRoot`. Install Craft's `jom` build tool if it is not present at `C:\CraftRoot\dev-utils\bin\jom.exe`.
+Use 64-bit Windows 10 or 11, Git for Windows, Python and CMake with CTest. The
+verified replay used Python 3.14.10 and CMake 4.4.4. The recovery helper requires
+Python 3.13 or newer. Select the Python supported by your pinned Craft checkout
+when bootstrapping Craft itself.
+
+Install Visual Studio 2022 Community or Build Tools with **Desktop development
+with C++**. In the installer, verify the x64/x86 MSVC v143 tools and a Windows
+SDK under **Individual components**. The verified build selected toolset
+14.44.35207 and SDK 10.0.26100.0. The toolset and SDK supply `cl.exe`,
+`link.exe`, `nmake.exe`, `rc.exe`, and `mt.exe`. If building Qt Speech from
+source with the Windows SAPI backend, select the matching **C++ ATL for v143
+build tools (x86 & x64)** component as well. The SDK alone does not supply
+`atlbase.h`. [Visual Studio Build Tools component directory](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=visualstudio)
+
+Enable Windows Developer Mode and follow the
+[KDE Windows Craft setup instructions](https://develop.kde.org/docs/getting-started/building/craft/craft-windows/)
+for Python certificates, PowerShell execution policy, and Craft bootstrap.
+Choose the x64 MSVC 2022 ABI and a short local Craft path such as `C:\CraftRoot`.
+After entering Craft's environment, run `craft dev-utils/jom` if the Craft
+prefix has no `dev-utils\bin\jom.exe`.
 
 Use the **Developer PowerShell for VS 2022** shortcut for the remaining commands. It makes MSVC and the Windows SDK available. If Craft was installed elsewhere, replace `C:\CraftRoot` in every command below with that root. If a command reports a missing tool, check it before proceeding:
 
@@ -12,8 +31,11 @@ Use the **Developer PowerShell for VS 2022** shortcut for the remaining commands
 git --version
 python --version
 cmake --version
-Get-Command cl.exe -ErrorAction SilentlyContinue
-Test-Path C:\CraftRoot\dev-utils\bin\jom.exe
+ctest --version
+Get-Command cl.exe, link.exe, nmake.exe, rc.exe, mt.exe -ErrorAction Stop
+$env:VSCMD_ARG_TGT_ARCH
+$env:VCToolsVersion
+$env:WindowsSDKVersion
 ```
 
 Craft's installer and options may change; the KDE guide is authoritative for bootstrap. Do not copy another person's `CraftSettings.ini`, local configuration, or application data into the new installation.
@@ -27,10 +49,14 @@ New-Item -ItemType Directory -Force C:\src | Out-Null
 git clone https://github.com/OPProductivity/okular.git C:\src\okular
 Set-Location C:\src\okular
 git rev-parse HEAD
-# Optional: git checkout 260e8390143b0a7a31434a61b348f5f390569058
+# Optional: git switch --detach 53cbc1cb106aabe325c40f13a656331f542a8071
 ```
 
-The example commit is the source revision validated in October 2026. Later commits may include documentation or fixes. Keep a record of the exact revision you build. The earlier checked environment used Craft commit `ddb5c39fac12a3341aaf2038e784450f315842ee` and KDE blueprint commit `8b7b096bd22b9d34858809c34e99d0a995a7b216`. These are historical reference commits, not pins for the current installation. The 21 November 2026 local recovery profile used Okular source commit `976904a0dfc35bab4d152760b67ff4bfe3f1a32b`, Craft commit `0e96fbc37aa76adef5b5e60d10ccf9cd477a2667`, KDE blueprint commit `5e61dd7ef449b7680551cca8a0a98a8fcde4a20b`, MSVC toolset directory `14.44.35207`, CMake `4.4.4`, and jom `1.1.3`. Craft and the blueprint checkout also had local recipe and Python changes; their commit IDs alone do not describe the environment. The installed Craft dependency packages were not frozen in a public lockfile.
+The example commit is the source pin for the verified clean-prefix replay
+and includes the fixture-test isolation fixes. Record the commit you build.
+The [replay profile](craft-overrides/CleanPrefix.reference.json) and
+[Craft overrides](craft-overrides/README.md) record the reference Craft and
+blueprint revisions, local patches and dependency versions.
 
 ## 3. Prepare Craft and build the dependencies
 
@@ -52,6 +78,25 @@ craft --ignoreInstalled --options "kde/applications/okular.srcDir=$((Get-Locatio
 ```
 
 Use the full `kde/applications/okular` blueprint name. The `srcDir` option ensures that Craft builds this checkout. The initial command also obtains Okular's Qt/KDE dependencies. It may take a long time and several gigabytes. A build from KDE's upstream repository or without this `srcDir` option would omit this fork's changes. If Craft reports a Python blueprint problem, check its currently supported Python versions first. The reference environment had local Craft fixes, described below; apply them only if a fresh Craft still has the same problem.
+
+### Confirm feature dependencies before compiling
+
+Use the CMake configure summary to confirm both required packages and optional
+features. A successful configure can still omit a document backend. The
+reference desktop build includes:
+
+| Feature | Check in the Craft prefix or CMake summary |
+| --- | --- |
+| Build-time Qt and KDE tools | Qt development modules and `moc.exe`, `rcc.exe`, `uic.exe`, plus KF6 Config’s `kconfig_compiler_kf6.exe` and KF6 DocTools’ `meinproc6.exe`. Runtime DLLs alone cannot supply these. |
+| PDF rendering and PDF JavaScript | Poppler with its Qt 6 development files and `poppler-qt6.dll`, plus Qt Declarative’s Qml module. |
+| PostScript and EPS | libspectre and the matching Ghostscript DLL. |
+| Speech, media, image and UI support | Matching Qt Text-to-Speech and its SAPI/WinRT plugins, Qt Multimedia Widgets, Qt SVG, Breeze/KF6 color schemes, and the Qt platform plugins. |
+| Additional document formats | FreeType, TIFF, DjVuLibre, ebook-tools/EPub, QMobipocket6, and Discount via prefix `pkg-config.exe`. |
+
+The verified Windows build printed notices for absent `appstreamcli`, Linux
+allocator probes and optional Windows icon sizes. Missing `appstreamcli`
+skips the AppStream test. Check the PDF and PostScript generators separately
+if either dependency is absent from the summary.
 
 [KDE's Windows Craft guide](https://develop.kde.org/docs/getting-started/building/craft/craft-windows/) says Craft normally downloads precompiled cached dependency packages, with an option to compile packages locally. Thus a fresh-PC Craft setup that builds this Okular checkout is not the same claim as compiling every Qt, KDE Frameworks, PDF and Ghostscript dependency from source. The latter has not been demonstrated for this fork; some retained packages or historical cache versions may need new recipe work if their downloads are unavailable. The reviewed patches below preserve known local edits, but they cannot replace unavailable package or source bytes.
 

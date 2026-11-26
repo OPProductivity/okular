@@ -85,9 +85,9 @@ source mappings in installed build-internals metadata:
 python scripts/windows-craft-recovery.py probe-qt --snapshot $snapshot `
   --module qtsvg --build-dir C:\recovery\qtsvg-clean-probe --compile
 python scripts/windows-craft-recovery.py probe-qt --snapshot $snapshot `
-  --module qtbase --build-dir D:\recovery\qtbase-clean-probe --compile
+  --module qtbase --build-dir C:\recovery\qtbase-clean-probe --compile
 python scripts/windows-craft-recovery.py probe-qt --snapshot $snapshot `
-  --module qtspeech --build-dir D:\recovery\qtspeech-clean-probe --compile
+  --module qtspeech --build-dir C:\recovery\qtspeech-clean-probe --compile
 ```
 
 This is a functional reconstruction profile, not exact historical feature or
@@ -98,6 +98,12 @@ MSVC ATL component for the Windows speech plugins. Qt Declarative also uses
 Microsoft NMake for the full graph: jom spent over ten minutes loading that
 graph without reaching a compile target in the cold probe. The other modules
 use jom.
+Check the [Windows toolchain prerequisites](windows-craft-build.md#1-install-the-tools)
+before starting a cold build. A build-time resource tool such as `rcc` can
+fail with a DLL loader error even after CMake succeeds. The helper
+canonicalizes Windows environment variable names and places the correct Qt
+`bin` first on `PATH`. For a manual probe, check the tool and DLL paths in
+the same developer shell that runs the build.
 For the retained QtBase 6.11.3 profile, the helper pins Craft's ICU,
 pkg-config, linked OpenSSL, system SQLite/FreeType/HarfBuzz and DBus linkage
 choices. Those dependencies must remain installed in the Craft prefix. Compare
