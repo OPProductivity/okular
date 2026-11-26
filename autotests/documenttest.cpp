@@ -8,6 +8,7 @@
 */
 
 #include <QMimeDatabase>
+#include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QTest>
 
@@ -27,6 +28,11 @@ class DocumentTest : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase()
+    {
+        QStandardPaths::setTestModeEnabled(true);
+    }
+
     void testCloseDuringRotationJob();
     void testDocdataMigration();
     void testEvaluateKeystrokeEventChange_data();

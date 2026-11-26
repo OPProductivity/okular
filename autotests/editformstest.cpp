@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QStandardPaths>
 #include <QTemporaryFile>
 #include <core/form.h>
 #include <core/page.h>
@@ -54,6 +55,7 @@ private:
 
 void EditFormsTest::initTestCase()
 {
+    QStandardPaths::setTestModeEnabled(true);
     Okular::SettingsCore::instance(QStringLiteral("editformstest"));
     m_document = new Okular::Document(nullptr);
 }
