@@ -116,10 +116,10 @@ correction within an isolated cold tree. On 21 November, the final helper's
 QtBase recipe subsequently configured and fully compiled from a new, empty
 NMake/jom directory in one run. Its 489 feature choices shared with the
 retained QtBase cache matched, with two additional cache entries. The helper
-did not install that output. An equivalent uninterrupted full Declarative run
-was still in progress when this note was updated. All probes used the
-installed Craft dependencies; none tested their removal or a clean-machine
-bootstrap.
+did not install that output. The subsequent empty-tree Declarative probe also
+passed configure and full compilation with NMake. All these Qt probes used
+the installed Craft dependencies. The [clean-prefix app recipe](windows-craft-clean-prefix.md)
+exports and restores those dependency files for a separate app-level check.
 
 ### Retained Qt source audit
 

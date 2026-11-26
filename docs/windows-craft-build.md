@@ -169,7 +169,10 @@ The public Git repository preserves this fork's source and these instructions. I
 
 ### What the rebuild checks establish
 
-The November 2026 cold Qt module probes used retained Qt 6.11.3 source trees and the **already installed** Craft prefix. The fresh Okular probe also linked against that prefix. Successful compilation therefore demonstrates rebuilding with those dependencies available; it does not demonstrate bootstrapping the entire dependency graph or reproducing the installed binaries byte for byte. Matching `FEATURE_` cache entries is a useful profile check, but it does not compare every compiler option, plugin, or runtime behavior. QtBase needed a corrected reconfigure in its isolated tree. Declarative completed a full NMake build after some large targets were built with scoped jom commands; a later cache change to `nmake` was checked with a smaller target, not another complete build.
+The November 2026 cold Qt module probes used retained Qt 6.11.3 source trees and the **already installed** Craft prefix. The first fresh Okular probe also linked against that prefix. Matching `FEATURE_` cache entries checks feature choices. Compiler options, plugins and runtime behavior require their own checks. The later empty-tree QtBase and Declarative runs passed configure and full compilation with NMake Makefiles. QtBase used jom and Declarative used Microsoft NMake. Both probes ended after compilation.
+
+For an app build using a verified private export of the exact installed
+dependency files, use the [clean Craft prefix recipe](windows-craft-clean-prefix.md).
 
 For a dated private recovery record, retain the Craft package database, local Craft/blueprint patches, Qt source archive, installed-file hashes, source and tool commits, configuration summaries, build logs, and test results together. The recovery tool captures many of these inputs, but it records hashes of installed dependencies rather than bundling an installable Craft prefix. Before claiming a clean-machine reproduction, restore or bootstrap the dependency set in a disposable prefix, rebuild the source there, install it, and check the PDF/PS loaders and normal desktop behavior. Keep the original generated Qt build trees until the separately reviewed cleanup gates pass.
 

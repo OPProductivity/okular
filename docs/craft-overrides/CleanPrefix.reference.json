@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "okular_source": {
+    "repository": "https://github.com/OPProductivity/okular.git",
+    "commit": "53cbc1cb106aabe325c40f13a656331f542a8071",
+    "clean_build_app_source": "976904a0dfc35bab4d152760b67ff4bfe3f1a32b"
+  },
+  "craft": {
+    "public_parent": "1ef5a8fd0c8a53c3afd062a4d229a92e161b93f9",
+    "reference_local_commit": "0e96fbc37aa76adef5b5e60d10ccf9cd477a2667",
+    "blueprints": "5e61dd7ef449b7680551cca8a0a98a8fcde4a20b",
+    "recipe_and_patch_index": "README.md",
+    "packages": "CraftPackages.reference.json",
+    "source_archives": "SourceArchives.reference.json",
+    "qt_features": "qt-feature-profile-2026-11-21.json"
+  },
+  "tools": {
+    "abi": "windows-cl-msvc2022-x86_64",
+    "architecture": "x64",
+    "msvc_toolset": "14.44.35207",
+    "msvc_compiler": "19.44.35229.0",
+    "windows_sdk": "10.0.26100.0",
+    "cmake": "4.4.4",
+    "python": "3.14.10",
+    "generator": "NMake Makefiles",
+    "jom": "1.1.3",
+    "nmake": "14.44.35230.0",
+    "build_type": "RelWithDebInfo"
+  },
+  "cache": {
+    "origin": "https://files.kde.org/craft/Qt6/",
+    "generations": ["26.05", "26.10"]
+  },
+  "required_private_inputs": [
+    "payload.lock.json",
+    "dependencies.zip"
+  ],
+  "optional_private_binary_recovery_input": "installed-okular.zip"
+}
