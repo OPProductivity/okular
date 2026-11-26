@@ -163,7 +163,7 @@ public:
     MagnifierView *magnifierView = nullptr;
 
     // view layout (columns in Settings), zoom and mouse
-    PageView::ZoomMode zoomMode = PageView::ZoomFitWidth;
+    PageView::ZoomMode zoomMode = PageView::ZoomFixed;
     float zoomFactor = 1.0;
     QPoint mouseGrabOffset;
     QPointF mousePressPos;
@@ -355,30 +355,7 @@ PageView::PageView(QWidget *parent, Okular::Document *document)
 
     d->trimBoundingBox = Okular::NormalizedRect(); // Null box
 
-    switch (Okular::Settings::zoomMode()) {
-    case 0: {
-        d->zoomFactor = 1;
-        d->zoomMode = PageView::ZoomFixed;
-        break;
-    }
-    case 1: {
-        d->zoomMode = PageView::ZoomFitWidth;
-        break;
-    }
-    case 2: {
-        d->zoomMode = PageView::ZoomFitPage;
-        break;
-    }
-    case 3: {
-        d->zoomMode = PageView::ZoomFitAuto;
-        break;
-    }
-    case 4: {
-        d->zoomMode = PageView::ZoomFixed;
-        d->zoomFactor = Okular::Settings::customZoomFactor() / 100.0;
-        break;
-    }
-    }
+    resetZoomToDefault();
 
     connect(Okular::Settings::self(), &Okular::Settings::viewContinuousChanged, this, [=, this]() {
         if (d->aViewContinuous && !d->document->isOpened()) {
@@ -1663,6 +1640,29 @@ void PageView::notifyCurrentPageChanged(int previous, int current)
 }
 
 // END DocumentObserver inherited methods
+
+void PageView::resetZoomToDefault()
+{
+    d->zoomFactor = 1.0;
+    d->zoomMode = ZoomFixed;
+    switch (Okular::Settings::zoomMode()) {
+    case 1:
+        d->zoomMode = ZoomFitWidth;
+        break;
+    case 2:
+        d->zoomMode = ZoomFitPage;
+        break;
+    case 3:
+        d->zoomMode = ZoomFitAuto;
+        break;
+    case 4:
+        d->zoomFactor = Okular::Settings::customZoomFactor() / 100.0;
+        break;
+    }
+    if (d->aZoom) {
+        updateZoomText();
+    }
+}
 
 // BEGIN View inherited methods
 bool PageView::supportsCapability(ViewCapability capability) const

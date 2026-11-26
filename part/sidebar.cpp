@@ -19,6 +19,7 @@
 #include <qpainter.h>
 #include <qscrollbar.h>
 #include <qsplitter.h>
+#include <qstackedwidget.h>
 #include <qtabbar.h>
 #include <qtabwidget.h>
 
@@ -146,7 +147,12 @@ QWidget *Sidebar::currentItem() const
 
 void Sidebar::setSidebarVisibility(bool visible)
 {
-    d->sideContainer->setHidden(!visible);
+    // A shared settings update also reaches inactive parts. Leave those
+    // hidden until the shell selects their page in the sidebar stack.
+    const auto *stack = qobject_cast<const QStackedWidget *>(d->sideContainer->parentWidget());
+    if (!stack || stack->currentWidget() == d->sideContainer) {
+        d->sideContainer->setHidden(!visible);
+    }
 }
 
 bool Sidebar::isSidebarVisible() const

@@ -1455,6 +1455,9 @@ Document::OpenResult Part::doOpenFile(const QMimeType &mimeA, const QString &fil
 
     isDocumentArchive = false;
     if (uncompressOk) {
+        if (!m_isReloading) {
+            m_pageView->resetZoomToDefault();
+        }
         if (isOkularArchive) {
             openResult = m_document->openDocumentArchive(fileNameToOpen, url());
             isDocumentArchive = true;

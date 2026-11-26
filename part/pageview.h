@@ -89,6 +89,7 @@ public:
     void setupActions(KActionCollection *ac);
     void setupActionsPostGUIActivated();
     void updateActionState(bool docHasPages, bool docHasFormWidgets);
+    void resetZoomToDefault();
 
     // misc methods (from RMB menu/children)
     bool canFitPageWidth() const;

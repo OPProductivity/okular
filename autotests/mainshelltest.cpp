@@ -154,6 +154,8 @@ private Q_SLOTS:
     void testOpenInvalidFiles_data();
     void testOpenInvalidFiles();
     void testCorruptPdfDoesNotDiscardValidTab();
+    void testSettingsKeepInactiveSidebarsHidden();
+    void testNewFileStartsAtDefaultZoom();
 #if defined(Q_OS_WIN)
     void testCorruptPdfWithSeparateWindows();
     void testForwardedCorruptPdfAfterClientDisconnect();
@@ -1035,6 +1037,67 @@ void MainShellTest::testDuplicateOpenShowsPageNotice()
     QVERIFY(otherNotice->isVisible());
 }
 #endif
+
+void MainShellTest::testSettingsKeepInactiveSidebarsHidden()
+{
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    shell->openDocumentInTab(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/tocreload.pdf")), QString());
+    shell->openDocumentInTab(QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf")), QString());
+    QCOMPARE(shell->m_tabs.size(), 2);
+
+    auto *outline = qobject_cast<Okular::Part *>(shell->m_tabs.at(0).part);
+    auto *thumbnails = qobject_cast<Okular::Part *>(shell->m_tabs.at(1).part);
+    QVERIFY(outline && thumbnails);
+    QWidget *dock = shell->findChild<QWidget *>(QStringLiteral("okular_sidebar"));
+    QVERIFY(dock);
+    dock->show();
+    Okular::Settings::setShowLeftPanel(true);
+
+    shell->m_tabWidget->setCurrentIndex(1);
+    QVERIFY(QMetaObject::invokeMethod(outline, "slotNewConfig"));
+    QVERIFY(outline->getSideContainer()->isHidden());
+    QVERIFY(!thumbnails->getSideContainer()->isHidden());
+
+    shell->m_tabWidget->setCurrentIndex(0);
+    QVERIFY(QMetaObject::invokeMethod(thumbnails, "slotNewConfig"));
+    QVERIFY(thumbnails->getSideContainer()->isHidden());
+    QVERIFY(!outline->getSideContainer()->isHidden());
+}
+
+void MainShellTest::testNewFileStartsAtDefaultZoom()
+{
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QString first = files.filePath(QStringLiteral("zoom-first-%1.pdf").arg(QFileInfo(files.path()).fileName()));
+    const QString second = files.filePath(QStringLiteral("zoom-second-%1.pdf").arg(QFileInfo(files.path()).fileName()));
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/file1.pdf"), first));
+    QVERIFY(QFile::copy(QStringLiteral(KDESRCDIR "data/simple-multipage.pdf"), second));
+
+    const QString options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main(QStringList{first}, options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    auto *part = qobject_cast<Okular::Part *>(shell->m_tabs.first().part);
+    QVERIFY(part);
+    PageView *view = pageView(part);
+    QCOMPARE(view->capability(Okular::View::ZoomModality).toInt(), int(PageView::ZoomFixed));
+    QCOMPARE(view->capability(Okular::View::Zoom).toDouble(), 1.0);
+
+    view->setCapability(Okular::View::ZoomModality, int(PageView::ZoomFitWidth));
+    QVERIFY(part->closeUrl());
+    part->openDocument(second);
+    QVERIFY(partDocument(part)->isOpened());
+    QCOMPARE(view->capability(Okular::View::ZoomModality).toInt(), int(PageView::ZoomFixed));
+    QCOMPARE(view->capability(Okular::View::Zoom).toDouble(), 1.0);
+
+    QVERIFY(part->closeUrl());
+    part->openDocument(first);
+    QVERIFY(partDocument(part)->isOpened());
+    QCOMPARE(view->capability(Okular::View::ZoomModality).toInt(), int(PageView::ZoomFitWidth));
+}
 
 void MainShellTest::testSharedViewerSettingsAcrossWindows()
 {
