@@ -29,6 +29,7 @@
 #include <windows.h>
 #endif
 #include <QDir>
+#include <QDockWidget>
 #include <QClipboard>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -896,12 +897,12 @@ void MainShellTest::testTabWidthsStayStableAcrossSelection()
         }
         if (count == 1) {
             roomyWidth = width;
-            QVERIFY(roomyWidth >= 280);
+            QCOMPARE(roomyWidth, 280);
         } else if (count < 6) {
             QCOMPARE(width, roomyWidth);
         } else if (count == 6) {
             compactWidth = width;
-            QVERIFY(compactWidth >= 230);
+            QCOMPARE(compactWidth, 230);
             QVERIFY(compactWidth < roomyWidth);
         } else {
             QCOMPARE(width, compactWidth);
@@ -2832,18 +2833,22 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     Shell *shell = findShell();
     QVERIFY(shell);
     QTest::qWait(200); // Let the Windows startup geometry timers finish.
-    shell->resize(500, 520);
+    shell->resize(1420, 680);
 
     const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
-    for (int i = 0; i < 9; ++i) {
+    constexpr int tabCount = 21;
+    for (int i = 0; i < tabCount; ++i) {
         const QString path = directory.filePath(QStringLiteral("tab-%1.pdf").arg(i));
         QVERIFY(QFile::copy(sourcePath, path));
         shell->openUrl(QUrl::fromLocalFile(path));
     }
-    shell->resize(500, 520);
-    QCoreApplication::processEvents();
+    shell->resize(1420, 680);
+    auto *dock = shell->findChild<QDockWidget *>(QStringLiteral("okular_sidebar"));
+    QVERIFY(dock);
+    dock->hide();
+    QTest::qWait(200); // Settle the initial window and dock layout before measuring tab movement.
     shell->updateOpenTabButtonGeometry();
-    QCOMPARE(shell->m_tabWidget->currentIndex(), 8);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), tabCount - 1);
     QTabBar *tabBar = shell->m_tabWidget->tabBar();
     QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
     scrollButtons.removeAll(shell->m_centerActiveTabButton);
@@ -2877,20 +2882,41 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     const QRect openRectInShell(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
     QCOMPARE(openRectInShell.left() - nextRectInShell.right() - 1, 3);
 
-    for (int expected = 7; expected >= 0; --expected) {
-        QVERIFY(previousTabButton->isEnabled());
-        QTest::mouseClick(previousTabButton, Qt::LeftButton);
+    const auto visibleTabs = [&]() {
+        return tabBar->rect().adjusted(0, 0, previousTabButton->x() - tabBar->width(), 0);
+    };
+    int alreadyVisible = 0;
+    int revealed = 0;
+    const auto navigate = [&](QToolButton *button, int expected) {
+        const QRect viewport = visibleTabs();
+        const QRect before = tabBar->tabRect(expected);
+        const QRect reference = tabBar->tabRect(0);
+        QVERIFY(button->isEnabled());
+        QTest::mouseClick(button, Qt::LeftButton);
+        QCoreApplication::processEvents();
         QCOMPARE(shell->m_tabWidget->currentIndex(), expected);
+        const QRect after = visibleTabs();
+        QVERIFY(after.contains(tabBar->tabRect(expected)));
+        if (viewport == after && viewport.contains(before)) {
+            ++alreadyVisible;
+            QCOMPARE(tabBar->tabRect(0), reference);
+            QCOMPARE(tabBar->tabRect(expected), before);
+        } else if (!viewport.contains(before)) {
+            ++revealed;
+        }
+    };
+    for (int expected = tabCount - 2; expected >= 0; --expected) {
+        navigate(previousTabButton, expected);
     }
     QCoreApplication::processEvents();
     QVERIFY(!previousTabButton->isEnabled());
     QVERIFY(nextTabButton->isEnabled());
-    for (int expected = 1; expected < 9; ++expected) {
-        QVERIFY(nextTabButton->isEnabled());
-        QTest::mouseClick(nextTabButton, Qt::LeftButton);
-        QCOMPARE(shell->m_tabWidget->currentIndex(), expected);
+    for (int expected = 1; expected < tabCount; ++expected) {
+        navigate(nextTabButton, expected);
     }
     QVERIFY(!nextTabButton->isEnabled());
+    QVERIFY(alreadyVisible > 0);
+    QVERIFY(revealed > 0);
     delete shell;
 }
 
@@ -2952,15 +2978,16 @@ void MainShellTest::testCenterButtonFramesActiveTab()
     Shell *shell = findShell();
     QVERIFY(shell);
     QTest::qWait(200); // Wait for the Windows startup geometry timers.
-    shell->resize(500, 520);
+    shell->resize(1393, 620);
     const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 21; ++i) {
         const QString path = directory.filePath(QStringLiteral("tab-%1.pdf").arg(i));
         QVERIFY(QFile::copy(sourcePath, path));
         shell->openUrl(QUrl::fromLocalFile(path));
     }
-    shell->resize(500, 520);
-    shell->setActiveTab(4);
+    shell->resize(1393, 620);
+    constexpr int current = 8;
+    shell->setActiveTab(current);
     QCoreApplication::processEvents();
     shell->updateOpenTabButtonGeometry();
     QTabBar *tabBar = shell->m_tabWidget->tabBar();
@@ -2969,19 +2996,39 @@ void MainShellTest::testCenterButtonFramesActiveTab()
     nativeButtons.erase(std::remove_if(nativeButtons.begin(), nativeButtons.end(), [](QToolButton *button) { return !button->isVisible(); }), nativeButtons.end());
     std::sort(nativeButtons.begin(), nativeButtons.end(), [](QToolButton *a, QToolButton *b) { return a->x() < b->x(); });
     QVERIFY(nativeButtons.size() >= 2);
-    QToolButton *const rightScrollButton = nativeButtons.last();
-    shell->m_centeringActiveTab = true;
-    for (int i = 0; i < 9 && rightScrollButton->isEnabled(); ++i) {
-        rightScrollButton->click();
-        QCoreApplication::processEvents();
-    }
-    shell->m_centeringActiveTab = false;
-    const int visibleCenter = (tabBar->rect().left() + nativeButtons.at(nativeButtons.size() - 2)->x() - 1) / 2;
-    const int before = std::abs(tabBar->tabRect(4).center().x() - visibleCenter);
+    const QRect viewport = tabBar->rect().adjusted(0, 0, nativeButtons.at(nativeButtons.size() - 2)->x() - tabBar->width(), 0);
+    const int visibleCenter = viewport.center().x();
+    const int before = std::abs(tabBar->tabRect(current).center().x() - visibleCenter);
     shell->m_centerActiveTabButton->click();
-    const int after = std::abs(tabBar->tabRect(4).center().x() - visibleCenter);
-    QCOMPARE(shell->m_tabWidget->currentIndex(), 4);
+    const int after = std::abs(tabBar->tabRect(current).center().x() - visibleCenter);
+    QCOMPARE(shell->m_tabWidget->currentIndex(), current);
     QVERIFY(after < before);
+    QVERIFY(after <= 1);
+    const int leading = tabBar->tabAt(QPoint(viewport.left(), viewport.center().y()));
+    QVERIFY(leading >= 0);
+    QVERIFY(tabBar->tabRect(leading).left() < viewport.left());
+    QWidget *const cover = tabBar->findChild<QWidget *>(QStringLiteral("leadingTabFragmentCover"));
+    QVERIFY(cover && cover->isVisible());
+    QCOMPARE(cover->geometry(), tabBar->tabRect(leading).intersected(viewport));
+    auto *dock = shell->findChild<QDockWidget *>(QStringLiteral("okular_sidebar"));
+    QVERIFY(dock);
+    dock->show();
+    for (int width : {200, 600, 300}) {
+        shell->resizeDocks({dock}, {width}, Qt::Horizontal);
+        QTest::qWait(200);
+        const QRect resizedViewport = tabBar->rect().adjusted(0, 0, nativeButtons.at(nativeButtons.size() - 2)->x() - tabBar->width(), 0);
+        QVERIFY(resizedViewport.contains(tabBar->tabRect(current)));
+#if defined(Q_OS_WIN)
+        QCOMPARE(tabBar->tabRect(current).width(), 230);
+#endif
+        const int first = tabBar->tabAt(QPoint(resizedViewport.left(), resizedViewport.center().y()));
+        if (first >= 0 && tabBar->tabRect(first).left() < resizedViewport.left()) {
+            QVERIFY(cover->isVisible());
+            QCOMPARE(cover->geometry(), tabBar->tabRect(first).intersected(resizedViewport));
+        } else {
+            QVERIFY(!cover->isVisible());
+        }
+    }
     delete shell;
 }
 

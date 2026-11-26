@@ -199,7 +199,6 @@ private:
     void readRecentFilesSettings();
     bool openDocumentSessionRestoreEnabled() const;
     void writeOpenDocumentSession(KConfigGroup &group) const;
-    void resetTabBarScrollToStart();
     void centerActiveTabInTabBar();
     void scheduleOpenTabButtonGeometryUpdate();
     void updateOpenTabButtonGeometry();
@@ -234,7 +233,6 @@ private:
     bool m_unique;
     QTabWidget *m_tabWidget;
     QToolButton *m_centerActiveTabButton = nullptr;
-    bool m_centeringActiveTab = false;
     QToolButton *m_openTabButton = nullptr;
     KToggleAction *m_openInTab;
     WelcomeScreen *m_welcomeScreen;

@@ -77,6 +77,8 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QPointingDevice>
+#include <QWheelEvent>
 #include <QTimer>
 #include <QToolButton>
 #include <QUuid>
@@ -529,6 +531,9 @@ public:
 
     QRect subElementRect(SubElement element, const QStyleOption *option, const QWidget *widget) const override
     {
+        if ((element == SE_TabBarTearIndicatorLeft || element == SE_TabBarTearIndicatorRight) && qobject_cast<const QTabBar *>(widget)) {
+            return {};
+        }
         if ((element == SE_TabBarScrollLeftButton || element == SE_TabBarScrollRightButton) && qobject_cast<const QTabBar *>(widget)) {
             const QRect nativeRightRect = QProxyStyle::subElementRect(SE_TabBarScrollRightButton, option, widget);
             const int buttonWidth = pixelMetric(PM_TabBarScrollButtonWidth, option, widget);
@@ -538,6 +543,110 @@ public:
             return QRect(x, nativeRightRect.y(), buttonWidth, nativeRightRect.height());
         }
         return QProxyStyle::subElementRect(element, option, widget);
+    }
+};
+
+class DocumentTabBar final : public QTabBar
+{
+    Q_OBJECT
+
+public:
+    explicit DocumentTabBar(QWidget *parent)
+        : QTabBar(parent)
+        , m_leadingFragmentCover(new QWidget(this))
+    {
+        m_leadingFragmentCover->setObjectName(QStringLiteral("leadingTabFragmentCover"));
+        m_leadingFragmentCover->setAutoFillBackground(true);
+        m_leadingFragmentCover->setAttribute(Qt::WA_NoMousePropagation);
+        m_leadingFragmentCover->hide();
+    }
+
+    QRect visibleTabsRect() const
+    {
+        const auto *scroller = findChild<QToolButton *>(QStringLiteral("ScrollLeftButton"), Qt::FindDirectChildrenOnly);
+        if (!scroller || scroller->isHidden()) {
+            return rect();
+        }
+        QStyleOption option;
+        option.initFrom(this);
+        const QRect left = style()->subElementRect(QStyle::SE_TabBarScrollLeftButton, &option, this);
+        const QRect right = style()->subElementRect(QStyle::SE_TabBarScrollRightButton, &option, this);
+        const QRect controls = left.united(right);
+        return isRightToLeft() ? rect().adjusted(controls.right() + 1, 0, 0, 0)
+                               : rect().adjusted(0, 0, controls.left() - width(), 0);
+    }
+
+    void centerCurrentTab()
+    {
+        if (currentIndex() >= 0) {
+            shiftTabs(visibleTabsRect().center().x() - tabRect(currentIndex()).center().x());
+        }
+    }
+
+    void updateLeadingFragment()
+    {
+        const QRect area = visibleTabsRect();
+        const bool rtl = isRightToLeft();
+        const int leading = rtl ? area.right() : area.left();
+        const int index = tabAt(QPoint(leading, area.center().y()));
+        const QRect tab = tabRect(index);
+        const bool clipped = rtl ? tab.right() > leading : tab.left() < leading;
+        if (index >= 0 && index != currentIndex() && clipped) {
+            // Keep the scroll position while suppressing the clipped leading tab and its close button.
+            m_leadingFragmentCover->setGeometry(tab.intersected(area));
+            m_leadingFragmentCover->show();
+            m_leadingFragmentCover->raise();
+        } else {
+            m_leadingFragmentCover->hide();
+        }
+    }
+
+Q_SIGNALS:
+    void viewportLayoutChanged();
+
+protected:
+#if defined(Q_OS_WIN)
+    QSize tabSizeHint(int index) const override
+    {
+        QSize size = QTabBar::tabSizeHint(index);
+        size.setWidth(count() < 6 ? 280 : 230);
+        return size;
+    }
+
+    QSize minimumTabSizeHint(int index) const override
+    {
+        return tabSizeHint(index);
+    }
+#endif
+
+    void tabLayoutChange() override
+    {
+        QTabBar::tabLayoutChange();
+        Q_EMIT viewportLayoutChanged();
+    }
+
+private:
+    void shiftTabs(int pixels)
+    {
+        // Use Qt's pixel scrolling so it clamps at the ends without changing the selected tab.
+        static const QPointingDevice scrollDevice(QStringLiteral("Okular tab centering"), 0, QInputDevice::DeviceType::TouchPad,
+                                                   QPointingDevice::PointerType::Finger, QInputDevice::Capability::PixelScroll, 1, 0);
+        const QPoint origin = visibleTabsRect().center();
+        QWheelEvent event(origin, mapToGlobal(origin), QPoint(pixels, 0), QPoint(), Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, false, Qt::MouseEventSynthesizedByApplication, &scrollDevice);
+        QTabBar::wheelEvent(&event);
+    }
+
+    QWidget *const m_leadingFragmentCover;
+};
+
+class DocumentTabs final : public QTabWidget
+{
+public:
+    explicit DocumentTabs(QWidget *parent)
+        : QTabWidget(parent)
+    {
+        setTabBar(new DocumentTabBar(this));
     }
 };
 
@@ -681,7 +790,9 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_welcomeScreen->installEventFilter(this);
 
         // Setup tab bar
-        m_tabWidget = new QTabWidget(this);
+        m_tabWidget = new DocumentTabs(this);
+        connect(static_cast<DocumentTabBar *>(m_tabWidget->tabBar()), &DocumentTabBar::viewportLayoutChanged,
+                this, &Shell::updateOpenTabButtonGeometry, Qt::QueuedConnection);
         m_tabWidget->setTabsClosable(true);
         m_tabWidget->setElideMode(Qt::ElideRight);
         m_tabWidget->tabBar()->setExpanding(false);
@@ -876,15 +987,14 @@ void Shell::updateTabPalette()
     const QString text = palette.color(QPalette::WindowText).name();
     const QString accent = palette.color(QPalette::Highlight).name();
     const QString border = palette.color(QPalette::Mid).name();
-    const int tabWidth = m_tabWidget->count() < 6 ? 280 : 230;
     QString tabStyle = QStringLiteral("QTabBar { background-color: %1; }"
-                                      "QTabBar::tab { min-width: %7px; max-width: %7px; min-height: 25px; background-color: %2; color: %4;"
+                                      "QTabBar::tab { min-height: 25px; background-color: %2; color: %4;"
                                       " border: 1px solid %6; border-top: 2px solid transparent; margin: 0px; padding: 0px; }"
                                       "QTabBar::tab:selected { background-color: %3; border-top: 2px solid %5; }"
                                       "QTabBar QToolButton { background: %1; border: 1px solid transparent; border-radius: 2px; padding: 0px; margin: 0px; }"
                                       "QTabBar QToolButton:hover, QTabBar QToolButton:focus { color: %5; border: 1px solid %5; }"
                                       "QTabBar QToolButton:pressed { color: %5; border: 1px solid %5; background-color: %2; }")
-                            .arg(window, button, base, text, accent, border, QString::number(tabWidth));
+                            .arg(window, button, base, text, accent, border);
     m_tabWidget->tabBar()->setStyleSheet(tabStyle);
     m_tabWidget->setStyleSheet(QStringLiteral("QTabWidget::right-corner { background: %1; border: 0px; }").arg(window));
     if (QWidget *corner = m_tabWidget->cornerWidget(Qt::TopRightCorner)) {
@@ -2878,11 +2988,7 @@ void Shell::setActiveTab(int tab)
 
     m_printAction->setEnabled(m_tabs[tab].printEnabled);
     m_closeAction->setEnabled(m_tabs[tab].closeEnabled);
-    if (tab == 0) {
-        QTimer::singleShot(0, this, &Shell::resetTabBarScrollToStart);
-    } else {
-        QTimer::singleShot(0, this, &Shell::updateOpenTabButtonGeometry);
-    }
+    QTimer::singleShot(0, this, &Shell::updateOpenTabButtonGeometry);
     scheduleOpenDocumentSessionSave();
 }
 
@@ -3164,82 +3270,12 @@ void Shell::moveTabData(int from, int to)
     scheduleOpenDocumentSessionSave();
 }
 
-void Shell::resetTabBarScrollToStart()
-{
-    if (!m_tabWidget || m_tabWidget->currentIndex() != 0) {
-        return;
-    }
-
-    QTabBar *const tabBar = m_tabWidget->tabBar();
-    const bool usesScrollButtons = tabBar->usesScrollButtons();
-    tabBar->setUpdatesEnabled(false);
-    tabBar->setUsesScrollButtons(false);
-    tabBar->setUsesScrollButtons(usesScrollButtons);
-    tabBar->setCurrentIndex(0);
-    tabBar->setUpdatesEnabled(true);
-    tabBar->updateGeometry();
-    tabBar->update();
-    updateOpenTabButtonGeometry();
-}
-
 void Shell::centerActiveTabInTabBar()
 {
-    if (!m_tabWidget || m_tabWidget->currentIndex() < 0) {
-        return;
+    if (m_tabWidget) {
+        static_cast<DocumentTabBar *>(m_tabWidget->tabBar())->centerCurrentTab();
+        updateOpenTabButtonGeometry();
     }
-
-    QTabBar *const tabBar = m_tabWidget->tabBar();
-    const int currentIndex = m_tabWidget->currentIndex();
-    tabBar->setCurrentIndex(currentIndex);
-
-    QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
-    scrollButtons.removeAll(m_centerActiveTabButton);
-    scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *button) {
-                            return !button || !button->isVisible() || button->geometry().isEmpty();
-                        }),
-                        scrollButtons.end());
-    std::sort(scrollButtons.begin(), scrollButtons.end(), [](const QToolButton *a, const QToolButton *b) {
-        return a->geometry().x() < b->geometry().x();
-    });
-
-    if (scrollButtons.size() >= 2) {
-        m_centeringActiveTab = true;
-        QToolButton *const leftScrollButton = scrollButtons.at(scrollButtons.size() - 2);
-        QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
-        const bool rightToLeft = tabBar->layoutDirection() == Qt::RightToLeft;
-        const int visibleLeft = rightToLeft ? rightScrollButton->geometry().right() + 1 : tabBar->rect().left();
-        const int visibleRight = rightToLeft ? tabBar->rect().right() : leftScrollButton->geometry().left() - 1;
-        const int visibleCenter = (visibleLeft + visibleRight) / 2;
-        const int tolerance = std::max(1, tabBar->tabRect(currentIndex).width() / 4);
-
-        for (int i = 0; i < tabBar->count(); ++i) {
-            const QRect currentRect = tabBar->tabRect(currentIndex);
-            const int displacement = currentRect.center().x() - visibleCenter;
-            if (std::abs(displacement) <= tolerance) {
-                break;
-            }
-
-            QToolButton *const scrollButton = displacement < 0 ? leftScrollButton : rightScrollButton;
-            if (!scrollButton->isEnabled()) {
-                break;
-            }
-            const int previousCenter = currentRect.center().x();
-            scrollButton->click();
-            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-            const int newCenter = tabBar->tabRect(currentIndex).center().x();
-            if (newCenter == previousCenter) {
-                break;
-            }
-            if (std::abs(newCenter - visibleCenter) >= std::abs(displacement)) {
-                QToolButton *const reverseButton = displacement < 0 ? rightScrollButton : leftScrollButton;
-                reverseButton->click();
-                break;
-            }
-        }
-        m_centeringActiveTab = false;
-    }
-
-    updateOpenTabButtonGeometry();
 }
 
 void Shell::scheduleOpenTabButtonGeometryUpdate()
@@ -3255,14 +3291,7 @@ void Shell::updateOpenTabButtonGeometry()
         return;
     }
 
-    QTabBar *const tabBar = m_tabWidget->tabBar();
-#if defined(Q_OS_WIN)
-    const bool compactTabs = tabBar->count() >= 6;
-    if (tabBar->property("okularCompactTabs").toBool() != compactTabs) {
-        tabBar->setProperty("okularCompactTabs", compactTabs);
-        updateTabPalette();
-    }
-#endif
+    auto *const tabBar = static_cast<DocumentTabBar *>(m_tabWidget->tabBar());
     if (tabBar->maximumWidth() != QWIDGETSIZE_MAX) {
         tabBar->setMaximumWidth(QWIDGETSIZE_MAX);
         m_tabWidget->updateGeometry();
@@ -3283,26 +3312,22 @@ void Shell::updateOpenTabButtonGeometry()
     if (scrollButtons.size() >= 2) {
         QToolButton *const leftScrollButton = scrollButtons.at(scrollButtons.size() - 2);
         QToolButton *const rightScrollButton = scrollButtons.at(scrollButtons.size() - 1);
-        if (!leftScrollButton->property("okularSelectsTab").toBool()) {
-            leftScrollButton->setProperty("okularSelectsTab", true);
-            connect(leftScrollButton, &QToolButton::clicked, this, [this]() {
-                if (!m_centeringActiveTab) {
-                    const int step = m_tabWidget->tabBar()->layoutDirection() == Qt::RightToLeft ? 1 : -1;
-                    setActiveTab(m_tabWidget->currentIndex() + step);
-                    updateOpenTabButtonGeometry();
-                }
+        const auto connectArrow = [this, tabBar](QToolButton *button, int direction) {
+            if (button->property("okularSelectsTab").toBool()) {
+                return;
+            }
+            button->setProperty("okularSelectsTab", true);
+            // The Qt scroller would shift the strip before the current tab changes.
+            // Selecting the tab already lets Qt reveal it when necessary.
+            QObject::disconnect(button, SIGNAL(clicked(bool)), tabBar, nullptr);
+            connect(button, &QToolButton::clicked, this, [this, tabBar, direction]() {
+                const int step = tabBar->isRightToLeft() ? -direction : direction;
+                setActiveTab(tabBar->currentIndex() + step);
+                updateOpenTabButtonGeometry();
             });
-        }
-        if (!rightScrollButton->property("okularSelectsTab").toBool()) {
-            rightScrollButton->setProperty("okularSelectsTab", true);
-            connect(rightScrollButton, &QToolButton::clicked, this, [this]() {
-                if (!m_centeringActiveTab) {
-                    const int step = m_tabWidget->tabBar()->layoutDirection() == Qt::RightToLeft ? -1 : 1;
-                    setActiveTab(m_tabWidget->currentIndex() + step);
-                    updateOpenTabButtonGeometry();
-                }
-            });
-        }
+        };
+        connectArrow(leftScrollButton, -1);
+        connectArrow(rightScrollButton, 1);
         const QRect leftRect = leftScrollButton->geometry();
         const QRect rightRect = rightScrollButton->geometry();
         // The tab-bar style reserves space for all three controls.
@@ -3325,6 +3350,7 @@ void Shell::updateOpenTabButtonGeometry()
         m_centerActiveTabButton->hide();
     }
 
+    tabBar->updateLeadingFragment();
     m_openTabButton->show();
 }
 
