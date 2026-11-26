@@ -40,6 +40,7 @@ class QCloseEvent;
 class QTabWidget;
 class QTimer;
 class QToolButton;
+class QSpacerItem;
 class KPluginFactory;
 #if defined(Q_OS_WIN)
 class QLocalServer;
@@ -232,7 +233,11 @@ private:
     bool m_menuBarWasShown, m_toolBarWasShown;
     bool m_unique;
     QTabWidget *m_tabWidget;
+    QWidget *m_tabNavigation = nullptr;
+    QSpacerItem *m_tabCornerPadding = nullptr;
+    QToolButton *m_leftTabButton = nullptr;
     QToolButton *m_centerActiveTabButton = nullptr;
+    QToolButton *m_rightTabButton = nullptr;
     QToolButton *m_openTabButton = nullptr;
     KToggleAction *m_openInTab;
     WelcomeScreen *m_welcomeScreen;

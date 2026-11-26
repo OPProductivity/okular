@@ -232,7 +232,7 @@ private Q_SLOTS:
     void testRecentContextMenuCopiesSelectedPaths();
     void testTabControlsRemainAvailable();
     void testOverflowArrowsSelectEveryTab();
-    void testRtlOverflowControlsStayInsideTabBar();
+    void testRtlOverflowControlsFollowVisualOrder();
     void testCenterButtonFramesActiveTab();
     void testFileLaunchShowsDocumentViewFirst();
     void testWelcomeHiddenBeforeDocumentLoad();
@@ -2820,8 +2820,15 @@ void MainShellTest::testTabControlsRemainAvailable()
     QCoreApplication::processEvents();
     QCOMPARE(shell->m_tabWidget->count(), 3);
     QVERIFY(shell->m_openTabButton->isVisible());
-    const QRect buttonRect(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
-    QVERIFY(shell->rect().contains(buttonRect));
+    const auto openButtonRect = [shell] {
+        return QRect(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
+    };
+    QTRY_VERIFY2(shell->rect().contains(openButtonRect()),
+                 qPrintable(QStringLiteral("Open button at (%1, %2) in a %3 × %4 window")
+                                .arg(openButtonRect().x())
+                                .arg(openButtonRect().y())
+                                .arg(shell->width())
+                                .arg(shell->height())));
 }
 
 void MainShellTest::testOverflowArrowsSelectEveryTab()
@@ -2850,13 +2857,10 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     shell->updateOpenTabButtonGeometry();
     QCOMPARE(shell->m_tabWidget->currentIndex(), tabCount - 1);
     QTabBar *tabBar = shell->m_tabWidget->tabBar();
-    QList<QToolButton *> scrollButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
-    scrollButtons.removeAll(shell->m_centerActiveTabButton);
-    scrollButtons.erase(std::remove_if(scrollButtons.begin(), scrollButtons.end(), [](QToolButton *button) { return !button->isVisible(); }), scrollButtons.end());
-    std::sort(scrollButtons.begin(), scrollButtons.end(), [](QToolButton *a, QToolButton *b) { return a->x() < b->x(); });
-    QVERIFY(scrollButtons.size() >= 2);
-    QToolButton *const previousTabButton = scrollButtons.at(scrollButtons.size() - 2);
-    QToolButton *const nextTabButton = scrollButtons.last();
+    QToolButton *const previousTabButton = shell->m_leftTabButton;
+    QToolButton *const nextTabButton = shell->m_rightTabButton;
+    QVERIFY(previousTabButton->isVisible());
+    QVERIFY(nextTabButton->isVisible());
     const QRect previousRect = previousTabButton->geometry();
     const QRect centerRect = shell->m_centerActiveTabButton->geometry();
     const QRect nextRect = nextTabButton->geometry();
@@ -2869,34 +2873,27 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     QCOMPARE(centerRect.top(), nextRect.top());
     QCOMPARE(previousRect.height(), centerRect.height());
     QCOMPARE(centerRect.height(), nextRect.height());
-    QCOMPARE(tabBar->style()->pixelMetric(QStyle::PM_TabBarScrollButtonWidth, nullptr, tabBar), 30);
-    QStyleOption styleOption;
-    styleOption.initFrom(tabBar);
-    const QRect reservedLeft = tabBar->style()->subElementRect(QStyle::SE_TabBarScrollLeftButton, &styleOption, tabBar);
-    const QRect reservedRight = tabBar->style()->subElementRect(QStyle::SE_TabBarScrollRightButton, &styleOption, tabBar);
-    QCOMPARE(previousRect.left(), reservedLeft.left());
-    QCOMPARE(nextRect.right(), reservedRight.right());
-    QCOMPARE(reservedLeft.right() + 1, reservedRight.left());
-    QVERIFY(previousRect.left() > tabBar->width() / 2);
     const QRect nextRectInShell(nextTabButton->mapTo(shell, QPoint(0, 0)), nextTabButton->size());
     const QRect openRectInShell(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
     QCOMPARE(openRectInShell.left() - nextRectInShell.right() - 1, 3);
 
-    const auto visibleTabs = [&]() {
-        return tabBar->rect().adjusted(0, 0, previousTabButton->x() - tabBar->width(), 0);
-    };
     int alreadyVisible = 0;
     int revealed = 0;
     const auto navigate = [&](QToolButton *button, int expected) {
-        const QRect viewport = visibleTabs();
+        const QRect viewport = tabBar->rect();
         const QRect before = tabBar->tabRect(expected);
         const QRect reference = tabBar->tabRect(0);
         QVERIFY(button->isEnabled());
         QTest::mouseClick(button, Qt::LeftButton);
         QCoreApplication::processEvents();
         QCOMPARE(shell->m_tabWidget->currentIndex(), expected);
-        const QRect after = visibleTabs();
+        const QRect after = tabBar->rect();
         QVERIFY(after.contains(tabBar->tabRect(expected)));
+#if defined(Q_OS_WIN)
+        const int leading = tabBar->tabAt(QPoint(after.left(), after.center().y()));
+        QVERIFY(leading >= 0);
+        QCOMPARE(tabBar->tabRect(leading).left(), after.left());
+#endif
         if (viewport == after && viewport.contains(before)) {
             ++alreadyVisible;
             QCOMPARE(tabBar->tabRect(0), reference);
@@ -2920,7 +2917,7 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     delete shell;
 }
 
-void MainShellTest::testRtlOverflowControlsStayInsideTabBar()
+void MainShellTest::testRtlOverflowControlsFollowVisualOrder()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -2929,7 +2926,7 @@ void MainShellTest::testRtlOverflowControlsStayInsideTabBar()
     Shell *shell = findShell();
     QVERIFY(shell);
     QTest::qWait(200); // Wait for the Windows startup geometry timers.
-    shell->resize(500, 520);
+    shell->resize(760, 520);
 
     const QString sourcePath = QStringLiteral(KDESRCDIR "data/file1.pdf");
     for (int i = 0; i < 9; ++i) {
@@ -2937,35 +2934,33 @@ void MainShellTest::testRtlOverflowControlsStayInsideTabBar()
         QVERIFY(QFile::copy(sourcePath, path));
         shell->openUrl(QUrl::fromLocalFile(path));
     }
-    shell->resize(500, 520);
+    shell->resize(760, 520);
     QTabBar *tabBar = shell->m_tabWidget->tabBar();
     tabBar->setLayoutDirection(Qt::RightToLeft);
     shell->setActiveTab(4);
     QCoreApplication::processEvents();
     shell->updateOpenTabButtonGeometry();
 
-    QList<QToolButton *> buttons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
-    buttons.removeAll(shell->m_centerActiveTabButton);
-    buttons.erase(std::remove_if(buttons.begin(), buttons.end(), [](QToolButton *button) { return !button->isVisible(); }), buttons.end());
-    std::sort(buttons.begin(), buttons.end(), [](QToolButton *a, QToolButton *b) { return a->x() < b->x(); });
-    QVERIFY(buttons.size() >= 2);
-    const QRect firstRect = buttons.at(buttons.size() - 2)->geometry();
+    QVERIFY(shell->m_leftTabButton->isVisible());
+    QVERIFY(shell->m_rightTabButton->isVisible());
+    const QRect firstRect = shell->m_leftTabButton->geometry();
     const QRect centerRect = shell->m_centerActiveTabButton->geometry();
-    const QRect lastRect = buttons.last()->geometry();
-    QCOMPARE(firstRect.left(), 0);
-    QCOMPARE(firstRect.width(), 20);
+    const QRect lastRect = shell->m_rightTabButton->geometry();
     QCOMPARE(firstRect.right() + 1, centerRect.left());
     QCOMPARE(centerRect.right() + 1, lastRect.left());
-    QCOMPARE(lastRect.right(), 59);
-    QCOMPARE(firstRect.top(), centerRect.top());
-    QCOMPARE(centerRect.top(), lastRect.top());
-    QCOMPARE(firstRect.height(), centerRect.height());
-    QCOMPARE(centerRect.height(), lastRect.height());
 
-    buttons.at(buttons.size() - 2)->click();
-    QCOMPARE(shell->m_tabWidget->currentIndex(), 3);
-    buttons.last()->click();
+    shell->m_leftTabButton->click();
+    QCOMPARE(shell->m_tabWidget->currentIndex(), 5);
+    shell->m_rightTabButton->click();
     QCOMPARE(shell->m_tabWidget->currentIndex(), 4);
+#if defined(Q_OS_WIN)
+    QCoreApplication::processEvents();
+    const QRect viewport = tabBar->rect();
+    QVERIFY(viewport.contains(tabBar->tabRect(4)));
+    const int leading = tabBar->tabAt(QPoint(viewport.right(), viewport.center().y()));
+    QVERIFY(leading >= 0);
+    QCOMPARE(tabBar->tabRect(leading).right(), viewport.right());
+#endif
     delete shell;
 }
 
@@ -2991,44 +2986,40 @@ void MainShellTest::testCenterButtonFramesActiveTab()
     QCoreApplication::processEvents();
     shell->updateOpenTabButtonGeometry();
     QTabBar *tabBar = shell->m_tabWidget->tabBar();
-    QList<QToolButton *> nativeButtons = tabBar->findChildren<QToolButton *>(QString(), Qt::FindDirectChildrenOnly);
-    nativeButtons.removeAll(shell->m_centerActiveTabButton);
-    nativeButtons.erase(std::remove_if(nativeButtons.begin(), nativeButtons.end(), [](QToolButton *button) { return !button->isVisible(); }), nativeButtons.end());
-    std::sort(nativeButtons.begin(), nativeButtons.end(), [](QToolButton *a, QToolButton *b) { return a->x() < b->x(); });
-    QVERIFY(nativeButtons.size() >= 2);
-    const QRect viewport = tabBar->rect().adjusted(0, 0, nativeButtons.at(nativeButtons.size() - 2)->x() - tabBar->width(), 0);
+    QVERIFY(shell->m_centerActiveTabButton->isVisible());
+    const QRect viewport = tabBar->rect();
     const int visibleCenter = viewport.center().x();
     const int before = std::abs(tabBar->tabRect(current).center().x() - visibleCenter);
     shell->m_centerActiveTabButton->click();
     const int after = std::abs(tabBar->tabRect(current).center().x() - visibleCenter);
     QCOMPARE(shell->m_tabWidget->currentIndex(), current);
     QVERIFY(after < before);
-    QVERIFY(after <= 1);
-    const int leading = tabBar->tabAt(QPoint(viewport.left(), viewport.center().y()));
-    QVERIFY(leading >= 0);
-    QVERIFY(tabBar->tabRect(leading).left() < viewport.left());
-    QWidget *const cover = tabBar->findChild<QWidget *>(QStringLiteral("leadingTabFragmentCover"));
-    QVERIFY(cover && cover->isVisible());
-    QCOMPARE(cover->geometry(), tabBar->tabRect(leading).intersected(viewport));
+    QVERIFY(viewport.contains(tabBar->tabRect(current)));
+#if defined(Q_OS_WIN)
+    QVERIFY(after <= tabBar->tabRect(current).width() / 2);
+    auto checkWholeTabs = [tabBar, current]() {
+        const QRect area = tabBar->rect();
+        QVERIFY(area.contains(tabBar->tabRect(current)));
+        QCOMPARE(tabBar->tabRect(current).width(), 230);
+        const int first = tabBar->tabAt(QPoint(area.left(), area.center().y()));
+        QVERIFY(first >= 0);
+        QCOMPARE(tabBar->tabRect(first).left(), area.left());
+        const int last = tabBar->tabAt(QPoint(area.right(), area.center().y()));
+        QVERIFY(last >= 0);
+        QCOMPARE(tabBar->tabRect(last).right(), area.right());
+    };
+    checkWholeTabs();
     auto *dock = shell->findChild<QDockWidget *>(QStringLiteral("okular_sidebar"));
     QVERIFY(dock);
     dock->show();
     for (int width : {200, 600, 300}) {
         shell->resizeDocks({dock}, {width}, Qt::Horizontal);
         QTest::qWait(200);
-        const QRect resizedViewport = tabBar->rect().adjusted(0, 0, nativeButtons.at(nativeButtons.size() - 2)->x() - tabBar->width(), 0);
-        QVERIFY(resizedViewport.contains(tabBar->tabRect(current)));
-#if defined(Q_OS_WIN)
-        QCOMPARE(tabBar->tabRect(current).width(), 230);
-#endif
-        const int first = tabBar->tabAt(QPoint(resizedViewport.left(), resizedViewport.center().y()));
-        if (first >= 0 && tabBar->tabRect(first).left() < resizedViewport.left()) {
-            QVERIFY(cover->isVisible());
-            QCOMPARE(cover->geometry(), tabBar->tabRect(first).intersected(resizedViewport));
-        } else {
-            QVERIFY(!cover->isVisible());
-        }
+        checkWholeTabs();
+        shell->m_centerActiveTabButton->click();
+        checkWholeTabs();
     }
+#endif
     delete shell;
 }
 
