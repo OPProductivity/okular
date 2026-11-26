@@ -2873,6 +2873,7 @@ void MainShellTest::testOverflowArrowsSelectEveryTab()
     QCOMPARE(centerRect.top(), nextRect.top());
     QCOMPARE(previousRect.height(), centerRect.height());
     QCOMPARE(centerRect.height(), nextRect.height());
+    QCOMPARE(2 * centerRect.center().x(), previousRect.center().x() + nextRect.center().x());
     const QRect nextRectInShell(nextTabButton->mapTo(shell, QPoint(0, 0)), nextTabButton->size());
     const QRect openRectInShell(shell->m_openTabButton->mapTo(shell, QPoint(0, 0)), shell->m_openTabButton->size());
     QCOMPARE(openRectInShell.left() - nextRectInShell.right() - 1, 3);
@@ -2991,34 +2992,60 @@ void MainShellTest::testCenterButtonFramesActiveTab()
     const int visibleCenter = viewport.center().x();
     const int before = std::abs(tabBar->tabRect(current).center().x() - visibleCenter);
     shell->m_centerActiveTabButton->click();
+#if defined(Q_OS_WIN)
+    const int visible = viewport.width() / tabBar->tabRect(current).width();
+    const int firstCentered = current - (visible - 1) / 2;
+    QTRY_COMPARE(tabBar->tabRect(firstCentered).left(), viewport.left());
+#endif
+    QTRY_VERIFY(std::abs(tabBar->tabRect(current).center().x() - visibleCenter) <= tabBar->tabRect(current).width() / 2);
     const int after = std::abs(tabBar->tabRect(current).center().x() - visibleCenter);
     QCOMPARE(shell->m_tabWidget->currentIndex(), current);
     QVERIFY(after < before);
     QVERIFY(viewport.contains(tabBar->tabRect(current)));
 #if defined(Q_OS_WIN)
     QVERIFY(after <= tabBar->tabRect(current).width() / 2);
-    auto checkWholeTabs = [tabBar, current]() {
+    const auto checkWholeTabs = [shell, tabBar](int active) {
         const QRect area = tabBar->rect();
-        QVERIFY(area.contains(tabBar->tabRect(current)));
-        QCOMPARE(tabBar->tabRect(current).width(), 230);
+        QVERIFY(area.contains(tabBar->tabRect(active)));
+        QCOMPARE(tabBar->tabRect(active).width(), 230);
         const int first = tabBar->tabAt(QPoint(area.left(), area.center().y()));
         QVERIFY(first >= 0);
         QCOMPARE(tabBar->tabRect(first).left(), area.left());
         const int last = tabBar->tabAt(QPoint(area.right(), area.center().y()));
         QVERIFY(last >= 0);
         QCOMPARE(tabBar->tabRect(last).right(), area.right());
+        QWidget *const corner = shell->m_tabWidget->cornerWidget(Qt::TopRightCorner);
+        QCOMPARE(tabBar->geometry().right() + 1, corner->geometry().left());
+        QCOMPARE(corner->geometry().right(), shell->m_tabWidget->rect().right());
+        QCOMPARE(shell->m_tabNavigation->geometry().left(), 0);
+        QCOMPARE(shell->m_openTabButton->geometry().left(), shell->m_tabNavigation->geometry().right() + 1);
+        QCOMPARE(shell->m_openTabButton->geometry().right(), corner->rect().right() - 1);
     };
-    checkWholeTabs();
+    checkWholeTabs(current);
     auto *dock = shell->findChild<QDockWidget *>(QStringLiteral("okular_sidebar"));
     QVERIFY(dock);
     dock->show();
-    for (int width : {200, 600, 300}) {
-        shell->resizeDocks({dock}, {width}, Qt::Horizontal);
-        QTest::qWait(200);
-        checkWholeTabs();
-        shell->m_centerActiveTabButton->click();
-        checkWholeTabs();
+    for (auto side : {Qt::LeftDockWidgetArea, Qt::RightDockWidgetArea, Qt::LeftDockWidgetArea}) {
+        shell->addDockWidget(side, dock);
+        for (int width : {200, 600, 300}) {
+            shell->resizeDocks({dock}, {width}, Qt::Horizontal);
+            QCoreApplication::processEvents();
+            checkWholeTabs(current);
+            const QRect settledArea = tabBar->geometry();
+            const QRect settledTab = tabBar->tabRect(current);
+            QTest::qWait(160); // Previously the delayed geometry retries could reposition the tab.
+            QCOMPARE(tabBar->geometry(), settledArea);
+            QCOMPARE(tabBar->tabRect(current), settledTab);
+        }
     }
+
+    // An in-progress center action must not take the selected adjacent tab out of view.
+    shell->setActiveTab(17);
+    shell->m_centerActiveTabButton->click();
+    shell->m_leftTabButton->click();
+    QCOMPARE(tabBar->currentIndex(), 16);
+    QTest::qWait(180);
+    checkWholeTabs(16);
 #endif
     delete shell;
 }

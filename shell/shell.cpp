@@ -75,6 +75,8 @@
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStyleOptionTabWidgetFrame>
+#include <QStylePainter>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QPointingDevice>
@@ -82,6 +84,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QUuid>
+#include <QVariantAnimation>
 #include <QWindow>
 
 // local includes
@@ -538,12 +541,56 @@ public:
     }
 };
 
+class TabNavigationButton final : public QToolButton
+{
+public:
+    using QToolButton::QToolButton;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QStyleOptionToolButton option;
+        initStyleOption(&option);
+        option.features &= ~QStyleOptionToolButton::Arrow;
+        option.text.clear();
+        QStylePainter painter(this);
+        painter.drawComplexControl(QStyle::CC_ToolButton, option);
+
+        const QPalette::ColorRole color = isEnabled() && (underMouse() || hasFocus()) ? QPalette::Highlight : QPalette::ButtonText;
+        painter.setPen(QPen(option.palette.color(color), 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.translate(QRectF(rect()).center());
+        if (arrowType() == Qt::NoArrow) {
+            painter.drawEllipse(QPointF(0, 0), 3.2, 3.2);
+        } else {
+            const int tip = arrowType() == Qt::LeftArrow ? -2 : 2;
+            const QPointF points[] = {{double(-tip), -4}, {double(tip), 0}, {double(-tip), 4}};
+            painter.drawPolyline(points, 3);
+        }
+    }
+};
+
 class DocumentTabBar final : public QTabBar
 {
     Q_OBJECT
 
 public:
-    using QTabBar::QTabBar;
+    explicit DocumentTabBar(QWidget *parent)
+        : QTabBar(parent)
+    {
+#if defined(Q_OS_WIN)
+        m_centerAnimation.setEasingCurve(QEasingCurve::OutCubic);
+        connect(&m_centerAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &offset) {
+            if (m_centerAnimation.state() == QAbstractAnimation::Running) {
+                setScrollOffset(offset.toInt());
+            }
+        });
+        connect(this, &QTabBar::currentChanged, this, [this]() {
+            stopCentering();
+            alignVisibleTabs();
+        });
+#endif
+    }
 
     int preferredStripWidth() const
     {
@@ -572,38 +619,32 @@ public:
 #if defined(Q_OS_WIN)
         const int visible = width() / documentTabWidth();
         if (visible > 0 && visible < count() && width() % documentTabWidth() == 0) {
-            setFirstVisibleTab(std::clamp(currentIndex() - (visible - 1) / 2, 0, count() - visible));
+            const int leading = std::clamp(currentIndex() - (visible - 1) / 2, 0, count() - visible);
+            const int target = leading * documentTabWidth();
+            const int start = scrollOffset();
+            const int duration = std::clamp(style()->styleHint(QStyle::SH_Widget_Animation_Duration, nullptr, this), 0, 170);
+            if (target == start || (m_centerAnimation.state() == QAbstractAnimation::Running && m_centerAnimation.endValue().toInt() == target)) {
+                return;
+            }
+            stopCentering();
+            if (duration == 0 || !isVisible()) {
+                setScrollOffset(target);
+            } else {
+                m_centerAnimation.setDuration(duration);
+                m_centerAnimation.setStartValue(start);
+                m_centerAnimation.setEndValue(target);
+                m_centerAnimation.start();
+            }
             return;
         }
 #endif
         shiftTabs(rect().center().x() - tabRect(currentIndex()).center().x());
     }
 
-    void alignVisibleTabs()
-    {
-#if defined(Q_OS_WIN)
-        const int tabWidth = documentTabWidth();
-        const int visible = width() / tabWidth;
-        if (visible < 1 || visible >= count() || width() % tabWidth != 0) {
-            return;
-        }
-
-        const int offset = scrollOffset();
-        if (offset % tabWidth == 0) {
-            return;
-        }
-
-        int first = std::clamp(qRound(double(offset) / tabWidth), 0, count() - visible);
-        // Keep a tab that Qt has just made visible in view after snapping.
-        if (currentIndex() >= 0 && rect().contains(tabRect(currentIndex()))) {
-            first = std::clamp(first, std::max(0, currentIndex() - visible + 1), std::min(currentIndex(), count() - visible));
-        }
-        setFirstVisibleTab(first);
-#endif
-    }
-
 Q_SIGNALS:
+#if !defined(Q_OS_WIN)
     void viewportLayoutChanged();
+#endif
 
 protected:
 #if defined(Q_OS_WIN)
@@ -618,16 +659,82 @@ protected:
     {
         return tabSizeHint(index);
     }
-#endif
 
+    void resizeEvent(QResizeEvent *event) override
+    {
+        stopCentering();
+        QTabBar::resizeEvent(event);
+        alignVisibleTabs();
+    }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        const bool centering = m_centerAnimation.state() == QAbstractAnimation::Running;
+        stopCentering();
+        QTabBar::mousePressEvent(event);
+        if (centering) {
+            alignVisibleTabs();
+        }
+    }
+
+    void wheelEvent(QWheelEvent *event) override
+    {
+        stopCentering();
+        QTabBar::wheelEvent(event);
+        if (event->phase() == Qt::ScrollEnd) {
+            alignVisibleTabs();
+        }
+    }
+
+    void tabInserted(int index) override
+    {
+        QTabBar::tabInserted(index);
+        stopCentering();
+        alignVisibleTabs();
+    }
+
+    void tabRemoved(int index) override
+    {
+        QTabBar::tabRemoved(index);
+        stopCentering();
+        alignVisibleTabs();
+    }
+#else
     void tabLayoutChange() override
     {
         QTabBar::tabLayoutChange();
         Q_EMIT viewportLayoutChanged();
     }
+#endif
 
 private:
 #if defined(Q_OS_WIN)
+    void stopCentering()
+    {
+        m_centerAnimation.stop();
+    }
+
+    void alignVisibleTabs()
+    {
+        const int tabWidth = documentTabWidth();
+        const int visible = width() / tabWidth;
+        if (visible < 1 || visible >= count() || width() % tabWidth != 0) {
+            return;
+        }
+
+        const int offset = scrollOffset();
+        if (offset % tabWidth == 0) {
+            return;
+        }
+
+        int first = std::clamp(qRound(double(offset) / tabWidth), 0, count() - visible);
+        const int current = currentIndex();
+        if (current >= 0) {
+            first = std::clamp(first, std::max(0, current - visible + 1), std::min(current, count() - visible));
+        }
+        setScrollOffset(first * tabWidth);
+    }
+
     int documentTabWidth() const
     {
         return count() < 6 ? 280 : 230;
@@ -638,11 +745,13 @@ private:
         return isRightToLeft() ? tabRect(0).right() - rect().right() : rect().left() - tabRect(0).left();
     }
 
-    void setFirstVisibleTab(int index)
+    void setScrollOffset(int offset)
     {
-        const int change = index * documentTabWidth() - scrollOffset();
+        const int change = offset - scrollOffset();
         shiftTabs(isRightToLeft() ? change : -change);
     }
+
+    QVariantAnimation m_centerAnimation;
 #endif
 
     void shiftTabs(int pixels)
@@ -668,6 +777,51 @@ public:
     {
         setTabBar(new DocumentTabBar(this));
     }
+
+    // Includes the narrow margin at the end of the control row.
+    static constexpr int openButtonWidth = 21;
+
+    void setNavigation(QWidget *navigation)
+    {
+        m_navigation = navigation;
+    }
+
+    bool hasOverflow() const
+    {
+        return static_cast<const DocumentTabBar *>(tabBar())->preferredStripWidth() > width() - openButtonWidth;
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        if (m_navigation) {
+            m_navigation->setVisible(hasOverflow());
+        }
+        QTabWidget::resizeEvent(event);
+    }
+
+#if defined(Q_OS_WIN)
+    void initStyleOption(QStyleOptionTabWidgetFrame *option) const override
+    {
+        QTabWidget::initStyleOption(option);
+        if (!option || !m_navigation || !option->rightCornerWidgetSize.width()) {
+            return;
+        }
+        if (hasOverflow()) {
+            const int minimumControls = openButtonWidth + m_navigation->sizeHint().width();
+            const int available = std::max(1, width() - minimumControls);
+            const int fitted = static_cast<const DocumentTabBar *>(tabBar())->fittedStripWidth(available);
+            // Size the strip and the controls together before Qt lays out either widget.
+            option->rightCornerWidgetSize.setWidth(width() - fitted);
+            option->tabBarSize.setWidth(fitted);
+        } else {
+            option->rightCornerWidgetSize.setWidth(openButtonWidth);
+        }
+    }
+#endif
+
+private:
+    QWidget *m_navigation = nullptr;
 };
 
 /**
@@ -810,9 +964,12 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         m_welcomeScreen->installEventFilter(this);
 
         // Setup tab bar
-        m_tabWidget = new DocumentTabs(this);
+        auto *const documentTabs = new DocumentTabs(this);
+        m_tabWidget = documentTabs;
+#if !defined(Q_OS_WIN)
         connect(static_cast<DocumentTabBar *>(m_tabWidget->tabBar()), &DocumentTabBar::viewportLayoutChanged,
                 this, &Shell::updateOpenTabButtonGeometry, Qt::QueuedConnection);
+#endif
         m_tabWidget->setTabsClosable(true);
         m_tabWidget->setElideMode(Qt::ElideRight);
         m_tabWidget->tabBar()->setExpanding(false);
@@ -835,8 +992,6 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         QHBoxLayout *const tabCornerLayout = new QHBoxLayout(tabCornerWidget);
         tabCornerLayout->setContentsMargins(0, 0, 1, 0);
         tabCornerLayout->setSpacing(0);
-        m_tabCornerPadding = new QSpacerItem(0, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
-        tabCornerLayout->addItem(m_tabCornerPadding);
 
         m_tabNavigation = new QWidget(tabCornerWidget);
         auto *const tabNavigationLayout = new QHBoxLayout(m_tabNavigation);
@@ -844,9 +999,10 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         tabNavigationLayout->setSpacing(0);
         m_tabNavigation->setLayoutDirection(Qt::LeftToRight);
         tabCornerLayout->addWidget(m_tabNavigation);
+        documentTabs->setNavigation(m_tabNavigation);
 
         const auto createTabArrow = [this, tabNavigationLayout](Qt::ArrowType arrow, int direction) {
-            auto *const button = new QToolButton(m_tabNavigation);
+            auto *const button = new TabNavigationButton(m_tabNavigation);
             button->setArrowType(arrow);
             button->setAutoRepeat(true);
             button->setFixedSize(20, 26);
@@ -859,19 +1015,15 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         };
         m_leftTabButton = createTabArrow(Qt::LeftArrow, -1);
 
-        const QString tabCornerButtonStyle = QStringLiteral("QToolButton { border: 1px solid transparent; border-radius: 2px; padding: 0px 0px 2px 0px; }"
+        const QString tabCornerButtonStyle = QStringLiteral("QToolButton { border: 1px solid transparent; border-radius: 2px; padding: 0px; }"
                                                             "QToolButton:hover, QToolButton:focus { color: #3daee9; border: 1px solid #3daee9; }"
                                                             "QToolButton:pressed { color: #3daee9; border: 1px solid #3daee9; background-color: rgba(61, 174, 233, 35); }");
 
         m_tabNavigation->setStyleSheet(tabCornerButtonStyle);
-        m_centerActiveTabButton = new QToolButton(m_tabNavigation);
+        m_centerActiveTabButton = new TabNavigationButton(m_tabNavigation);
         m_centerActiveTabButton->setText(QStringLiteral("o"));
         m_centerActiveTabButton->setToolTip(i18n("Center Active Tab"));
         m_centerActiveTabButton->setAccessibleName(i18n("Center Active Tab"));
-        QFont centerActiveTabButtonFont = m_centerActiveTabButton->font();
-        centerActiveTabButtonFont.setPixelSize(13);
-        centerActiveTabButtonFont.setBold(false);
-        m_centerActiveTabButton->setFont(centerActiveTabButtonFont);
         m_centerActiveTabButton->setFixedSize(20, 26);
         m_centerActiveTabButton->setAutoRaise(false);
         tabNavigationLayout->addWidget(m_centerActiveTabButton);
@@ -887,8 +1039,15 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
         openTabButtonFont.setPixelSize(20);
         openTabButtonFont.setBold(true);
         m_openTabButton->setFont(openTabButtonFont);
+#if defined(Q_OS_WIN)
+        m_openTabButton->setMinimumWidth(DocumentTabs::openButtonWidth - 1);
+        m_openTabButton->setFixedHeight(26);
+        m_openTabButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_openTabButton->setStyleSheet(tabCornerButtonStyle + QStringLiteral("QToolButton { background: palette(button); border-color: palette(mid); }"));
+#else
         m_openTabButton->setFixedSize(20, 26);
         m_openTabButton->setStyleSheet(tabCornerButtonStyle);
+#endif
         m_openTabButton->setAutoRaise(false);
         connect(m_openTabButton, &QToolButton::clicked, this, &Shell::fileOpen);
         tabCornerLayout->addWidget(m_openTabButton);
@@ -939,7 +1098,6 @@ Shell::Shell(const QString &serializedOptions, const QString &sessionWindowId, b
                 // so try a bit more to actually hide it.
                 m_sidebar->hide();
             }
-            scheduleOpenTabButtonGeometryUpdate();
         });
         m_sidebar->installEventFilter(this);
         addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
@@ -1148,14 +1306,6 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
         handleDroppedUrls(list);
         dEvent->setAccepted(true);
         return true;
-    }
-
-    const bool tabLayoutObject = (m_centralStackedWidget && obj == m_centralStackedWidget) || (m_tabWidget && (obj == m_tabWidget || obj == m_tabWidget->tabBar()))
-        || (m_sidebar && obj == m_sidebar);
-    const bool tabLayoutEvent = event->type() == QEvent::Resize || event->type() == QEvent::Show || event->type() == QEvent::Hide
-        || event->type() == QEvent::LayoutRequest || event->type() == QEvent::Move;
-    if (tabLayoutObject && tabLayoutEvent) {
-        scheduleOpenTabButtonGeometryUpdate();
     }
 
     if (m_tabWidget && obj == m_tabWidget->tabBar() && event->type() == QEvent::MouseButtonRelease) {
@@ -2740,12 +2890,6 @@ void Shell::showEvent(QShowEvent *e)
 #endif
 }
 
-void Shell::resizeEvent(QResizeEvent *e)
-{
-    KParts::MainWindow::resizeEvent(e);
-    scheduleOpenTabButtonGeometryUpdate();
-}
-
 #if defined(Q_OS_WIN)
 void Shell::applyPrivateWindowsStartupGeometry()
 {
@@ -3020,7 +3164,6 @@ void Shell::setActiveTab(int tab)
             if (m_sidebar && m_sidebar->isVisible() && m_sidebar->width() < 180) {
                 resizeDocks({m_sidebar}, {220}, Qt::Horizontal);
             }
-            scheduleOpenTabButtonGeometryUpdate();
         });
     }
 
@@ -3318,15 +3461,7 @@ void Shell::centerActiveTabInTabBar()
 {
     if (m_tabWidget) {
         static_cast<DocumentTabBar *>(m_tabWidget->tabBar())->centerCurrentTab();
-        updateOpenTabButtonGeometry();
     }
-}
-
-void Shell::scheduleOpenTabButtonGeometryUpdate()
-{
-    QTimer::singleShot(0, this, &Shell::updateOpenTabButtonGeometry);
-    QTimer::singleShot(50, this, &Shell::updateOpenTabButtonGeometry);
-    QTimer::singleShot(150, this, &Shell::updateOpenTabButtonGeometry);
 }
 
 void Shell::updateOpenTabButtonGeometry()
@@ -3335,23 +3470,8 @@ void Shell::updateOpenTabButtonGeometry()
         return;
     }
 
-    auto *const tabBar = static_cast<DocumentTabBar *>(m_tabWidget->tabBar());
-    const int openWidth = m_openTabButton->width() + 1;
-    const bool overflow = tabBar->preferredStripWidth() > m_tabWidget->width() - openWidth;
-    const int controlsWidth = openWidth + (overflow ? m_tabNavigation->sizeHint().width() : 0);
-    const int available = std::max(1, m_tabWidget->width() - controlsWidth);
-    const int fitted = overflow ? tabBar->fittedStripWidth(available) : available;
-
-    // Give the unused remainder to the corner, keeping the document strip flush at its leading edge.
-    m_tabNavigation->setVisible(overflow);
-    const int padding = available - fitted;
-    if (m_tabCornerPadding->sizeHint().width() != padding) {
-        m_tabCornerPadding->changeSize(padding, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
-        QWidget *const corner = m_tabWidget->cornerWidget(Qt::TopRightCorner);
-        corner->layout()->invalidate();
-        corner->updateGeometry();
-    }
-    tabBar->setMaximumWidth(overflow ? fitted : QWIDGETSIZE_MAX);
+    const QTabBar *const tabBar = m_tabWidget->tabBar();
+    m_tabNavigation->setVisible(static_cast<DocumentTabs *>(m_tabWidget)->hasOverflow());
 
     const bool rtl = tabBar->isRightToLeft();
     const QString previous = i18n("Previous Tab");
@@ -3362,7 +3482,6 @@ void Shell::updateOpenTabButtonGeometry()
     m_rightTabButton->setAccessibleName(rtl ? previous : next);
     m_leftTabButton->setEnabled(rtl ? tabBar->currentIndex() + 1 < tabBar->count() : tabBar->currentIndex() > 0);
     m_rightTabButton->setEnabled(rtl ? tabBar->currentIndex() > 0 : tabBar->currentIndex() + 1 < tabBar->count());
-    tabBar->alignVisibleTabs();
 }
 
 void Shell::slotFitWindowToPage(const QSize pageViewSize, const QSize pageSize)

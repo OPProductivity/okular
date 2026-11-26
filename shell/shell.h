@@ -35,12 +35,10 @@
 class Sidebar;
 class KRecentFilesAction;
 class KToggleAction;
-class QResizeEvent;
 class QCloseEvent;
 class QTabWidget;
 class QTimer;
 class QToolButton;
-class QSpacerItem;
 class KPluginFactory;
 #if defined(Q_OS_WIN)
 class QLocalServer;
@@ -123,7 +121,6 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
     void showEvent(QShowEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *) override;
 
 private Q_SLOTS:
@@ -201,7 +198,6 @@ private:
     bool openDocumentSessionRestoreEnabled() const;
     void writeOpenDocumentSession(KConfigGroup &group) const;
     void centerActiveTabInTabBar();
-    void scheduleOpenTabButtonGeometryUpdate();
     void updateOpenTabButtonGeometry();
 #if defined(Q_OS_WIN)
     void updateTabPalette();
@@ -234,7 +230,6 @@ private:
     bool m_unique;
     QTabWidget *m_tabWidget;
     QWidget *m_tabNavigation = nullptr;
-    QSpacerItem *m_tabCornerPadding = nullptr;
     QToolButton *m_leftTabButton = nullptr;
     QToolButton *m_centerActiveTabButton = nullptr;
     QToolButton *m_rightTabButton = nullptr;
