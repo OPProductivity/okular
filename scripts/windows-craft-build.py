@@ -242,6 +242,10 @@ def build(work: Path, vcvars: Path, cmake: Path | None, dependencies_only: bool)
     provision(work / "qt-declarative-and-speech.log",
               [*craft, "--use-cache", "--options", "[Compile]MakeProgram=nmake",
                "libs/qt/qtdeclarative", "libs/qt/qtspeech"], env, prefix)
+    # jom rejects Poppler's generated assembly-output make rule.
+    provision(work / "pdf-dependencies.log",
+              [*craft, "--use-cache", "--options", "[Compile]MakeProgram=nmake",
+               "qt-libs/poppler", "libs/libspectre"], env, prefix)
     provision(work / "okular-dependencies.log", [*craft, "--use-cache", "--install-deps", OKULAR], env, prefix)
     provision(work / "qt-and-kde-features.log", [*craft, "--use-cache", *FEATURE_PACKAGES], env, prefix)
     if any(prefix.rglob("ninja.exe")):
