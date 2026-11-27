@@ -7,6 +7,12 @@ source with NMake Makefiles and jom. The
 bootstrap and package management. The [recovery guide](windows-craft-recovery.md)
 covers building dependencies from source.
 
+A repository clone contains the helper and reference metadata. To run this
+replay, first obtain `payload.lock.json` and `dependencies.zip` from a trusted
+export of an existing Craft installation. On a PC that has never had Okular,
+an exported bundle supplied separately is sufficient. If you only have the
+repository, use the [public Windows Craft build guide](windows-craft-build.md).
+
 ## Inputs
 
 The [clean-prefix profile](craft-overrides/CleanPrefix.reference.json) pins the

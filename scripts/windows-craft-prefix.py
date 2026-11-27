@@ -149,11 +149,18 @@ def capture(craft: Path, install_manifest: Path, output: Path):
 
 
 def verify_or_restore(bundle: Path, kind: str, destination: Path | None):
-    lock = json.loads((bundle / "payload.lock.json").read_text(encoding="utf-8"))
+    lock_path = bundle / "payload.lock.json"
+    archive = bundle / f"{kind}.zip"
+    missing = [path.name for path in (lock_path, archive) if not path.is_file()]
+    if missing:
+        raise ValueError(
+            f"Private Craft export missing from {bundle}: {', '.join(missing)}. "
+            "For a build using only public inputs, follow docs/windows-craft-build.md."
+        )
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
     if lock["format"] != 1:
         raise ValueError("Unsupported payload lock format")
     spec = lock["archives"][kind]
-    archive = bundle / f"{kind}.zip"
     if identity(archive) != {key: spec[key] for key in ("bytes", "sha256")}:
         raise ValueError(f"Archive checksum or size mismatch: {archive}")
     members = spec["members"]

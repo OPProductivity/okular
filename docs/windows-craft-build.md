@@ -2,6 +2,8 @@
 
 This guide builds the source in this repository. KDE's official Okular download does not contain these changes. It describes a source build, not a redistributable installer or a byte-for-byte reproduction of a previous binary. A fresh Craft installation on a second PC still needs to be tested; Craft and its dependency cache change over time.
 
+Start with a new Craft installation if this PC has never run Okular. Obtain the toolchain and dependencies in the steps below. The private export used by the [clean-prefix replay](windows-craft-clean-prefix.md) is separate from this route.
+
 ## 1. Install the tools
 
 Use 64-bit Windows 10 or 11, Git for Windows, Python and CMake with CTest. The
@@ -22,8 +24,6 @@ Enable Windows Developer Mode and follow the
 [KDE Windows Craft setup instructions](https://develop.kde.org/docs/getting-started/building/craft/craft-windows/)
 for Python certificates, PowerShell execution policy, and Craft bootstrap.
 Choose the x64 MSVC 2022 ABI and a short local Craft path such as `C:\CraftRoot`.
-After entering Craft's environment, run `craft dev-utils/jom` if the Craft
-prefix has no `dev-utils\bin\jom.exe`.
 
 Use the **Developer PowerShell for VS 2022** shortcut for the remaining commands. It makes MSVC and the Windows SDK available. If Craft was installed elsewhere, replace `C:\CraftRoot` in every command below with that root. If a command reports a missing tool, check it before proceeding:
 
@@ -68,16 +68,19 @@ UseNinja = False
 MakeProgram = jom
 ```
 
-Start a new Developer PowerShell after editing the file. Enter Craft's environment and confirm the source directory and build tool:
+Start a new Developer PowerShell after editing the file. Enter Craft's environment, then install its build tool and the dependencies for the Okular blueprint:
 
 ```powershell
 & C:\CraftRoot\craft\craftenv.ps1
-Test-Path C:\CraftRoot\dev-utils\bin\jom.exe
-Set-Location C:\src\okular
-craft --ignoreInstalled --options "kde/applications/okular.srcDir=$((Get-Location).Path)" kde/applications/okular
+craft --use-cache dev-utils/jom
+if ($LASTEXITCODE -ne 0) { throw 'Craft could not install jom' }
+craft --use-cache --install-deps kde/applications/okular
+if ($LASTEXITCODE -ne 0) { throw 'Craft could not install the Okular dependencies' }
+craft --use-cache libs/qt/qtsvg libs/qt/qtdeclarative libs/qt/qtspeech
+if ($LASTEXITCODE -ne 0) { throw 'Craft could not install the required or feature-specific Qt modules' }
 ```
 
-Use the full `kde/applications/okular` blueprint name. The `srcDir` option ensures that Craft builds this checkout. The initial command also obtains Okular's Qt/KDE dependencies. It may take a long time and several gigabytes. A build from KDE's upstream repository or without this `srcDir` option would omit this fork's changes. If Craft reports a Python blueprint problem, check its currently supported Python versions first. The reference environment had local Craft fixes, described below; apply them only if a fresh Craft still has the same problem.
+The dependency step can use KDE's cache and build packages from their recipes when it cannot use a cached package. The explicit Qt requests cover SVG, which this checkout requires, PDF JavaScript, and text-to-speech, including cases where the Okular blueprint leaves those modules implicit. Use the Qt packages from the same Craft installation and ABI. The next section's CMake source argument selects this checkout, independent of any Okular executable offered by the Craft cache. If Craft reports a Python blueprint problem, check its currently supported Python versions first. The reference environment had local Craft fixes, described below. Apply them only if a fresh Craft has the same problem.
 
 ### Confirm feature dependencies before compiling
 
@@ -145,27 +148,35 @@ The 21 November 2026 installed package database recorded QtBase `6.11.3-1`, most
 
 The two [sanitized reference settings files](craft-overrides/README.md) preserve the exact non-sensitive values that influenced this profile. They include the x64 MSVC ABI, RelWithDebInfo/NMake/jom settings, the ignored Ninja/Craft Python packages, and QtBase, Declarative, Poppler and other blueprint options. They are reference excerpts, not complete settings files or universal defaults; inspect the available options in the pinned Craft/blueprint versions before merging them. The reference machine had automatic daily blueprint updates enabled, so recheck the actual checkout revisions before a build. Do not publish or copy the entire local settings files, which may contain paths or private values.
 
-For the closest rebuild on another PC, bootstrap Craft from KDE's current Windows instructions, start from the public Craft parent commit `1ef5a8fd0c8a53c3afd062a4d229a92e161b93f9` and public KDE blueprint commit `5e61dd7ef449b7680551cca8a0a98a8fcde4a20b`, then follow [the reviewed patch sequence](craft-overrides/README.md). The reference Craft commit `0e96fbc37` is local and cannot be fetched from KDE; its only committed code change is preserved as a patch here. Set a compatible x64 MSVC/NMake profile and build this fork using `srcDir`. Verify the Craft and blueprint code state again before building, since automatic updates can change it. Record the resolved package versions and Qt configure summary, then run the app and loader checks below. This sequence is documented but has **not** been completed on a second PC; a new Craft environment may require adapting patches or package versions.
+For the closest rebuild on another PC, bootstrap Craft from KDE's current Windows instructions, start from the public Craft parent commit `1ef5a8fd0c8a53c3afd062a4d229a92e161b93f9` and public KDE blueprint commit `5e61dd7ef449b7680551cca8a0a98a8fcde4a20b`, then follow [the reviewed patch sequence](craft-overrides/README.md). The reference Craft commit `0e96fbc37` is local and cannot be fetched from KDE. Its only committed code change is preserved as a patch here. Verify the Craft and blueprint code state again before building, since automatic updates can change it. Record the resolved package versions and Qt configure summary, then compile the fork checkout and run the loader checks below. This sequence has **not** been completed on a second PC. A new Craft environment may require adapting patches or package versions.
 
-## 4. Repeat the checked NMake build and tests
+## 4. Compile the checkout with NMake and run its tests
 
-The maintainer's current build uses Craft's retained `work/build` directory, regenerated with NMake/jom. The earlier separate `build-nmake` directory was removed. These commands run from a Developer PowerShell with Craft's environment active. Use the CMake executable installed on your machine.
+Run these commands in the same Developer PowerShell with Craft's environment active. Use a new build directory on the first run. Reuse it for later incremental builds of the same checkout and generator.
 
 ```powershell
 $craftRoot = 'C:\CraftRoot'
-$source = (Get-Location).Path
-$build = Join-Path $craftRoot 'build\kde\applications\okular\work\build'
+$source = (Resolve-Path C:\src\okular).Path
+$build = 'C:\src\okular-build'
+$jom = Join-Path $craftRoot 'dev-utils\bin\jom.exe'
+if (!(Test-Path -LiteralPath $jom -PathType Leaf)) { throw "Install jom through Craft first" }
 $env:PATH = "$craftRoot\bin;$craftRoot\dev-utils\bin;$env:PATH"
 $env:QT_PLUGIN_PATH = "$craftRoot\plugins"
 cmake -S $source -B $build -G 'NMake Makefiles' `
-  "-DCMAKE_MAKE_PROGRAM=$craftRoot/dev-utils/bin/jom.exe" `
+  "-DCMAKE_MAKE_PROGRAM=$jom" `
   -DCMAKE_BUILD_TYPE=RelWithDebInfo `
   "-DCMAKE_INSTALL_PREFIX=$craftRoot" "-DCMAKE_PREFIX_PATH=$craftRoot" `
+  -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF `
+  -DCMAKE_REQUIRE_FIND_PACKAGE_Poppler=ON `
   -DBUILD_TESTING=ON -DBUILD_SHARED_LIBS=ON -DBUILD_WITH_QT6=ON
+if ($LASTEXITCODE -ne 0) { throw 'Okular configuration failed' }
 cmake --build $build
+if ($LASTEXITCODE -ne 0) { throw 'Okular build failed' }
 $env:QT_QPA_PLATFORM = 'offscreen'
 ctest --test-dir $build --output-on-failure
+$testResult = $LASTEXITCODE
 Remove-Item Env:QT_QPA_PLATFORM
+if ($testResult -ne 0) { throw 'Okular tests failed' }
 ```
 
 On Windows, `mainshelltest.exe` and `parttest.exe` are compiled but intentionally excluded from the regular CTest suite because some legacy cases are unstable. Run relevant shell cases directly under `QT_QPA_PLATFORM=offscreen`, capture results with Qt Test's `-o <path>,txt`, and wait for the GUI-subsystem process to exit before reading that file. The test binary enables Qt's test paths. Do not set `OKULAR_TEST_INSTANCE` for the parent shell test process: several cases read its test-mode shared config and would otherwise check a different store. For example, run `mainshelltest.exe testTemporarilyMissingTabSurvivesRestore -o results.txt,txt` from the build's `bin` directory. Record the Git revision, case names, exit status, and reported pass/fail totals.
