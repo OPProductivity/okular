@@ -488,18 +488,22 @@ def package_routes(logs):
             if not package:
                 return
             output = "\n".join(lines)
-            if f"Action: post-qmerge for {package}" in output and not re.search(r"\bFAILED\b|fatal error:", output):
+            if re.search(r"\bFAILED\b|fatal error:", output):
+                return
+            success = f"Craft all succeeded: {package} after " in output
+            if f"Action: post-qmerge for {package}" in output:
                 route = "Craft recipe"
             elif (f"Action: fetch-binary for {package}" in output
-                  and (archive := re.search(r"^Extracting archive: (.+)", output, re.MULTILINE))
                   and f"{package} not found in cache" not in output
-                  and not re.search(r"\bFAILED\b|fatal error:", output)):
+                  and (success or "Extracting archive:" in output)):
                 route = "Craft binary cache"
             else:
                 return
             routes[package] = {"route": route, "log": log.name}
             if route == "Craft binary cache":
-                routes[package]["archive"] = Path(archive[1].strip()).name
+                archive = re.search(r"^(?:Extracting archive: |curl https?://)(.+)", output, re.MULTILINE)
+                if archive:
+                    routes[package]["archive"] = Path(archive[1].strip()).name
 
         for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
             match = handling.search(line)
@@ -648,6 +652,7 @@ def build(work: Path, vcvars: Path, cmake: Path | None, args):
     dependency_outputs = [path for path in dependency_outputs if path.is_relative_to(work)]
     dependency_record = stages.run(
         "dependencies", {"poppler": poppler_record["finished"], "features": list(FEATURE_PACKAGES),
+                         "inventory_format": 2,
                          "cmake": str(cmake), "cmake_sha256": file_digest(cmake)},
         dependency_outputs, prepare_dependencies,
     )

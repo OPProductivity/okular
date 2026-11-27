@@ -93,6 +93,10 @@ class PublicBuildTest(unittest.TestCase):
             "*** Handling package: libs/cached, action: all ***\n"
             "*** Action: fetch-binary for libs/cached ***\n"
             "Extracting archive: cache.7z\n"
+            "*** Handling package: dev-utils/bootstrap, action: all ***\n"
+            "*** Action: fetch-binary for dev-utils/bootstrap ***\n"
+            "curl https://example.invalid/craft/bootstrap.tar.xz\n"
+            "*** Craft all succeeded: dev-utils/bootstrap after 1s ***\n"
             "*** Handling package: libs/failed, action: all ***\n"
             "*** Action: fetch-binary for libs/failed ***\n"
             "Extracting archive: cache2.7z\n"
@@ -101,6 +105,8 @@ class PublicBuildTest(unittest.TestCase):
         routes = BUILD["package_routes"]([log])
         self.assertEqual(routes["libs/sourced"]["route"], "Craft recipe")
         self.assertEqual(routes["libs/cached"]["route"], "Craft binary cache")
+        self.assertEqual(routes["dev-utils/bootstrap"]["route"], "Craft binary cache")
+        self.assertEqual(routes["dev-utils/bootstrap"]["archive"], "bootstrap.tar.xz")
         self.assertNotIn("libs/failed", routes)
 
     def test_storage_targets_only_allow_generated_directories(self):
