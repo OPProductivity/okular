@@ -13,30 +13,41 @@ permissions:
 
 jobs:
   public-build:
+    # Match the MSVC 2022 ABI used by the pinned Craft packages.
     runs-on: windows-2022
     timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.13'
+          python-version: '3.13.17'
           architecture: x64
-      - name: Select a workspace on the hosted VM
+      - name: Select a clean workspace on the hosted VM
         id: workspace
-        shell: pwsh
         run: |
           $drive = Get-PSDrive -PSProvider FileSystem |
             Where-Object { $_.Root -match '^[A-Z]:\\$' } |
             Sort-Object Free -Descending |
             Select-Object -First 1
-          "path=$($drive.Root)OkBuild" >> $env:GITHUB_OUTPUT
-      - name: Run public builder tests
-        shell: pwsh
+          if (-not $drive) { throw 'No local build drive is available.' }
+          $work = Join-Path $drive.Root 'OkBuild'
+          if (Test-Path -LiteralPath $work) { throw "Expected a new build workspace at $work" }
+          "path=$work" >> $env:GITHUB_OUTPUT
+          [ordered]@{
+            image_os = $env:ImageOS
+            image_version = $env:ImageVersion
+            checkout_commit = $env:GITHUB_SHA
+            workspace = $work
+            initial_free_bytes = $drive.Free
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'okular-runner.json')
+      - name: Run public builder and recovery tests
         run: python -B -m unittest discover -s scripts/tests
-      - name: Compile, install and test Okular
-        shell: pwsh
+      - name: Run the current public Windows Craft builder
         env:
           OKULAR_WORK: ${{ steps.workspace.outputs.path }}
           PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
@@ -44,20 +55,41 @@ jobs:
           $buildArgs = @('--work-dir', $env:OKULAR_WORK)
           if ($env:PREFLIGHT_ONLY -eq 'true') { $buildArgs += '--preflight-only' }
           python -B scripts/windows-craft-build.py @buildArgs
-      - name: Check checkpoint reuse
+      - name: Verify the clean install and checkpoint reuse
         if: ${{ !inputs.preflight_only }}
-        shell: pwsh
         env:
           OKULAR_WORK: ${{ steps.workspace.outputs.path }}
         run: |
+          $receiptPath = Join-Path $env:OKULAR_WORK 'build-receipt.json'
+          $first = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
+          $tested = @('install', 'ctest', 'shell', 'installed-pdf')
+          $missing = @($tested | Where-Object { -not $first.stages.Contains($_) })
+          if ($first.source_commit -ne $env:GITHUB_SHA -or
+              $first.abi -ne 'windows-cl-msvc2022-x86_64' -or
+              $first.craft_source_make -ne 'nmake' -or $first.okular_make -notin @('jom', 'nmake') -or
+              $missing.Count -or -not $first.pdf_modules_from_prefix) {
+            throw 'The build receipt does not confirm the expected checkout, toolchain and installed PDF tests.'
+          }
+
           python -B scripts/windows-craft-build.py --work-dir $env:OKULAR_WORK --skip-feed-check
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $repeat = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
+          $stageNames = @($first.stages.Keys) + @($repeat.stages.Keys) | Sort-Object -Unique
+          $changed = @($stageNames | Where-Object {
+            $before = $first.stages[$_]
+            $after = $repeat.stages[$_]
+            -not $before -or -not $after -or
+              $before.attempt -ne $after.attempt -or $before.finished -ne $after.finished
+          })
+          if ($changed.Count) { throw "The repeat ran or lost stages: $($changed -join ', ')" }
+          "Verified reuse of all $($first.stages.Count) completed build stages."
           python -B scripts/windows-craft-build.py --work-dir $env:OKULAR_WORK --disk-report
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        if: always()
+        if: ${{ always() && steps.workspace.outputs.path != '' }}
         with:
           name: windows-craft-validation
           path: |
+            ${{ runner.temp }}/okular-runner.json
             ${{ steps.workspace.outputs.path }}/*.log
             ${{ steps.workspace.outputs.path }}/*.json
             ${{ steps.workspace.outputs.path }}/shell-results.txt

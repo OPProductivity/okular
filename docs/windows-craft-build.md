@@ -77,9 +77,12 @@ If you downloaded a ZIP of the source, extract it and run the Python command
 from that directory. Craft still uses Git to obtain its own recipes.
 
 The `Validate public Windows Craft build` GitHub Actions workflow runs the same
-entry point on a Windows Server 2022 worker with an empty Craft workspace. Use
-its `preflight_only` option for a toolchain and feed check. A full run needs a
-worker with the documented free space.
+entry point on a Windows Server 2022 worker with an empty Craft workspace. It
+uses the tested Python 3.13.17 version and records the runner image and checkout.
+Use its `preflight_only` option for a toolchain and feed check. A full run checks
+the install, CTest, Windows shell tests, and installed PDF startup in the build
+receipt. It then verifies that the repeat kept every completed stage's attempt
+number and completion time. A full run needs the documented free space.
 
 On 27 November 2026, the hosted build of `4b55dc196` installed from public
 inputs, passed 32 CTest tests and 12 Windows shell cases, and opened a PDF
