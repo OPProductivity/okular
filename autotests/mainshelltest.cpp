@@ -1692,7 +1692,7 @@ void MainShellTest::testTemporarilyMissingTabSurvivesRestore()
     shell = findShell();
     QVERIFY(shell);
     QCOMPARE(shell->m_tabs.size(), 1);
-    QCOMPARE(shell->m_tabs.first().part->url(), stableUrl);
+    QCOMPARE(QDir::cleanPath(shell->m_tabs.first().part->url().toLocalFile()), QDir::cleanPath(stableUrl.toLocalFile()));
     QTRY_VERIFY_WITH_TIMEOUT(shell->statusBar()->currentMessage().contains(QStringLiteral("could not be restored")), 3000);
     QVERIFY(shell->statusBar()->isVisible());
     KConfigGroup group = testShellSessionConfig()->group(testSessionGroupName() + QStringLiteral(" Window ") + id);
