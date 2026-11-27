@@ -1,6 +1,6 @@
 # Build this Okular fork on Windows with Craft
 
-This guide builds the source in this repository. KDE's official Okular download does not contain these changes. It describes a source build, not a redistributable installer or a byte-for-byte reproduction of a previous binary. A fresh Craft installation on a second PC still needs to be tested; Craft and its dependency cache change over time.
+This guide builds the source in this repository. KDE's official Okular download does not contain these changes. The automated route has been verified from an empty Craft prefix on a separate Windows VM. It produces a functional source build. Exact binary hashes depend on the toolchain and dependency packages used.
 
 ## Automated public build
 
@@ -46,7 +46,10 @@ can continue using objects and downloaded archives from earlier attempts.
 remaining work you have already sized.
 
 `build-stages.json` records elapsed time by stage, retry history and failed
-checks. `installed-dependencies.json` records the version Craft installed and
+checks. The Poppler stage can include provisioning prerequisites. To compare
+compile times, use the interval from Poppler's `make` action to its
+`cleanimage` action in `poppler.log`.
+`installed-dependencies.json` records the version Craft installed and
 whether its logs show a Craft binary-cache hit or a Craft recipe running.
 A recipe may itself install a vendor binary. Where the available logs lack
 that evidence, the route is marked unconfirmed. `build-receipt.json` records
@@ -77,6 +80,11 @@ The `Validate public Windows Craft build` GitHub Actions workflow runs the same
 entry point on a Windows Server 2022 worker with an empty Craft workspace. Use
 its `preflight_only` option for a toolchain and feed check. A full run needs a
 worker with the documented free space.
+
+On 27 November 2026, the hosted build of `4b55dc196` installed from public
+inputs, passed 32 CTest tests and 12 Windows shell cases, and opened a PDF
+offscreen. The repeat run verified and reused all ten completed stages.
+[Build log and receipts](https://github.com/OPProductivity/okular/actions/runs/45994977444).
 
 The [package reconciliation](craft-overrides/PublicWindowsPackages.md)
 explains where the 54 unmatched entries from the recorded reference build
