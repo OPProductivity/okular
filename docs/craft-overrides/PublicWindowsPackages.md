@@ -27,3 +27,20 @@ whose records do not correspond to an archive in those two indexes.
 | 9 | `libs/qt6/qt5compat`, `libs/qt6/qtbase`, `libs/qt6/qtdeclarative`, `libs/qt6/qtlanguageserver`, `libs/qt6/qtmultimedia`, `libs/qt6/qtshadertools`, `libs/qt6/qtspeech`, `libs/qt6/qtsvg`, `libs/qt6/qttools` | The pinned blueprint uses the Qt 6.12.0 package family, with candidates in the public 26.10 MSVC cache for all nine modules. The corresponding module recipes provide the source route for cache misses. |
 
 Sources for the lookup include the [26.05 MSVC RelWithDebInfo cache](https://files.kde.org/craft/Qt6/26.05/windows/cl/msvc2022/x86_64/RelWithDebInfo/manifest.json), [26.10 MSVC RelWithDebInfo cache](https://files.kde.org/craft/Qt6/26.10/windows/cl/msvc2022/x86_64/RelWithDebInfo/manifest.json), [26.10 MSVC Release cache](https://files.kde.org/craft/Qt6/26.10/windows/cl/msvc2022/x86_64/Release/manifest.json), and [26.10 MinGW prebuilt feed](https://files.kde.org/craft/prebuilt/26.10/windows/mingw/x86_64/RelWithDebInfo/manifest.json). Craft checks the available archives and build configuration when provisioning.
+
+## Verified public build
+
+The 27 November trial started with an empty Craft prefix and resumed there
+after bootstrap and make-tool fixes. It obtained its packages through public
+sources and recorded 216 dependency packages. Of the original 54 unmatched
+records, 23 kept the same version, 25 used different versions, and six were
+unneeded historical Python setup records or the previously installed
+Okular package. The launcher compiled the fork itself.
+
+The trial used MSVC 14.44.35207 and Windows SDK 10.0.26100.0. It selected
+QtBase 6.12.0-1, KDE Frameworks 6.32.0, Poppler 26.11.0, libspectre 0.2.12 and
+Ghostscript 10.08.0. Poppler and libspectre built from source with Microsoft
+NMake. Okular built with jom and installed into the new prefix without Ninja.
+All 32 CTest tests and 12 Windows shell cases passed. The installed
+application opened the PDF fixture and loaded the required Qt, Okular and
+Poppler modules from the new prefix.
