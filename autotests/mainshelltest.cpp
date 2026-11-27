@@ -306,14 +306,14 @@ static KSharedConfigPtr testShellSessionConfig()
     return KSharedConfig::openConfig();
 }
 
-static KConfigGroup testLegacySessionGroup(const KSharedConfigPtr &config)
+static QString testSessionGroupName()
 {
 #if defined(Q_OS_WIN)
     if (ShellUtils::windowsProcessIsElevated()) {
-        return config->group(QStringLiteral("Shell Open Documents Session Elevated"));
+        return QStringLiteral("Shell Open Documents Session Elevated");
     }
 #endif
-    return config->group(QStringLiteral("Shell Open Documents Session"));
+    return QStringLiteral("Shell Open Documents Session");
 }
 
 void MainShellTest::initTestCase()
@@ -348,13 +348,13 @@ void MainShellTest::init()
     partConfig->group(QStringLiteral("General")).writeEntry("ShellRestoreOpenDocuments", true);
     partConfig->sync();
     KSharedConfigPtr config = testShellSessionConfig();
-    testLegacySessionGroup(config).deleteGroup();
+    config->group(testSessionGroupName()).deleteGroup();
 #if defined(Q_OS_WIN)
-    const KConfigGroup windows = config->group(QStringLiteral("Shell Open Documents Session Windows"));
+    const KConfigGroup windows = config->group(testSessionGroupName() + QStringLiteral(" Windows"));
     for (const QString &id : windows.readEntry("WindowIds", QStringList())) {
-        config->group(QStringLiteral("Shell Open Documents Session Window ") + id).deleteGroup();
+        config->group(testSessionGroupName() + QStringLiteral(" Window ") + id).deleteGroup();
     }
-    config->group(QStringLiteral("Shell Open Documents Session Windows")).deleteGroup();
+    config->group(testSessionGroupName() + QStringLiteral(" Windows")).deleteGroup();
 #endif
     config->sync();
 
@@ -639,12 +639,12 @@ void MainShellTest::testSeparateWindowSessionsRestore()
     KSharedConfigPtr config = testShellSessionConfig();
     const QStringList ids = Shell::savedOpenDocumentSessionWindowIds();
     QCOMPARE(ids.size(), 2);
-    QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(0)).readPathEntry("Urls", QStringList()).size(), 1);
-    QCOMPARE(config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readPathEntry("Urls", QStringList()).size(), 1);
-    const QByteArray secondGeometry = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1)).readEntry("WindowGeometry", QByteArray());
+    QCOMPARE(config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.at(0)).readPathEntry("Urls", QStringList()).size(), 1);
+    QCOMPARE(config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.at(1)).readPathEntry("Urls", QStringList()).size(), 1);
+    const QByteArray secondGeometry = config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.at(1)).readEntry("WindowGeometry", QByteArray());
     QVERIFY(!secondGeometry.isEmpty());
-    const KConfigGroup firstGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(0));
-    const KConfigGroup secondGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.at(1));
+    const KConfigGroup firstGroup = config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.at(0));
+    const KConfigGroup secondGroup = config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.at(1));
     QCOMPARE(firstGroup.readEntry("WindowUiStateVersion", 0), 1);
     QCOMPARE(firstGroup.readEntry("WindowSidebarLocked", true), false);
     QCOMPARE(secondGroup.readEntry("WindowSidebarVisible", true), false);
@@ -1317,7 +1317,7 @@ void MainShellTest::testRecentlyClosedWindowRestoresRemainingTabs()
 
     QVERIFY(first->close());
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
-    const KConfigGroup closedGroup = testShellSessionConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
+    const KConfigGroup closedGroup = testShellSessionConfig()->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.first());
     const QStringList savedUrls = closedGroup.readPathEntry("Urls", QStringList());
     QCOMPARE(savedUrls.size(), 1);
     QCOMPARE(QDir::cleanPath(QUrl(savedUrls.first()).toLocalFile()), QDir::cleanPath(retainedTab.toLocalFile()));
@@ -1367,7 +1367,7 @@ void MainShellTest::testCloseAllHiddenWindowsRestoresThreeSessions()
     const QStringList savedIds = Shell::savedOpenDocumentSessionWindowIds();
     QCOMPARE(savedIds.size(), 3);
     for (const QString &id : savedIds) {
-        QCOMPARE(testShellSessionConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id).readEntry("ClosedAt", qint64(0)), qint64(0));
+        QCOMPARE(testShellSessionConfig()->group(testSessionGroupName() + QStringLiteral(" Window ") + id).readEntry("ClosedAt", qint64(0)), qint64(0));
     }
     QVERIFY(flushClosedShellDeletion(first));
     QVERIFY(flushClosedShellDeletion(second));
@@ -1485,7 +1485,7 @@ void MainShellTest::testFiveWindowShutdownSurvivesPartialRestoreSave()
     // A concurrent settings write during startup must not change the windows
     // or tab URLs selected at the beginning of this restore.
     KSharedConfigPtr config = testShellSessionConfig();
-    config->group(QStringLiteral("Shell Open Documents Session Window ") + expectedIds.last()).writePathEntry("Urls", QStringList());
+    config->group(testSessionGroupName() + QStringLiteral(" Window ") + expectedIds.last()).writePathEntry("Urls", QStringList());
     config->sync();
     Shell *first = new Shell(options, expectedIds.first(), false);
     QVERIFY(first->isValid());
@@ -1553,9 +1553,9 @@ void MainShellTest::testPrimaryTakeoverKeepsPreviousOwnersWindows()
     const KSharedConfigPtr cached = testShellSessionConfig();
     KConfig previousOwner(cached->name(), KConfig::SimpleConfig);
     const QString previousId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    previousOwner.group(QStringLiteral("Shell Open Documents Session Window ") + previousId)
+    previousOwner.group(testSessionGroupName() + QStringLiteral(" Window ") + previousId)
         .writePathEntry("Urls", QStringList {QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")).url()});
-    previousOwner.group(QStringLiteral("Shell Open Documents Session Windows"))
+    previousOwner.group(testSessionGroupName() + QStringLiteral(" Windows"))
         .writeEntry("WindowIds", QStringList {cachedIds.first(), previousId});
     previousOwner.sync();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), cachedIds);
@@ -1582,9 +1582,9 @@ void MainShellTest::testStartupReadsPreviousOwnersFinalSession()
     const KSharedConfigPtr cached = testShellSessionConfig();
     KConfig previousOwner(cached->name(), KConfig::SimpleConfig);
     const QString secondId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    previousOwner.group(QStringLiteral("Shell Open Documents Session Window ") + secondId)
+    previousOwner.group(testSessionGroupName() + QStringLiteral(" Window ") + secondId)
         .writePathEntry("Urls", QStringList {QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf")).url()});
-    previousOwner.group(QStringLiteral("Shell Open Documents Session Windows"))
+    previousOwner.group(testSessionGroupName() + QStringLiteral(" Windows"))
         .writeEntry("WindowIds", QStringList {firstId, secondId});
     previousOwner.sync();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), QStringList {firstId});
@@ -1633,7 +1633,7 @@ void MainShellTest::testClosedWindowsCannotOverwriteCompletedShutdown()
     }
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
     for (const QString &id : ids) {
-        QVERIFY(!testShellSessionConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id).readPathEntry("Urls", QStringList()).isEmpty());
+        QVERIFY(!testShellSessionConfig()->group(testSessionGroupName() + QStringLiteral(" Window ") + id).readPathEntry("Urls", QStringList()).isEmpty());
     }
     for (Shell *window : std::as_const(windows)) {
         QVERIFY(flushClosedShellDeletion(window));
@@ -1682,7 +1682,9 @@ void MainShellTest::testTemporarilyMissingTabSurvivesRestore()
     shell->openUrl(stableUrl);
     shell->openUrl(intermittentUrl);
     shell->saveOpenDocumentSession();
-    const QString id = Shell::savedOpenDocumentSessionWindowIds().first();
+    const QStringList savedIds = Shell::savedOpenDocumentSessionWindowIds();
+    QCOMPARE(savedIds.size(), 1);
+    const QString id = savedIds.first();
     delete shell;
 
     QVERIFY(QFile::remove(intermittentPath));
@@ -1690,9 +1692,10 @@ void MainShellTest::testTemporarilyMissingTabSurvivesRestore()
     shell = findShell();
     QVERIFY(shell);
     QCOMPARE(shell->m_tabs.size(), 1);
+    QCOMPARE(shell->m_tabs.first().part->url(), stableUrl);
     QTRY_VERIFY_WITH_TIMEOUT(shell->statusBar()->currentMessage().contains(QStringLiteral("could not be restored")), 3000);
     QVERIFY(shell->statusBar()->isVisible());
-    KConfigGroup group = testShellSessionConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id);
+    KConfigGroup group = testShellSessionConfig()->group(testSessionGroupName() + QStringLiteral(" Window ") + id);
     const auto containsIntermittent = [&]() {
         const QStringList saved = group.readPathEntry("Urls", QStringList());
         return std::any_of(saved.cbegin(), saved.cend(), [&intermittentPath](const QString &entry) {
@@ -1747,7 +1750,7 @@ void MainShellTest::testReopeningMissingTabClearsPendingEntry()
     QVERIFY(shell->m_unrestoredSessionUrls.isEmpty());
     shell->saveOpenDocumentSession();
     const QString id = Shell::savedOpenDocumentSessionWindowIds().first();
-    const QStringList urls = testShellSessionConfig()->group(QStringLiteral("Shell Open Documents Session Window ") + id).readPathEntry("Urls", QStringList());
+    const QStringList urls = testShellSessionConfig()->group(testSessionGroupName() + QStringLiteral(" Window ") + id).readPathEntry("Urls", QStringList());
     QCOMPARE(urls.size(), 2);
     delete shell;
     QCOMPARE(Okular::main(QStringList(), options), Okular::Success);
@@ -1772,7 +1775,7 @@ void MainShellTest::testClosedWindowExpiresAfterFiveMinutes()
     QVERIFY(first->close());
     QVERIFY(flushClosedShellDeletion(first));
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup closedGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
+    KConfigGroup closedGroup = config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.first());
     closedGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() - 4 * 60);
     config->sync();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
@@ -1802,7 +1805,7 @@ void MainShellTest::testClockCorrectionKeepsRecentlyClosedWindow()
     QVERIFY(first->close());
     QVERIFY(flushClosedShellDeletion(first));
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup firstGroup = config->group(QStringLiteral("Shell Open Documents Session Window ") + ids.first());
+    KConfigGroup firstGroup = config->group(testSessionGroupName() + QStringLiteral(" Window ") + ids.first());
     firstGroup.writeEntry("ClosedAt", QDateTime::currentSecsSinceEpoch() + 60);
     config->sync();
     QCOMPARE(Shell::savedOpenDocumentSessionWindowIds(), ids);
@@ -2273,7 +2276,7 @@ void MainShellTest::testDroppedFileOpensNewTab()
 void MainShellTest::testOpenDocumentSessionRestoresTabs()
 {
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup session = testLegacySessionGroup(config);
+    KConfigGroup session = config->group(testSessionGroupName());
     session.deleteGroup();
     config->sync();
 
@@ -2308,7 +2311,7 @@ void MainShellTest::testOpenDocumentSessionRestoresTabs()
 void MainShellTest::testFileLaunchRestoresTabsBeforeOpeningFile()
 {
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup session = testLegacySessionGroup(config);
+    KConfigGroup session = config->group(testSessionGroupName());
     const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
     const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
     const QUrl newUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/formattest.pdf"));
@@ -2330,7 +2333,7 @@ void MainShellTest::testFileLaunchRestoresTabsBeforeOpeningFile()
 void MainShellTest::testDisabledOpenDocumentSessionRestore()
 {
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup session = testLegacySessionGroup(config);
+    KConfigGroup session = config->group(testSessionGroupName());
     const QUrl savedUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
     session.writePathEntry("Urls", QStringList {savedUrl.url()});
     config->sync();
@@ -2350,7 +2353,7 @@ void MainShellTest::testDisabledOpenDocumentSessionRestore()
 void MainShellTest::testOpenDocumentSessionIgnoresNewFileTabPreference()
 {
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup session = testLegacySessionGroup(config);
+    KConfigGroup session = config->group(testSessionGroupName());
     const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
     const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
     session.writePathEntry("Urls", QStringList {firstUrl.url(), secondUrl.url()});
@@ -2386,7 +2389,7 @@ void MainShellTest::testOpenDocumentSessionSkipsMissingFile()
     const QUrl missingUrl = QUrl::fromLocalFile(directory.filePath(QStringLiteral("missing.pdf")));
     const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup session = testLegacySessionGroup(config);
+    KConfigGroup session = config->group(testSessionGroupName());
     session.writePathEntry("Urls", QStringList {firstUrl.url(), missingUrl.url(), secondUrl.url()});
     session.writeEntry("ActiveTab", 2);
     config->sync();
@@ -2407,7 +2410,7 @@ void MainShellTest::testOpenDocumentSessionDeduplicatesSavedUrls()
     const QUrl firstUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file1.pdf"));
     const QUrl secondUrl = QUrl::fromLocalFile(QStringLiteral(KDESRCDIR "data/file2.pdf"));
     KSharedConfigPtr config = testShellSessionConfig();
-    KConfigGroup session = testLegacySessionGroup(config);
+    KConfigGroup session = config->group(testSessionGroupName());
     session.writePathEntry("Urls", QStringList {firstUrl.url(), firstUrl.url(), secondUrl.url()});
     session.writeEntry("ActiveTab", 1);
     config->sync();
