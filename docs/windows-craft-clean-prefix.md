@@ -11,7 +11,7 @@ A repository clone contains the helper and reference metadata. To run this
 replay, first obtain `payload.lock.json` and `dependencies.zip` from a trusted
 export of an existing Craft installation. On a PC that has never had Okular,
 an exported bundle supplied separately is sufficient. If you only have the
-repository, use the [public Windows Craft build guide](windows-craft-build.md).
+repository, use the [automated public installer](windows-craft-build.md#automated-public-build).
 
 ## Inputs
 

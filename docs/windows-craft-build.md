@@ -2,7 +2,38 @@
 
 This guide builds the source in this repository. KDE's official Okular download does not contain these changes. It describes a source build, not a redistributable installer or a byte-for-byte reproduction of a previous binary. A fresh Craft installation on a second PC still needs to be tested; Craft and its dependency cache change over time.
 
-Start with a new Craft installation if this PC has never run Okular. Obtain the toolchain and dependencies in the steps below. The private export used by the [clean-prefix replay](windows-craft-clean-prefix.md) is separate from this route.
+## Automated public build
+
+Install [Git for Windows](https://git-scm.com/install/windows), [Python 3.13 or newer](https://www.python.org/downloads/windows/), and the Visual Studio 2022 x64 C++ workload and SDK listed below. Then run these commands in PowerShell:
+
+```powershell
+git clone https://github.com/OPProductivity/okular.git C:\src\okular
+Set-Location C:\src\okular
+$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+python -B scripts/windows-craft-build.py --work-dir C:\OkBuild --vcvars $vcvars
+```
+
+Use the `vcvars64.bat` for your installed Visual Studio edition. The first
+run needs an empty workspace with enough space for downloads and build
+files. The script creates an isolated Python environment for the TLS
+certificate package and initializes KDE Craft with MSVC 2022 x64 and Ninja
+disabled. Craft also provides CMake, CTest and jom. It obtains the required native packages from KDE's binary
+cache or runs the corresponding public recipes. The script compiles this
+checkout into `C:\OkBuild\prefix`, runs CTest and the Windows shell checks,
+and opens a test PDF offscreen. Step logs are in the workspace. Rerun with
+the same workspace after a transient failure. Add `--dependencies-only` to
+stop after provisioning and checking the native dependencies.
+
+If a download from an MSYS2 mirror fails, the script can retry with the
+primary MSYS2 server first in the workspace's mirror list. The existing
+fallback mirrors and package signature checks still apply.
+
+The [package reconciliation](craft-overrides/PublicWindowsPackages.md)
+explains where the 54 unmatched entries from the recorded reference build
+come from on the public route. The [private replay](windows-craft-clean-prefix.md)
+is for installations that need the saved dependency files from that earlier build.
+
+## Manual setup
 
 ## 1. Install the tools
 

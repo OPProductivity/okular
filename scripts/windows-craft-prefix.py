@@ -33,6 +33,14 @@ KEY_FILES = (
     "plugins/okular_generators/okularGenerator_poppler.dll",
     "plugins/okular_generators/okularGenerator_ghostview.dll",
 )
+SHELL_CASES = (
+    "testTabPaletteTracksColorScheme", "testTabWidthsStayStableAcrossSelection",
+    "testTabControlsRemainAvailable", "testOverflowArrowsSelectEveryTab",
+    "testRtlOverflowControlsFollowVisualOrder", "testCenterButtonFramesActiveTab",
+    "testPageNumberControlWidthStaysStable", "testToolbarPageCounterStaysPutAcrossTabs",
+    "testDuplicateOpenShowsPageNotice", "testRecentHistoryHasUniqueNewestEntries",
+    "testOpenDocumentSessionRestoresTabs", "testTemporarilyMissingTabSurvivesRestore",
+)
 
 
 def canonical_path(name: str) -> str:
@@ -155,7 +163,8 @@ def verify_or_restore(bundle: Path, kind: str, destination: Path | None):
     if missing:
         raise ValueError(
             f"Private Craft export missing from {bundle}: {', '.join(missing)}. "
-            "For a build using only public inputs, follow docs/windows-craft-build.md."
+            "Start the public installer with python scripts/windows-craft-build.py --help. "
+            "https://github.com/OPProductivity/okular/blob/master/docs/windows-craft-build.md#automated-public-build"
         )
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     if lock["format"] != 1:
@@ -194,7 +203,7 @@ def verify_or_restore(bundle: Path, kind: str, destination: Path | None):
     print(f"{kind}: verified {len(members)} files")
 
 
-def smoke(prefix: Path, original_prefix: Path, fixture: Path, log: Path, env: dict) -> list[str]:
+def smoke(prefix: Path, original_prefix: Path | None, fixture: Path, log: Path, env: dict) -> list[str]:
     """Launch only the new install, with Qt's Windows test profile and IPC isolation."""
     test_env = dict(env, OKULAR_TEST_INSTANCE=f"craft-prefix-{os.getpid()}", QT_DEBUG_PLUGINS="1")
     powershell = Path(env["SYSTEMROOT"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -216,7 +225,7 @@ def smoke(prefix: Path, original_prefix: Path, fixture: Path, log: Path, env: di
                 result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", command],
                                         capture_output=True, text=True, check=True, timeout=10)
                 modules = [Path(name) for name in result.stdout.splitlines() if name]
-                if any(path.is_relative_to(original_prefix) for path in modules):
+                if original_prefix and any(path.is_relative_to(original_prefix) for path in modules):
                     raise ValueError("The installed reader loaded a DLL from the original Craft prefix")
                 local = sorted(path.relative_to(prefix).as_posix() for path in modules if path.is_relative_to(prefix))
                 if set(map(str.casefold, required)).issubset(map(str.casefold, local)):
@@ -380,15 +389,7 @@ def build(source: Path, prefix: Path, build_dir: Path, cmake: Path, vcvars: Path
     receipt_file.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     run("ctest", [cmake.with_name("ctest.exe"), "--test-dir", build_dir, "--output-on-failure"], test_env)
 
-    cases = [
-        "testTabPaletteTracksColorScheme", "testTabWidthsStayStableAcrossSelection",
-        "testTabControlsRemainAvailable", "testOverflowArrowsSelectEveryTab",
-        "testRtlOverflowControlsFollowVisualOrder", "testCenterButtonFramesActiveTab",
-        "testPageNumberControlWidthStaysStable", "testToolbarPageCounterStaysPutAcrossTabs",
-        "testDuplicateOpenShowsPageNotice", "testRecentHistoryHasUniqueNewestEntries", "testOpenDocumentSessionRestoresTabs",
-        "testTemporarilyMissingTabSurvivesRestore",
-    ]
-    run("shell", [build_dir / "bin/mainshelltest.exe", *cases,
+    run("shell", [build_dir / "bin/mainshelltest.exe", *SHELL_CASES,
                   "-o", str(build_dir / "shell-results.txt") + ",txt"], test_env)
     installed = {}
     for path in KEY_FILES:
