@@ -25,6 +25,7 @@ ABI = "windows-cl-msvc2022-x86_64"
 SOURCE = Path(__file__).resolve().parents[1]
 GUIDE = "https://github.com/OPProductivity/okular/blob/master/docs/windows-craft-build.md#automated-public-build"
 OKULAR = "kde/applications/okular"
+NMAKE_OPTIONS = ("--options", "[Compile]MakeProgram=nmake")
 FEATURE_PACKAGES = (
     "libs/qt/qtsvg", "libs/qt/qtmultimedia",
     "kde/frameworks/tier2/kdoctools", "kde/frameworks/tier2/kcolorscheme",
@@ -67,7 +68,7 @@ def initialize_settings(work: Path, prefix: Path, tree: Path, python: Path):
     settings["General"]["KFHostToolingVersion"] = "6"
     settings["Paths"]["Python"] = str(python.parent)
     settings["Compile"]["UseNinja"] = "False"
-    settings["Compile"]["MakeProgram"] = "jom"
+    settings["Compile"]["MakeProgram"] = "nmake"
     settings["ShortPath"]["JunctionDir"] = str(work / "short")
     settings["BlueprintVersions"]["EnableDailyUpdates"] = "False"
     settings["Packager"]["RepositoryUrl"] = "https://files.kde.org/craft/Qt6/"
@@ -143,7 +144,7 @@ def bootstrap(work: Path, prefix: Path, env):
         entry = craft if craft.is_file() else tree / "bin/craft.py"
         if not entry.is_file():
             raise ValueError(f"Incomplete Craft bootstrap in {prefix}. See {work / 'bootstrap.log'}.")
-        provision(work / "bootstrap.log", [python, "-u", entry, "craft"], env, prefix)
+        provision(work / "bootstrap.log", [python, "-u", entry, *NMAKE_OPTIONS, "craft"], env, prefix)
     if not craft.is_file():
         raise ValueError(f"Craft did not install its command-line entry point under {prefix}")
 
@@ -153,7 +154,7 @@ def bootstrap(work: Path, prefix: Path, env):
     apply_pdf_recipes(work, blueprints, env)
     prefer_msys_primary(prefix)
     completed.touch()
-    return [python, "-u", craft]
+    return [python, "-u", craft, *NMAKE_OPTIONS]
 
 
 def preserve_empty_git_config(env: dict):
@@ -220,6 +221,24 @@ def check_dependency_paths(cache: Path, prefix: Path):
         raise ValueError(f"CMake did not find these dependencies in {prefix}: {', '.join(foreign)}")
 
 
+def compile_okular(work: Path, cmake: Path, build_dir: Path, env) -> str:
+    log = work / "compile.log"
+    start = log.stat().st_size if log.exists() else 0
+    try:
+        run(log, [cmake, "--build", build_dir], env)
+    except ValueError:
+        with log.open("rb") as stream:
+            stream.seek(start)
+            output = stream.read()
+        if b"jom:" not in output or b"Error: syntax error in" not in output:
+            raise
+        print("Retrying the generated NMake makefiles with Microsoft NMake.", flush=True)
+        nmake = shutil.which("nmake.exe", path=env["PATH"])
+        run(work / "compile-nmake.log", [nmake, "/NOLOGO"], env, cwd=build_dir)
+        return "nmake"
+    return "jom"
+
+
 def build(work: Path, vcvars: Path, cmake: Path | None, dependencies_only: bool):
     marker = work / "public-build.json"
     expected = {"format": 1, "abi": ABI, "craft": CRAFT, "blueprints": BLUEPRINTS}
@@ -238,14 +257,10 @@ def build(work: Path, vcvars: Path, cmake: Path | None, dependencies_only: bool)
     craft = bootstrap(work, prefix, env)
     cmake = cmake or prefix / "dev-utils/bin/cmake.exe"
     replay["require_files"](cmake.parent, (cmake.name, "ctest.exe"))
-    # The MSVC NMake fallback also works when these Qt packages miss the binary cache.
     provision(work / "qt-declarative-and-speech.log",
-              [*craft, "--use-cache", "--options", "[Compile]MakeProgram=nmake",
-               "libs/qt/qtdeclarative", "libs/qt/qtspeech"], env, prefix)
-    # jom rejects Poppler's generated assembly-output make rule.
+              [*craft, "--use-cache", "libs/qt/qtdeclarative", "libs/qt/qtspeech"], env, prefix)
     provision(work / "pdf-dependencies.log",
-              [*craft, "--use-cache", "--options", "[Compile]MakeProgram=nmake",
-               "qt-libs/poppler", "libs/libspectre"], env, prefix)
+              [*craft, "--use-cache", "qt-libs/poppler", "libs/libspectre"], env, prefix)
     provision(work / "okular-dependencies.log", [*craft, "--use-cache", "--install-deps", OKULAR], env, prefix)
     provision(work / "qt-and-kde-features.log", [*craft, "--use-cache", *FEATURE_PACKAGES], env, prefix)
     if any(prefix.rglob("ninja.exe")):
@@ -273,7 +288,7 @@ def build(work: Path, vcvars: Path, cmake: Path | None, dependencies_only: bool)
         *(f"-DCMAKE_REQUIRE_FIND_PACKAGE_{name}=ON" for name in required),
     ], env)
     check_dependency_paths(build_dir / "CMakeCache.txt", prefix)
-    run(work / "compile.log", [cmake, "--build", build_dir], env)
+    make = compile_okular(work, cmake, build_dir, env)
     run(work / "install.log", [cmake, "--install", build_dir], env)
     test_env = dict(env, QT_QPA_PLATFORM="offscreen")
     run(work / "ctest.log", [cmake.with_name("ctest.exe"), "--test-dir", build_dir, "--output-on-failure"], test_env)
@@ -285,7 +300,7 @@ def build(work: Path, vcvars: Path, cmake: Path | None, dependencies_only: bool)
                             env=env, capture_output=True, text=True)
     receipt = {
         "source_commit": source.stdout.strip() if source.returncode == 0 else None,
-        **expected, "prefix": str(prefix),
+        **expected, "prefix": str(prefix), "okular_make": make,
         "executable": replay["identity"](prefix / "bin/okular.exe"),
         "pdf_recipe_patch": replay["identity"](SOURCE / "docs/craft-overrides/pdf-dependencies-2026-11-17.patch"),
         "pdf_modules_from_prefix": loaded,

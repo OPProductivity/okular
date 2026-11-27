@@ -18,8 +18,10 @@ run needs an empty workspace with enough space for downloads and build
 files. The script creates an isolated Python environment for the TLS
 certificate package and initializes KDE Craft with MSVC 2022 x64 and Ninja
 disabled. Craft also provides CMake, CTest and jom. It obtains the required native packages from KDE's binary
-cache or runs the corresponding public recipes. The script compiles this
-checkout into `C:\OkBuild\prefix`, runs CTest and the Windows shell checks,
+cache or runs the corresponding public recipes with Microsoft NMake. The script compiles this
+checkout into `C:\OkBuild\prefix` with NMake Makefiles. It uses jom for the
+app build and retries with Microsoft NMake if jom rejects a generated rule.
+It runs CTest and the Windows shell checks,
 and opens a test PDF offscreen. Step logs are in the workspace. Rerun with
 the same workspace after a transient failure. Add `--dependencies-only` to
 stop after provisioning and checking the native dependencies.
