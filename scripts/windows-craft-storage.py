@@ -25,15 +25,17 @@ def measure(root, *, exclude=(), refuse_links=False):
     if not os.path.lexists(root):
         return 0
     total = 0
-    pending = [root]
+    excluded = {os.fspath(path) for path in exclude}
+    pending = [(os.fspath(root), root.lstat())]
     while pending:
-        path = pending.pop()
-        info = path.lstat()
+        path, info = pending.pop()
         if reparse_point(info) or stat.S_ISLNK(info.st_mode):
             if refuse_links:
                 raise ValueError(f"Recycling requires an ordinary tree without reparse points: {path}")
         elif stat.S_ISDIR(info.st_mode):
-            pending.extend(entry for entry in path.iterdir() if entry not in exclude)
+            with os.scandir(path) as entries:
+                pending.extend((entry.path, entry.stat(follow_symlinks=False))
+                               for entry in entries if entry.path not in excluded)
         elif stat.S_ISREG(info.st_mode):
             total += info.st_size
     return total
@@ -44,14 +46,18 @@ def disk_report(work):
     downloads = prefix / "download"
     dependencies = prefix / "build"
     app = work / "build"
+    bootstrap = work / "bootstrap-python"
     evidence = sum(measure(path) for path in work.iterdir() if path.is_file() and path.name != ".public-build.lock")
+    other = sum(measure(path) for path in work.iterdir()
+                if path not in (prefix, app, bootstrap) and not path.is_file())
     groups = (
         ("Downloads and package archives", measure(downloads)),
         ("Craft dependency work and package images", measure(dependencies)),
         ("Okular app build and test binaries", measure(app)),
         ("Craft prefix, installed runtime and tools", measure(prefix, exclude=(downloads, dependencies))),
-        ("Bootstrap Python environment", measure(work / "bootstrap-python")),
+        ("Bootstrap Python environment", measure(bootstrap)),
         ("Workspace logs, stage records and other root files", evidence),
+        ("Other workspace directories", other),
     )
     for name, size in groups:
         print(f"{name:51} {size / GIB:7.2f} GiB ({size:,} bytes)", flush=True)

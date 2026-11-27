@@ -141,12 +141,24 @@ blueprint revisions, local patches and dependency versions.
 
 ## 3. Prepare Craft and build the dependencies
 
-This fork was last rebuilt with MSVC 2022 x64, NMake Makefiles, and `jom`. In `C:\CraftRoot\etc\CraftSettings.ini`, set these entries under the existing `[Compile]` section (keep the other settings made by Craft):
+Use MSVC 2022 x64 and NMake Makefiles. In `C:\CraftRoot\etc\CraftSettings.ini`, set these entries under the existing `[Compile]` section. Keep the other settings made by Craft.
 
 ```ini
 [Compile]
 UseNinja = False
-MakeProgram = jom
+MakeProgram = nmake
+```
+
+Use these entries in `C:\CraftRoot\etc\BlueprintSettings.ini` to match the
+automated build's Ninja and Poppler settings. Merge the entries into any
+existing sections with these names.
+
+```ini
+[dev-utils/ninja]
+ignored = True
+
+[qt-libs/poppler]
+buildTests = False
 ```
 
 Start a new Developer PowerShell after editing the file. Enter Craft's environment, then install its build tool and the dependencies for the Okular blueprint:
