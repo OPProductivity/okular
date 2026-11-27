@@ -4,34 +4,79 @@ This guide builds the source in this repository. KDE's official Okular download 
 
 ## Automated public build
 
-Install [Git for Windows](https://git-scm.com/install/windows), [Python 3.13 or newer](https://www.python.org/downloads/windows/), and the Visual Studio 2022 x64 C++ workload and SDK listed below. Then run these commands in PowerShell:
+Install [Git for Windows](https://git-scm.com/install/windows), [Python 3.13 or newer](https://www.python.org/downloads/windows/), and the Visual Studio 2022 x64 C++ workload and SDK listed below. Allow at least 25 GiB of free space for a new build. Use a short workspace path on a local drive, outside synced folders. Run these commands in PowerShell.
 
 ```powershell
 git clone https://github.com/OPProductivity/okular.git C:\src\okular
 Set-Location C:\src\okular
-$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-python -B scripts/windows-craft-build.py --work-dir C:\OkBuild --vcvars $vcvars
+python -B scripts/windows-craft-build.py --work-dir C:\OkBuild
 ```
 
-Use the `vcvars64.bat` for your installed Visual Studio edition. The first
-run needs an empty workspace with enough space for downloads and build
-files. The script creates an isolated Python environment for the TLS
+The script uses Visual Studio Installer's `vswhere` to find a Visual Studio
+2022 installation with the x64 C++ tools. Use `--vcvars` with the full path to
+`VC\Auxiliary\Build\vcvars64.bat` to select a different Visual Studio 2022
+installation. The preflight checks free space, compiles and links a small
+x64 program with the selected SDK, and reports whether the public package
+feeds respond. Use `--preflight-only` to run just those checks. The feed probes
+are advisory because Craft may already have the relevant archives or alternate
+mirrors. Use `--skip-feed-check` when resuming without network access.
+If an MSYS2 mirror times out or rate-limits a download, the script can retry
+with the primary MSYS2 server first in this workspace's mirror list. The
+fallback mirrors and package signature checks still apply.
+
+The first run needs an empty workspace. The script creates an isolated Python environment for the TLS
 certificate package and initializes KDE Craft with MSVC 2022 x64 and Ninja
 disabled. Craft also provides CMake, CTest and jom. It obtains the required native packages from KDE's binary
 cache or runs the corresponding public recipes with Microsoft NMake. The script compiles this
 checkout into `C:\OkBuild\prefix` with NMake Makefiles. It uses jom for the
 app build and retries with Microsoft NMake if jom rejects a generated rule.
 It runs CTest and the Windows shell checks,
-and opens a test PDF offscreen. Step logs are in the workspace. Rerun with
-the same workspace after a transient failure. Add `--dependencies-only` to
-stop after provisioning and checking the native dependencies.
+and opens a test PDF offscreen. Poppler source builds omit its upstream tests
+and demo viewer while building the same PDF runtime. Okular's own CTest and
+Windows shell checks run in full. Add `--dependencies-only` to stop after
+provisioning and checking the native dependencies.
 
-If a download from an MSYS2 mirror fails, the script can retry with the
-primary MSYS2 server first in the workspace's mirror list. The existing
-fallback mirrors and package signature checks still apply.
+### Resume and inspect a build
+
+After a failure, rerun the same command in the same workspace. The script
+verifies the relevant inputs and hashes of each completed stage's outputs.
+It reuses verified stages and reruns incomplete stages. Native build tools
+can continue using objects and downloaded archives from earlier attempts.
+`--min-free-gib` overrides the preflight space threshold for a workspace whose
+remaining work you have already sized.
+
+`build-stages.json` records elapsed time by stage, retry history and failed
+checks. `installed-dependencies.json` records the version Craft installed and
+whether its logs show a Craft binary-cache hit or a Craft recipe running.
+A recipe may itself install a vendor binary. Where the available logs lack
+that evidence, the route is marked unconfirmed. `build-receipt.json` records
+the source revision and source-tree hash, build toolchain, runtime hash and
+results of the most recent completed build. Check `build-stages.json` for the
+latest attempt after an interruption. The logs and JSON receipts contain local filesystem paths.
+Review them before sharing.
+
+### Check disk use and retire generated output
+
+```powershell
+python -B scripts/windows-craft-build.py --work-dir C:\OkBuild --disk-report
+python -B scripts/windows-craft-build.py --work-dir C:\OkBuild --recycle-build-output
+```
+
+The first command reports logical file sizes by category. Windows hard links
+can make the actual disk use smaller. Run the second command when you want to
+move the Okular build tree and the Craft dependency work and image tree to the
+Recycle Bin. It rechecks the successful build's installed outputs and test
+evidence and verifies that Windows created restorable entries. Keep the source
+checkout, installed Craft prefix, downloads and build receipts to run Okular
+or to rebuild later. The files still take up space while in the Recycle Bin.
 
 If you downloaded a ZIP of the source, extract it and run the Python command
 from that directory. Craft still uses Git to obtain its own recipes.
+
+The `Validate public Windows Craft build` GitHub Actions workflow runs the same
+entry point on a Windows Server 2022 worker with an empty Craft workspace. Use
+its `preflight_only` option for a toolchain and feed check. A full run needs a
+worker with the documented free space.
 
 The [package reconciliation](craft-overrides/PublicWindowsPackages.md)
 explains where the 54 unmatched entries from the recorded reference build
