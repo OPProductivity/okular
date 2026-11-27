@@ -277,9 +277,11 @@ def build(work: Path, vcvars: Path, cmake: Path | None, dependencies_only: bool)
                              "-o", f"{work / 'shell-results.txt'},txt"], test_env, cwd=build_dir)
     smoke_log = work / f"installed-pdf-{datetime.now(timezone.utc):%Y%m%d-%H%M%S-%f}.log"
     loaded = replay["smoke"](prefix, None, SOURCE / "autotests/data/simple-multipage.pdf", smoke_log, test_env)
-    source = subprocess.check_output(["git", "-C", SOURCE, "rev-parse", "HEAD"], env=env, text=True).strip()
+    source = subprocess.run(["git", "-C", SOURCE, "rev-parse", "HEAD"],
+                            env=env, capture_output=True, text=True)
     receipt = {
-        "source_commit": source, **expected, "prefix": str(prefix),
+        "source_commit": source.stdout.strip() if source.returncode == 0 else None,
+        **expected, "prefix": str(prefix),
         "executable": replay["identity"](prefix / "bin/okular.exe"),
         "pdf_recipe_patch": replay["identity"](SOURCE / "docs/craft-overrides/pdf-dependencies-2026-11-17.patch"),
         "pdf_modules_from_prefix": loaded,

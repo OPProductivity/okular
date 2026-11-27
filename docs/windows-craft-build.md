@@ -28,6 +28,9 @@ If a download from an MSYS2 mirror fails, the script can retry with the
 primary MSYS2 server first in the workspace's mirror list. The existing
 fallback mirrors and package signature checks still apply.
 
+If you downloaded a ZIP of the source, extract it and run the Python command
+from that directory. Craft still uses Git to obtain its own recipes.
+
 The [package reconciliation](craft-overrides/PublicWindowsPackages.md)
 explains where the 54 unmatched entries from the recorded reference build
 come from on the public route. The [private replay](windows-craft-clean-prefix.md)
