@@ -84,14 +84,23 @@ jobs:
           if ($changed.Count) { throw "The repeat ran or lost stages: $($changed -join ', ')" }
           "Verified reuse of all $($first.stages.Count) completed build stages."
           python -B scripts/windows-craft-build.py --work-dir $env:OKULAR_WORK --disk-report
+      - name: Collect validation evidence
+        if: ${{ always() && steps.workspace.outputs.path != '' }}
+        env:
+          OKULAR_WORK: ${{ steps.workspace.outputs.path }}
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'okular-validation'
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'okular-runner.json') -Destination $evidence
+          if (Test-Path -LiteralPath $env:OKULAR_WORK -PathType Container) {
+            Get-ChildItem -LiteralPath $env:OKULAR_WORK -File |
+              Where-Object { $_.Extension -in @('.log', '.json') -or $_.Name -eq 'shell-results.txt' } |
+              Copy-Item -Destination $evidence
+          }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: ${{ always() && steps.workspace.outputs.path != '' }}
         with:
           name: windows-craft-validation
-          path: |
-            ${{ runner.temp }}/okular-runner.json
-            ${{ steps.workspace.outputs.path }}/*.log
-            ${{ steps.workspace.outputs.path }}/*.json
-            ${{ steps.workspace.outputs.path }}/shell-results.txt
-          if-no-files-found: ignore
+          path: ${{ runner.temp }}/okular-validation
+          if-no-files-found: error
           retention-days: 14
